@@ -2348,13 +2348,30 @@ test("loads and commits wording for a selected text clip", () => {
 
   assert.match(
     source,
-    /setTextDraft\(selectedTextClip\.text\.content\)/,
+    /setTextDraft\(selectedTextContent\)/,
   );
   assert.match(source, /const commitSelectedTextContent/);
   assert.match(source, /setTextContentById/);
-  assert.match(source, />Commit changes<\/button>/);
+  assert.match(
+    source,
+    /selectedTextClip \? "Commit changes" : "Add text at playhead"/,
+  );
   assert.match(
     source,
     /clip\.track === "text"[\s\S]*?setActiveTool\("text"\)/,
   );
+});
+
+test("opens every selected caption type for wording edits", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /clip\.track === "caption"[\s\S]*?setCaptionMode\("manual"\)[\s\S]*?setActiveTool\("captions"\)/,
+  );
+  assert.match(source, />Commit changes<\/button>/);
+  assert.match(source, /applySelectedCaption/);
 });

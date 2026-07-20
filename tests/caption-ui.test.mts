@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {readFileSync} from "node:fs";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 test("wires the captions tool into manual caption controls and preview rendering", () => {
@@ -12,7 +12,10 @@ test("wires the captions tool into manual caption controls and preview rendering
   assert.match(source, /onClick=\{\(\) => setActiveTool\("captions"\)\}/);
   assert.match(source, /onClick=\{addCaptionAtPlayhead\}/);
   assert.match(source, /createManualCaptionClip\(/);
-  assert.match(source, /getActiveClipsAtFrame\(\s*clips,\s*"caption",\s*playheadFrame,\s*\)/);
+  assert.match(
+    source,
+    /getActiveClipsAtFrame\(\s*clips,\s*"caption",\s*playheadFrame,\s*\)/,
+  );
 });
 
 test("shows text and caption rows only when their tracks contain clips", () => {
@@ -82,7 +85,10 @@ test("renders preview captions as labeled keyboard-accessible buttons", () => {
     /aria-label=\{`Select caption: \$\{caption\.content\}`\}/,
   );
   assert.match(previewCaptions, /type="button"/);
-  assert.match(previewCaptions, /onClick=\{\(\) => selectTimelineClip\(captionClip\)\}/);
+  assert.match(
+    previewCaptions,
+    /onClick=\{\(\) => selectTimelineClip\(captionClip\)\}/,
+  );
 });
 
 test("renders eight directional resize handles on the selected caption", () => {
@@ -101,10 +107,19 @@ test("renders eight directional resize handles on the selected caption", () => {
 
   assert.match(previewCaptions, /left: `\$\{captionPosition\.x\}%`/);
   assert.match(previewCaptions, /top: `\$\{captionPosition\.y\}%`/);
-  assert.match(previewCaptions, /startCaptionPreviewDrag\(event, captionClip\)/);
+  assert.match(
+    previewCaptions,
+    /startCaptionPreviewDrag\(event, captionClip\)/,
+  );
   const directions = [
-    "top-left", "top", "top-right", "right",
-    "bottom-right", "bottom", "bottom-left", "left",
+    "top-left",
+    "top",
+    "top-right",
+    "right",
+    "bottom-right",
+    "bottom",
+    "bottom-left",
+    "left",
   ];
   const handleElements = [
     ...previewCaptions.matchAll(
@@ -148,10 +163,22 @@ test("renders eight directional resize handles on the selected caption", () => {
     cloneMeasurement,
     /clone\.querySelectorAll\("\.caption-resize-handle"\)\.forEach\(\(resizeHandle\) => \{\s*resizeHandle\.remove\(\);\s*\}\);/,
   );
-  assert.match(css, /\.caption-resize-handle-top\s*,\s*\.caption-resize-handle-bottom\s*\{\s*cursor:\s*ns-resize;\s*\}/);
-  assert.match(css, /\.caption-resize-handle-left\s*,\s*\.caption-resize-handle-right\s*\{\s*cursor:\s*ew-resize;\s*\}/);
-  assert.match(css, /\.caption-resize-handle-top-right\s*,\s*\.caption-resize-handle-bottom-left\s*\{\s*cursor:\s*nesw-resize;\s*\}/);
-  assert.match(css, /\.caption-resize-handle-top-left\s*,\s*\.caption-resize-handle-bottom-right\s*\{\s*cursor:\s*nwse-resize;\s*\}/);
+  assert.match(
+    css,
+    /\.caption-resize-handle-top\s*,\s*\.caption-resize-handle-bottom\s*\{\s*cursor:\s*ns-resize;\s*\}/,
+  );
+  assert.match(
+    css,
+    /\.caption-resize-handle-left\s*,\s*\.caption-resize-handle-right\s*\{\s*cursor:\s*ew-resize;\s*\}/,
+  );
+  assert.match(
+    css,
+    /\.caption-resize-handle-top-right\s*,\s*\.caption-resize-handle-bottom-left\s*\{\s*cursor:\s*nesw-resize;\s*\}/,
+  );
+  assert.match(
+    css,
+    /\.caption-resize-handle-top-left\s*,\s*\.caption-resize-handle-bottom-right\s*\{\s*cursor:\s*nwse-resize;\s*\}/,
+  );
 });
 
 test("keeps text and caption move and resize gestures mutually exclusive", () => {
@@ -176,13 +203,25 @@ test("keeps text and caption move and resize gestures mutually exclusive", () =>
     source.indexOf("const startCaptionResizeDrag"),
   );
 
-  assert.match(moveGesture, /setCaptionResizeDrag\(null\);[\s\S]*setCaptionPreviewDrag\(\{/);
-  assert.match(resizeGesture, /setCaptionPreviewDrag\(null\);[\s\S]*setCaptionResizeDrag\(\{/);
-  assert.match(textMoveGesture, /setTextResizeDrag\(null\);[\s\S]*setTextPreviewDrag\(\{/);
-  assert.match(textResizeGesture, /setTextPreviewDrag\(null\);[\s\S]*setTextResizeDrag\(\{/);
+  assert.match(
+    moveGesture,
+    /setCaptionResizeDrag\(null\);[\s\S]*setCaptionPreviewDrag\(\{/,
+  );
+  assert.match(
+    resizeGesture,
+    /setCaptionPreviewDrag\(null\);[\s\S]*setCaptionResizeDrag\(\{/,
+  );
+  assert.match(
+    textMoveGesture,
+    /setTextResizeDrag\(null\);[\s\S]*setTextPreviewDrag\(\{/,
+  );
+  assert.match(
+    textResizeGesture,
+    /setTextPreviewDrag\(null\);[\s\S]*setTextResizeDrag\(\{/,
+  );
 });
 
-test("allows caption creation and selected captions to use a one pixel minimum font size", () => {
+test("keeps caption styling in one compact selected-caption inspector", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
@@ -191,9 +230,9 @@ test("allows caption creation and selected captions to use a one pixel minimum f
     source.indexOf("<em>{selectedCaptionStyle.fontSize}px</em>"),
     source.indexOf('aria-label="Caption text color"'),
   );
-  const captionCreationControls = source.slice(
-    source.indexOf("<strong>Font size</strong>"),
-    source.indexOf("<strong>Text color</strong>"),
+  const captionPanel = source.slice(
+    source.indexOf('activeTool === "captions" ? ('),
+    source.indexOf(') : activeTool === "animations" ? ('),
   );
   const selectedTextControls = source.slice(
     source.indexOf("<em>{selectedTextStyle.fontSize}px</em>"),
@@ -202,8 +241,10 @@ test("allows caption creation and selected captions to use a one pixel minimum f
 
   assert.match(selectedCaptionControls, /min="1"/);
   assert.match(selectedCaptionControls, /step="1"/);
-  assert.match(captionCreationControls, /min=\{1\}/);
-  assert.match(captionCreationControls, /step=\{1\}/);
+  assert.doesNotMatch(captionPanel, /caption-style-grid/);
+  assert.doesNotMatch(captionPanel, />Commit changes</);
+  assert.match(source, /className="caption-control-section"/);
+  assert.match(source, /className="caption-compact-grid"/);
   assert.match(selectedTextControls, /min="1"/);
   assert.match(selectedTextControls, /step="1"/);
 });
@@ -248,9 +289,15 @@ test("accepts supported caption file uploads and parses them locally", () => {
     source.indexOf("const generateCaptionBatch = useCallback(async ("),
   );
 
-  assert.match(source, /import \{parseCaptionFile\} from "\.\/captionFileParser";/);
+  assert.match(
+    source,
+    /import \{parseCaptionFile\} from "\.\/captionFileParser";/,
+  );
   assert.match(captionPanel, /accept="\.srt,\.ass,\.lrc"/);
-  assert.match(uploadAction, /const file = event\.currentTarget\.files\?\.\[0\]/);
+  assert.match(
+    uploadAction,
+    /const file = event\.currentTarget\.files\?\.\[0\]/,
+  );
   assert.match(uploadAction, /const content = await file\.text\(\)/);
   assert.match(
     uploadAction,
@@ -275,9 +322,15 @@ test("imports parsed caption files as regular caption clips in exactly one commi
   );
 
   assert.match(importHelper, /track: "caption"/);
-  assert.match(importHelper, /caption: \{\s*\.\.\.style,\s*content: text,\s*\}/);
+  assert.match(
+    importHelper,
+    /caption: \{\s*\.\.\.style,\s*content: text,\s*\}/,
+  );
   assert.doesNotMatch(importHelper, /generationId|sourceClipId/);
-  assert.equal(uploadAction.match(/commitClipChange\(\(currentClips\) =>/g)?.length, 1);
+  assert.equal(
+    uploadAction.match(/commitClipChange\(\(currentClips\) =>/g)?.length,
+    1,
+  );
   assert.match(
     uploadAction,
     /setCaptionStatus\(\{\s*kind: "error",\s*message: error instanceof Error[\s\S]*\}\)/,
@@ -298,7 +351,10 @@ test("gates caption transcription to selected source-backed videos in both auto 
     source,
     /const selectedCaptionSourceClip = selectedClip &&\s*\(\s*selectedClip\.track === "main" \|\| selectedClip\.track === "upper"\s*\) &&\s*selectedClip\.src\s*\?\s*selectedClip\s*:\s*null;/,
   );
-  assert.match(captionPanel, /disabled=\{isAutoCaptionLoading \|\| !selectedCaptionSourceClip\}/);
+  assert.match(
+    captionPanel,
+    /disabled=\{isAutoCaptionLoading \|\| !selectedCaptionSourceClip\}/,
+  );
   assert.match(
     captionPanel,
     /Select a main or upper video clip before generating auto captions\./,
@@ -319,11 +375,26 @@ test("routes auto lyrics through the secured transcription flow with separate la
     source.indexOf("const generateAutoCaptions = useCallback(async () => {"),
   );
 
-  assert.match(source, /const generateAutoCaptions = useCallback\(async \(\) => \{\s*await generateCaptionBatch\("auto"\);\s*\}, \[generateCaptionBatch\]\);/);
-  assert.match(source, /const generateAutoLyrics = useCallback\(async \(\) => \{\s*await generateCaptionBatch\("lyrics"\);\s*\}, \[generateCaptionBatch\]\);/);
-  assert.match(source, /const autoCaptionRequestRef = useRef<symbol \| null>\(null\)/);
-  assert.match(transcriptionAction, /if \(autoCaptionRequestRef\.current\) \{\s*abortAutoCaptionRequest\(\);\s*\}/);
-  assert.match(transcriptionAction, /const requestToken = Symbol\("auto-caption-request"\)/);
+  assert.match(
+    source,
+    /const generateAutoCaptions = useCallback\(async \(\) => \{\s*await generateCaptionBatch\("auto"\);\s*\}, \[generateCaptionBatch\]\);/,
+  );
+  assert.match(
+    source,
+    /const generateAutoLyrics = useCallback\(async \(\) => \{\s*await generateCaptionBatch\("lyrics"\);\s*\}, \[generateCaptionBatch\]\);/,
+  );
+  assert.match(
+    source,
+    /const autoCaptionRequestRef = useRef<symbol \| null>\(null\)/,
+  );
+  assert.match(
+    transcriptionAction,
+    /if \(autoCaptionRequestRef\.current\) \{\s*abortAutoCaptionRequest\(\);\s*\}/,
+  );
+  assert.match(
+    transcriptionAction,
+    /const requestToken = Symbol\("auto-caption-request"\)/,
+  );
   assert.match(
     transcriptionAction,
     /fetch\(resolveMediaSource\(selectedCaptionSourceClip\.src!?\), \{\s*signal: abortController\.signal,\s*\}\)/,
@@ -394,13 +465,22 @@ test("sends only selected trim metadata and maps relative transcript timestamps 
     transcriptionAction,
     /const sourceDurationSeconds = \(selectedCaptionSourceClip\.duration \* \(selectedCaptionSourceClip\.speed \?\? 1\)\) \/ fps;/,
   );
-  assert.match(transcriptionAction, /formData\.append\("sourceStart", String\(sourceStartSeconds\)\)/);
-  assert.match(transcriptionAction, /formData\.append\("duration", String\(sourceDurationSeconds\)\)/);
+  assert.match(
+    transcriptionAction,
+    /formData\.append\("sourceStart", String\(sourceStartSeconds\)\)/,
+  );
+  assert.match(
+    transcriptionAction,
+    /formData\.append\("duration", String\(sourceDurationSeconds\)\)/,
+  );
   assert.match(
     transcriptionAction,
     /sourceClip: \{\s*\.\.\.currentSourceClip,\s*sourceStart: 0,\s*\}/,
   );
-  assert.doesNotMatch(transcriptionAction, /sourceStart: currentSourceClip\.sourceStart/);
+  assert.doesNotMatch(
+    transcriptionAction,
+    /sourceStart: currentSourceClip\.sourceStart/,
+  );
 });
 
 test("aborts media and transcription requests without surfacing abort errors", () => {
@@ -413,8 +493,14 @@ test("aborts media and transcription requests without surfacing abort errors", (
     source.indexOf("const generateAutoCaptions = useCallback(async () => {"),
   );
 
-  assert.match(source, /const autoCaptionAbortControllerRef = useRef<AbortController \| null>\(null\)/);
-  assert.match(source, /const abortAutoCaptionRequest = useCallback\(\(\) => \{/);
+  assert.match(
+    source,
+    /const autoCaptionAbortControllerRef = useRef<AbortController \| null>\(null\)/,
+  );
+  assert.match(
+    source,
+    /const abortAutoCaptionRequest = useCallback\(\(\) => \{/,
+  );
   assert.match(source, /autoCaptionAbortControllerRef\.current\?\.abort\(\)/);
   assert.match(
     source,
@@ -424,10 +510,22 @@ test("aborts media and transcription requests without surfacing abort errors", (
     source,
     /useEffect\(\(\) => \{\s*return \(\) => abortAutoCaptionRequest\(\);\s*\}, \[abortAutoCaptionRequest\]\);/,
   );
-  assert.match(source, /setCaptionMode\("actions"\);\s*abortAutoCaptionRequest\(\);/);
-  assert.match(source, /setActiveTool\("media"\);\s*abortAutoCaptionRequest\(\);/);
-  assert.match(transcriptionAction, /const abortController = new AbortController\(\)/);
-  assert.match(transcriptionAction, /autoCaptionAbortControllerRef\.current = abortController/);
+  assert.match(
+    source,
+    /setCaptionMode\("actions"\);\s*abortAutoCaptionRequest\(\);/,
+  );
+  assert.match(
+    source,
+    /setActiveTool\("media"\);\s*abortAutoCaptionRequest\(\);/,
+  );
+  assert.match(
+    transcriptionAction,
+    /const abortController = new AbortController\(\)/,
+  );
+  assert.match(
+    transcriptionAction,
+    /autoCaptionAbortControllerRef\.current = abortController/,
+  );
   assert.match(
     transcriptionAction,
     /fetch\(resolveMediaSource\(selectedCaptionSourceClip\.src!?\), \{\s*signal: abortController\.signal,\s*\}\)/,
@@ -478,10 +576,19 @@ test("offers a dedicated transcript workflow for the selected video clip", () =>
   assert.match(source, />Transcript<\/button>/);
   assert.match(source, /await generateCaptionBatch\("transcript"\)/);
   assert.match(source, /Select the video clip you want to transcribe first\./);
-  assert.match(source, /Transcript ready with \$\{generatedCaptions\.length\} timed segments\./);
-  assert.match(source, /caption\?\.generationId\?\.startsWith\("transcript-"\)/);
+  assert.match(
+    source,
+    /Transcript ready with \$\{generatedCaptions\.length\} timed segments\./,
+  );
+  assert.match(
+    source,
+    /caption\?\.generationId\?\.startsWith\("transcript-"\)/,
+  );
   assert.match(source, /aria-label="Transcript segments"/);
-  assert.match(source, /setCaptionMode\("manual"\)[\s\S]*setActiveTool\("captions"\)/);
+  assert.match(
+    source,
+    /setCaptionMode\("manual"\)[\s\S]*setActiveTool\("captions"\)/,
+  );
 });
 
 test("offers automatic silence removal through the shared transcript request lifecycle", () => {
@@ -490,7 +597,9 @@ test("offers automatic silence removal through the shared transcript request lif
     "utf8",
   );
   const silenceAction = source.slice(
-    source.indexOf("const removeSilenceAutomatically = useCallback(async () => {"),
+    source.indexOf(
+      "const removeSilenceAutomatically = useCallback(async () => {",
+    ),
     source.indexOf("const duplicateSelectedSticker"),
   );
   const transcriptPanel = source.slice(
@@ -507,7 +616,10 @@ test("offers automatic silence removal through the shared transcript request lif
     )?.length,
     2,
   );
-  assert.match(silenceAction, /if \(autoCaptionRequestRef\.current\) \{\s*abortAutoCaptionRequest\(\);\s*\}/);
+  assert.match(
+    silenceAction,
+    /if \(autoCaptionRequestRef\.current\) \{\s*abortAutoCaptionRequest\(\);\s*\}/,
+  );
   assert.match(
     silenceAction,
     /const preflightDecision = decideSilenceRemovalPreflight\(\s*clipsRef\.current,\s*selectedCaptionSourceClip\.id,\s*\);\s*if \(preflightDecision\.outcome !== "ready"\) \{\s*setCaptionStatus\(preflightDecision\.status\);\s*return;\s*\}/,
@@ -516,20 +628,47 @@ test("offers automatic silence removal through the shared transcript request lif
     source,
     /message: "The selected video has no linked audio to clean up\."/,
   );
-  assert.match(silenceAction, /const requestToken = Symbol\("silence-removal-request"\)/);
-  assert.match(silenceAction, /const selectionVersion = autoCaptionSelectionVersionRef\.current/);
-  assert.match(silenceAction, /const sourceClipId = selectedCaptionSourceClip\.id/);
-  assert.match(silenceAction, /const sourceClipSrc = selectedCaptionSourceClip\.src/);
-  assert.match(silenceAction, /const sourceClipSourceStart = selectedCaptionSourceClip\.sourceStart \?\? 0/);
-  assert.match(silenceAction, /const sourceClipDuration = selectedCaptionSourceClip\.duration/);
-  assert.match(silenceAction, /const sourceClipSpeed = selectedCaptionSourceClip\.speed \?\? 1/);
+  assert.match(
+    silenceAction,
+    /const requestToken = Symbol\("silence-removal-request"\)/,
+  );
+  assert.match(
+    silenceAction,
+    /const selectionVersion = autoCaptionSelectionVersionRef\.current/,
+  );
+  assert.match(
+    silenceAction,
+    /const sourceClipId = selectedCaptionSourceClip\.id/,
+  );
+  assert.match(
+    silenceAction,
+    /const sourceClipSrc = selectedCaptionSourceClip\.src/,
+  );
+  assert.match(
+    silenceAction,
+    /const sourceClipSourceStart = selectedCaptionSourceClip\.sourceStart \?\? 0/,
+  );
+  assert.match(
+    silenceAction,
+    /const sourceClipDuration = selectedCaptionSourceClip\.duration/,
+  );
+  assert.match(
+    silenceAction,
+    /const sourceClipSpeed = selectedCaptionSourceClip\.speed \?\? 1/,
+  );
   assert.match(
     silenceAction,
     /fetch\(resolveMediaSource\(selectedCaptionSourceClip\.src!\), \{\s*signal: abortController\.signal,\s*\}\)/,
   );
   assert.match(silenceAction, /formData\.append\("file", clipFile\)/);
-  assert.match(silenceAction, /formData\.append\("sourceStart", String\(sourceStartSeconds\)\)/);
-  assert.match(silenceAction, /formData\.append\("duration", String\(sourceDurationSeconds\)\)/);
+  assert.match(
+    silenceAction,
+    /formData\.append\("sourceStart", String\(sourceStartSeconds\)\)/,
+  );
+  assert.match(
+    silenceAction,
+    /formData\.append\("duration", String\(sourceDurationSeconds\)\)/,
+  );
   assert.match(
     silenceAction,
     /fetch\("\/api\/detect-silence", \{\s*method: "POST",\s*body: formData,\s*signal: abortController\.signal,\s*\}\)/,
@@ -575,7 +714,10 @@ test("does not re-check the cleared request token inside the delayed transcript 
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const commitStart = source.indexOf("commitClipChange((currentClips) => {", source.indexOf("const generateCaptionBatch"));
+  const commitStart = source.indexOf(
+    "commitClipChange((currentClips) => {",
+    source.indexOf("const generateCaptionBatch"),
+  );
   const commitEnd = source.indexOf("});", commitStart);
   const transcriptCommit = source.slice(commitStart, commitEnd);
 

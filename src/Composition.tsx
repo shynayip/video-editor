@@ -1,4 +1,9 @@
-import { CalculateMetadataFunction, Composition, Img, staticFile } from "remotion";
+import {
+  CalculateMetadataFunction,
+  Composition,
+  Img,
+  staticFile,
+} from "remotion";
 import {
   ChangeEvent,
   CSSProperties,
@@ -96,6 +101,7 @@ import {
   reconcileClipSourceDuration,
   resizeTextOverlayBoxById,
   resizeCaptionOverlayById,
+  resizeCutoutTransform,
   setClipEffectById,
   setClipFilterById,
   setClipSpeedById,
@@ -137,7 +143,7 @@ import {
   VideoLayerDirection,
   VideoLayerControlHistoryGesture,
 } from "./editorLogic";
-import {parseCaptionFile} from "./captionFileParser";
+import { parseCaptionFile } from "./captionFileParser";
 import {
   createAutomaticCutoutRequestTiming,
   createCutoutRequestSnapshot,
@@ -147,7 +153,7 @@ import {
   createDominantVoiceRequestSnapshot,
   isDominantVoiceRequestCurrent,
 } from "./dominantVoiceRequest";
-import {detectVideoScenes as requestVideoSceneDetection} from "./sceneDetectionClient";
+import { detectVideoScenes as requestVideoSceneDetection } from "./sceneDetectionClient";
 import { BrowserVoiceRecorder } from "./voiceRecorder";
 
 type Props = {
@@ -174,7 +180,7 @@ export const isDetectedSceneMediaItem = (
   mediaItem: Pick<MediaItem, "sourceFileId"> | undefined,
 ) => Boolean(mediaItem?.sourceFileId);
 
-type AnalyzingMediaItem = {id: string; label: string};
+type AnalyzingMediaItem = { id: string; label: string };
 
 type UploadedMediaResponse = {
   src: string;
@@ -241,7 +247,7 @@ export const decideSilenceRemovalPreflight = (
     };
   }
 
-  return {outcome: "ready", clips: currentClips, status: null};
+  return { outcome: "ready", clips: currentClips, status: null };
 };
 
 type SilenceRemovalActionDecision =
@@ -249,19 +255,19 @@ type SilenceRemovalActionDecision =
       outcome: "stale";
       clips: TimelineClip[];
       selection: null;
-      status: {kind: "idle"; message: ""};
+      status: { kind: "idle"; message: "" };
     }
   | {
       outcome: "no-removable-silence";
       clips: TimelineClip[];
       selection: null;
-      status: {kind: "success"; message: "No removable silence was found."};
+      status: { kind: "success"; message: "No removable silence was found." };
     }
   | {
       outcome: "committed";
       clips: TimelineClip[];
-      selection: {clipId: string; track: "main" | "upper"};
-      status: {kind: "success"; message: string};
+      selection: { clipId: string; track: "main" | "upper" };
+      status: { kind: "success"; message: string };
     };
 
 export const decideSilenceRemovalAction = ({
@@ -278,7 +284,7 @@ export const decideSilenceRemovalAction = ({
   selectionVersion: number;
   requestIsActive: boolean;
   snapshot: SilenceRemovalCommitSnapshot;
-  ranges: Array<{startSeconds: number; endSeconds: number}>;
+  ranges: Array<{ startSeconds: number; endSeconds: number }>;
   fps: number;
 }): SilenceRemovalActionDecision => {
   if (
@@ -290,7 +296,7 @@ export const decideSilenceRemovalAction = ({
       outcome: "stale",
       clips: currentClips,
       selection: null,
-      status: {kind: "idle", message: ""},
+      status: { kind: "idle", message: "" },
     };
   }
 
@@ -309,7 +315,7 @@ export const decideSilenceRemovalAction = ({
       outcome: "stale",
       clips: currentClips,
       selection: null,
-      status: {kind: "idle", message: ""},
+      status: { kind: "idle", message: "" },
     };
   }
 
@@ -384,7 +390,7 @@ export const decideSilenceRemovalAction = ({
   };
 };
 
-const calculateMetadata: CalculateMetadataFunction<Props> = ({props}) => ({
+const calculateMetadata: CalculateMetadataFunction<Props> = ({ props }) => ({
   durationInFrames: props.project?.clips
     ? getTimelineDuration(props.project.clips)
     : remotionRegistrationFallbackInFrames,
@@ -442,10 +448,7 @@ const defaultClipAnimation = {
 
 const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
 
-const easeAnimationProgress = (
-  value: number,
-  easing: ClipAnimationEasing,
-) => {
+const easeAnimationProgress = (value: number, easing: ClipAnimationEasing) => {
   const progress = clampUnit(value);
   switch (easing) {
     case "fast":
@@ -479,25 +482,43 @@ const getClipVisualPresentation = (clip?: TimelineClip) => {
 
   switch (visual?.filter ?? "none") {
     case "warm":
-      filters.push(`sepia(${0.14 * filterIntensity})`, `saturate(${1 + 0.18 * filterIntensity})`);
+      filters.push(
+        `sepia(${0.14 * filterIntensity})`,
+        `saturate(${1 + 0.18 * filterIntensity})`,
+      );
       break;
     case "cool":
-      filters.push(`hue-rotate(${-8 * filterIntensity}deg)`, `saturate(${1 + 0.1 * filterIntensity})`);
+      filters.push(
+        `hue-rotate(${-8 * filterIntensity}deg)`,
+        `saturate(${1 + 0.1 * filterIntensity})`,
+      );
       break;
     case "vivid":
-      filters.push(`contrast(${1 + 0.24 * filterIntensity})`, `saturate(${1 + 0.28 * filterIntensity})`);
+      filters.push(
+        `contrast(${1 + 0.24 * filterIntensity})`,
+        `saturate(${1 + 0.28 * filterIntensity})`,
+      );
       break;
     case "vintage":
-      filters.push(`sepia(${0.32 * filterIntensity})`, `contrast(${1 - 0.08 * filterIntensity})`);
+      filters.push(
+        `sepia(${0.32 * filterIntensity})`,
+        `contrast(${1 - 0.08 * filterIntensity})`,
+      );
       break;
     case "sepia":
       filters.push(`sepia(${0.7 * filterIntensity})`);
       break;
     case "cinema":
-      filters.push(`contrast(${1 + 0.18 * filterIntensity})`, `brightness(${1 - 0.06 * filterIntensity})`);
+      filters.push(
+        `contrast(${1 + 0.18 * filterIntensity})`,
+        `brightness(${1 - 0.06 * filterIntensity})`,
+      );
       break;
     case "soft":
-      filters.push(`brightness(${1 + 0.08 * filterIntensity})`, `saturate(${1 - 0.08 * filterIntensity})`);
+      filters.push(
+        `brightness(${1 + 0.08 * filterIntensity})`,
+        `saturate(${1 - 0.08 * filterIntensity})`,
+      );
       break;
     default:
       break;
@@ -508,7 +529,9 @@ const getClipVisualPresentation = (clip?: TimelineClip) => {
       filters.push(`blur(${Math.max(0, 6 * effectIntensity)}px)`);
       break;
     case "glow":
-      filters.push(`drop-shadow(0 0 ${Math.max(2, 20 * effectIntensity)}px rgba(56, 214, 200, 0.55))`);
+      filters.push(
+        `drop-shadow(0 0 ${Math.max(2, 20 * effectIntensity)}px rgba(56, 214, 200, 0.55))`,
+      );
       break;
     case "grayscale":
       filters.push(`grayscale(${0.95 * effectIntensity})`);
@@ -520,7 +543,9 @@ const getClipVisualPresentation = (clip?: TimelineClip) => {
       opacity = Math.max(0.15, 1 - 0.6 * effectIntensity);
       break;
     case "shadow":
-      filters.push(`drop-shadow(0 ${Math.max(2, 8 * effectIntensity)}px ${Math.max(4, 24 * effectIntensity)}px rgba(15, 23, 42, 0.45))`);
+      filters.push(
+        `drop-shadow(0 ${Math.max(2, 8 * effectIntensity)}px ${Math.max(4, 24 * effectIntensity)}px rgba(15, 23, 42, 0.45))`,
+      );
       break;
     case "zoom":
       scale = 1 + 0.12 * effectIntensity;
@@ -541,7 +566,7 @@ const getClipAnimationPresentation = (
   playheadFrame: number,
 ) => {
   if (!clip) {
-    return {opacity: 1, translateX: 0, translateY: 0, scale: 1};
+    return { opacity: 1, translateX: 0, translateY: 0, scale: 1 };
   }
 
   const animation = {
@@ -549,7 +574,7 @@ const getClipAnimationPresentation = (
     ...clip.animation,
   };
   if (animation.preset === "none") {
-    return {opacity: 1, translateX: 0, translateY: 0, scale: 1};
+    return { opacity: 1, translateX: 0, translateY: 0, scale: 1 };
   }
 
   const endFrame = clip.start + clip.duration;
@@ -562,8 +587,10 @@ const getClipAnimationPresentation = (
     (endFrame - playheadFrame) / duration,
     animation.easing,
   );
-  const useStartWindow = animation.timing === "start" || animation.timing === "both";
-  const useEndWindow = animation.timing === "end" || animation.timing === "both";
+  const useStartWindow =
+    animation.timing === "start" || animation.timing === "both";
+  const useEndWindow =
+    animation.timing === "end" || animation.timing === "both";
   let opacity = 1;
   const translateX = 0;
   let translateY = 0;
@@ -600,7 +627,7 @@ const getClipAnimationPresentation = (
       break;
   }
 
-  return {opacity, translateX, translateY, scale};
+  return { opacity, translateX, translateY, scale };
 };
 
 const setClipEffectIntensityById = (
@@ -737,12 +764,12 @@ const readVideoDurationInFrames = (src: string) =>
     video.addEventListener(
       "loadedmetadata",
       () => finish(durationToFrames(video.duration)),
-      {once: true},
+      { once: true },
     );
     video.addEventListener(
       "error",
       () => finish(defaultMediaDurationInFrames),
-      {once: true},
+      { once: true },
     );
     video.src = resolveMediaSource(src);
   });
@@ -760,12 +787,12 @@ const readAudioDurationInFrames = (src: string) =>
     audio.addEventListener(
       "loadedmetadata",
       () => finish(durationToFrames(audio.duration)),
-      {once: true},
+      { once: true },
     );
     audio.addEventListener(
       "error",
       () => finish(defaultMediaDurationInFrames),
-      {once: true},
+      { once: true },
     );
     audio.src = resolveMediaSource(src);
   });
@@ -783,49 +810,55 @@ type ActiveTool =
   | "filters"
   | "adjustment";
 
-const animationOptions: Array<{id: ClipAnimationPreset; label: string}> = [
-  {id: "none", label: "None"},
-  {id: "fade-in", label: "Fade in"},
-  {id: "fade-out", label: "Fade out"},
-  {id: "slide-in", label: "Slide in"},
-  {id: "slide-out", label: "Slide out"},
-  {id: "zoom-in", label: "Zoom in"},
-  {id: "zoom-out", label: "Zoom out"},
-  {id: "pop", label: "Pop"},
+const animationOptions: Array<{ id: ClipAnimationPreset; label: string }> = [
+  { id: "none", label: "None" },
+  { id: "fade-in", label: "Fade in" },
+  { id: "fade-out", label: "Fade out" },
+  { id: "slide-in", label: "Slide in" },
+  { id: "slide-out", label: "Slide out" },
+  { id: "zoom-in", label: "Zoom in" },
+  { id: "zoom-out", label: "Zoom out" },
+  { id: "pop", label: "Pop" },
 ];
 
-const animationTimingOptions: Array<{id: ClipAnimationTiming; label: string}> = [
-  {id: "start", label: "Start"},
-  {id: "end", label: "End"},
-  {id: "both", label: "Both"},
+const animationTimingOptions: Array<{
+  id: ClipAnimationTiming;
+  label: string;
+}> = [
+  { id: "start", label: "Start" },
+  { id: "end", label: "End" },
+  { id: "both", label: "Both" },
 ];
 
-const animationEasingOptions: Array<{id: ClipAnimationEasing; label: string}> = [
-  {id: "smooth", label: "Smooth"},
-  {id: "fast", label: "Fast"},
-  {id: "slow", label: "Slow"},
+const animationEasingOptions: Array<{
+  id: ClipAnimationEasing;
+  label: string;
+}> = [
+  { id: "smooth", label: "Smooth" },
+  { id: "fast", label: "Fast" },
+  { id: "slow", label: "Slow" },
 ];
 
-const effectOptions: Array<{id: ClipEffect; label: string}> = [
-  {id: "none", label: "None"},
-  {id: "blur", label: "Blur"},
-  {id: "glow", label: "Glow"},
-  {id: "grayscale", label: "B/W"},
-  {id: "invert", label: "Invert"},
-  {id: "fade", label: "Fade"},
-  {id: "shadow", label: "Shadow"},
-  {id: "zoom", label: "Zoom"},
+const effectOptions: Array<{ id: ClipEffect; label: string }> = [
+  { id: "none", label: "None" },
+  { id: "blur", label: "Blur" },
+  { id: "glow", label: "Glow" },
+  { id: "grayscale", label: "B/W" },
+  { id: "invert", label: "Invert" },
+  { id: "fade", label: "Fade" },
+  { id: "shadow", label: "Shadow" },
+  { id: "zoom", label: "Zoom" },
 ];
 
-const filterOptions: Array<{id: ClipFilter; label: string}> = [
-  {id: "none", label: "None"},
-  {id: "warm", label: "Warm"},
-  {id: "cool", label: "Cool"},
-  {id: "vivid", label: "Vivid"},
-  {id: "vintage", label: "Vintage"},
-  {id: "sepia", label: "Sepia"},
-  {id: "cinema", label: "Cinema"},
-  {id: "soft", label: "Soft"},
+const filterOptions: Array<{ id: ClipFilter; label: string }> = [
+  { id: "none", label: "None" },
+  { id: "warm", label: "Warm" },
+  { id: "cool", label: "Cool" },
+  { id: "vivid", label: "Vivid" },
+  { id: "vintage", label: "Vintage" },
+  { id: "sepia", label: "Sepia" },
+  { id: "cinema", label: "Cinema" },
+  { id: "soft", label: "Soft" },
 ];
 
 const textFontOptions = [
@@ -837,52 +870,52 @@ const textFontOptions = [
   "Courier New",
 ];
 
-const textEffectOptions: Array<{id: TextEffect; label: string}> = [
-  {id: "none", label: "None"},
-  {id: "shadow", label: "Shadow"},
-  {id: "outline", label: "Outline"},
-  {id: "glow", label: "Glow"},
+const textEffectOptions: Array<{ id: TextEffect; label: string }> = [
+  { id: "none", label: "None" },
+  { id: "shadow", label: "Shadow" },
+  { id: "outline", label: "Outline" },
+  { id: "glow", label: "Glow" },
 ];
 
 const textAnimationOptions: Array<{
   id: TextEntranceAnimation;
   label: string;
 }> = [
-  {id: "none", label: "None"},
-  {id: "pop", label: "Pop"},
-  {id: "jump", label: "Jump"},
-  {id: "fade", label: "Fade"},
-  {id: "star-jump", label: "Star Jump"},
-  {id: "bounce", label: "Bounce"},
-  {id: "typewriter", label: "Typewriter"},
-  {id: "wave", label: "Wave"},
-  {id: "flicker", label: "Flicker"},
-  {id: "spin-in", label: "Spin In"},
+  { id: "none", label: "None" },
+  { id: "pop", label: "Pop" },
+  { id: "jump", label: "Jump" },
+  { id: "fade", label: "Fade" },
+  { id: "star-jump", label: "Star Jump" },
+  { id: "bounce", label: "Bounce" },
+  { id: "typewriter", label: "Typewriter" },
+  { id: "wave", label: "Wave" },
+  { id: "flicker", label: "Flicker" },
+  { id: "spin-in", label: "Spin In" },
 ];
 
 const captionAnimationOptions: Array<{
   id: CaptionAnimationPreset;
   label: string;
 }> = [
-  {id: "none", label: "None"},
-  {id: "pop", label: "Pop"},
-  {id: "bounce", label: "Bounce"},
-  {id: "jump", label: "Jump"},
-  {id: "fade", label: "Fade"},
-  {id: "slide", label: "Slide"},
+  { id: "none", label: "None" },
+  { id: "pop", label: "Pop" },
+  { id: "bounce", label: "Bounce" },
+  { id: "jump", label: "Jump" },
+  { id: "fade", label: "Fade" },
+  { id: "slide", label: "Slide" },
 ];
 
 const getTextEffectStyle = (effect: TextEffect = "none"): CSSProperties => {
   switch (effect) {
     case "shadow":
-      return {textShadow: "0 4px 12px rgba(0, 0, 0, 0.85)"};
+      return { textShadow: "0 4px 12px rgba(0, 0, 0, 0.85)" };
     case "outline":
       return {
         WebkitTextStroke: "1.5px rgba(2, 6, 23, 0.95)",
         textShadow: "0 2px 8px rgba(2, 6, 23, 0.65)",
       };
     case "glow":
-      return {textShadow: "0 0 14px rgba(56, 214, 200, 0.95)"};
+      return { textShadow: "0 0 14px rgba(56, 214, 200, 0.95)" };
     default:
       return {};
   }
@@ -900,15 +933,22 @@ const getCaptionAnimationStyle = (
 
   switch (preset) {
     case "pop":
-      return {transform: `scale(${0.55 + progress * 0.45})`};
+      return { transform: `scale(${0.55 + progress * 0.45})` };
     case "bounce":
-      return {transform: `scale(${1 + Math.abs(Math.sin(localFrame * 0.28 * speed)) * 0.14})`};
+      return {
+        transform: `scale(${1 + Math.abs(Math.sin(localFrame * 0.28 * speed)) * 0.14})`,
+      };
     case "jump":
-      return {transform: `translateY(${-Math.abs(Math.sin(localFrame * 0.22 * speed)) * 18}px)`};
+      return {
+        transform: `translateY(${-Math.abs(Math.sin(localFrame * 0.22 * speed)) * 18}px)`,
+      };
     case "fade":
-      return {opacity: progress};
+      return { opacity: progress };
     case "slide":
-      return {transform: `translateX(${(1 - progress) * -42}px)`, opacity: progress};
+      return {
+        transform: `translateX(${(1 - progress) * -42}px)`,
+        opacity: progress,
+      };
     default:
       return {};
   }
@@ -950,16 +990,17 @@ const getClipFrameStyle = (
 const getCutoutChromaKeyStyle = (
   source?: Pick<TimelineClip, "chromaKey" | "cutout"> | CutoutTransform,
 ): CSSProperties => {
-  const chromaKey = source && "cutout" in source
-    ? source.chromaKey ?? source.cutout?.chromaKey
-    : (source as CutoutTransform | undefined)?.chromaKey;
+  const chromaKey =
+    source && "cutout" in source
+      ? (source.chromaKey ?? source.cutout?.chromaKey)
+      : (source as CutoutTransform | undefined)?.chromaKey;
   switch (chromaKey) {
     case "green":
-      return {filter: "url(#cutout-chroma-green)"};
+      return { filter: "url(#cutout-chroma-green)" };
     case "white":
-      return {filter: "url(#cutout-chroma-white)"};
+      return { filter: "url(#cutout-chroma-white)" };
     case "black":
-      return {filter: "url(#cutout-chroma-black)"};
+      return { filter: "url(#cutout-chroma-black)" };
     default:
       return {};
   }
@@ -978,12 +1019,48 @@ const svgSticker = (body: string) =>
   )}`;
 
 const builtInStickers: StickerItem[] = [
-  {id: "sticker-star", label: "Star", src: svgSticker('<path fill="#facc15" d="M80 12l20 42 46 6-33 32 8 46-41-22-41 22 8-46-33-32 46-6z"/>')},
-  {id: "sticker-heart", label: "Heart", src: svgSticker('<path fill="#fb496f" d="M80 140C24 108 10 77 20 47 31 15 68 16 80 42c12-26 49-27 60 5 10 30-4 61-60 93z"/>')},
-  {id: "sticker-sparkles", label: "Sparkles", src: svgSticker('<path fill="#a855f7" d="M80 8l12 45 44 12-44 12-12 45-12-45-44-12 44-12z"/><path fill="#facc15" d="M125 92l6 20 20 6-20 6-6 20-6-20-20-6 20-6z"/>')},
-  {id: "sticker-smile", label: "Smile", src: svgSticker('<circle cx="80" cy="80" r="65" fill="#facc15"/><circle cx="57" cy="66" r="7"/><circle cx="103" cy="66" r="7"/><path d="M48 92c12 28 52 28 64 0" fill="none" stroke="#111827" stroke-width="9" stroke-linecap="round"/>')},
-  {id: "sticker-fire", label: "Fire", src: svgSticker('<path fill="#f97316" d="M84 8c9 31-13 40 1 59 7 9 18 3 21-9 30 25 38 80-24 94-57-7-68-57-30-91-3 26 15 28 20 13 8-24-8-36 12-66z"/><path fill="#facc15" d="M81 76c18 19 20 48 0 61-20-10-25-34 0-61z"/>')},
-  {id: "sticker-check", label: "Check", src: svgSticker('<circle cx="80" cy="80" r="66" fill="#22c55e"/><path d="M43 82l24 24 51-55" fill="none" stroke="white" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>')},
+  {
+    id: "sticker-star",
+    label: "Star",
+    src: svgSticker(
+      '<path fill="#facc15" d="M80 12l20 42 46 6-33 32 8 46-41-22-41 22 8-46-33-32 46-6z"/>',
+    ),
+  },
+  {
+    id: "sticker-heart",
+    label: "Heart",
+    src: svgSticker(
+      '<path fill="#fb496f" d="M80 140C24 108 10 77 20 47 31 15 68 16 80 42c12-26 49-27 60 5 10 30-4 61-60 93z"/>',
+    ),
+  },
+  {
+    id: "sticker-sparkles",
+    label: "Sparkles",
+    src: svgSticker(
+      '<path fill="#a855f7" d="M80 8l12 45 44 12-44 12-12 45-12-45-44-12 44-12z"/><path fill="#facc15" d="M125 92l6 20 20 6-20 6-6 20-6-20-20-6 20-6z"/>',
+    ),
+  },
+  {
+    id: "sticker-smile",
+    label: "Smile",
+    src: svgSticker(
+      '<circle cx="80" cy="80" r="65" fill="#facc15"/><circle cx="57" cy="66" r="7"/><circle cx="103" cy="66" r="7"/><path d="M48 92c12 28 52 28 64 0" fill="none" stroke="#111827" stroke-width="9" stroke-linecap="round"/>',
+    ),
+  },
+  {
+    id: "sticker-fire",
+    label: "Fire",
+    src: svgSticker(
+      '<path fill="#f97316" d="M84 8c9 31-13 40 1 59 7 9 18 3 21-9 30 25 38 80-24 94-57-7-68-57-30-91-3 26 15 28 20 13 8-24-8-36 12-66z"/><path fill="#facc15" d="M81 76c18 19 20 48 0 61-20-10-25-34 0-61z"/>',
+    ),
+  },
+  {
+    id: "sticker-check",
+    label: "Check",
+    src: svgSticker(
+      '<circle cx="80" cy="80" r="66" fill="#22c55e"/><path d="M43 82l24 24 51-55" fill="none" stroke="white" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>',
+    ),
+  },
 ];
 
 const initialMediaItems: MediaItem[] = [
@@ -1054,8 +1131,8 @@ const uploadMediaFile = async (file: File): Promise<UploadedMediaResponse> => {
   });
 
   if (!response.ok) {
-    const payload = await response.json() as {
-      error?: {message?: string};
+    const payload = (await response.json()) as {
+      error?: { message?: string };
     };
     throw new Error(payload.error?.message || "Import failed.");
   }
@@ -1083,7 +1160,7 @@ export async function mapWithConcurrency<Input, Output>(
   };
   const workerCount = Math.min(concurrency, items.length);
 
-  await Promise.all(Array.from({length: workerCount}, worker));
+  await Promise.all(Array.from({ length: workerCount }, worker));
   return results;
 }
 
@@ -1160,17 +1237,19 @@ export const analyzeImportedVideo = async ({
     uploadMedia(file),
   ]);
   const detectionPromise = detectVideoScenes(file).then(
-    (ranges) => ({ranges, usedFallback: false}),
-    () => ({ranges: null, usedFallback: true}),
+    (ranges) => ({ ranges, usedFallback: false }),
+    () => ({ ranges: null, usedFallback: true }),
   );
   const [[durationInFrames, uploadedMedia], detection] = await Promise.all([
     mediaPromise,
     detectionPromise,
   ]);
-  const ranges = detection.ranges ?? [{
-    startSeconds: 0,
-    endSeconds: durationInFrames / fps,
-  }];
+  const ranges = detection.ranges ?? [
+    {
+      startSeconds: 0,
+      endSeconds: durationInFrames / fps,
+    },
+  ];
   const sceneItems = createSceneMediaItems({
     sourceFileId,
     sourceGroupIndex,
@@ -1212,10 +1291,10 @@ type TimelineRow = {
 };
 
 type VideoDropTarget =
-  | {kind: "layer"; videoLayer: number}
-  | {kind: "append-main"}
-  | {kind: "new-layer"; direction: VideoLayerDirection}
-  | {kind: "insert-layer"; videoLayer: number};
+  | { kind: "layer"; videoLayer: number }
+  | { kind: "append-main" }
+  | { kind: "new-layer"; direction: VideoLayerDirection }
+  | { kind: "insert-layer"; videoLayer: number };
 
 type PointerDrag = {
   type: "timeline" | "media";
@@ -1278,7 +1357,7 @@ type CutoutMaskDrag = {
   points: CutoutMaskStroke["points"];
   originalClips: TimelineClip[];
   pointerId: number;
-  bounds: {x: number; y: number; width: number; height: number};
+  bounds: { x: number; y: number; width: number; height: number };
 };
 
 type TextResizeDrag = {
@@ -1297,6 +1376,17 @@ type TextResizeDrag = {
   originalClips: TimelineClip[];
 };
 
+type CutoutInteraction = {
+  clipId: string;
+  mode: "move" | "resize" | "rotate";
+  handle?: CaptionResizeHandle;
+  startX: number;
+  startY: number;
+  baseWidth: number;
+  baseHeight: number;
+  originalClips: TimelineClip[];
+};
+
 type CaptionResizeDrag = {
   clipId: string;
   handle: CaptionResizeHandle;
@@ -1304,7 +1394,7 @@ type CaptionResizeDrag = {
   startY: number;
   startFontSize: number;
   maximumFontSize: number;
-  measureBounds: (fontSize: number) => {width: number; height: number};
+  measureBounds: (fontSize: number) => { width: number; height: number };
   previewWidth: number;
   previewHeight: number;
   originalClips: TimelineClip[];
@@ -1348,10 +1438,10 @@ type RotateDrag = {
 type CaptionPanelMode = "actions" | "manual" | "auto" | "upload" | "lyrics";
 
 const captionActionTiles = [
-  {mode: "auto" as const, label: "Auto captions", icon: "CC"},
-  {mode: "manual" as const, label: "Manual captions", icon: "\u270E"},
-  {mode: "upload" as const, label: "Upload caption file", icon: "\u2191"},
-  {mode: "lyrics" as const, label: "Auto lyrics", icon: "\u266A"},
+  { mode: "auto" as const, label: "Auto captions", icon: "CC" },
+  { mode: "manual" as const, label: "Manual captions", icon: "\u270E" },
+  { mode: "upload" as const, label: "Upload caption file", icon: "\u2191" },
+  { mode: "lyrics" as const, label: "Auto lyrics", icon: "\u266A" },
 ];
 
 const createImportedCaptionClips = ({
@@ -1367,7 +1457,7 @@ const createImportedCaptionClips = ({
   style: CaptionStyle;
   batchId: string;
 }): TimelineClip[] =>
-  parsedCaptions.flatMap(({startSeconds, endSeconds, text}, index) => {
+  parsedCaptions.flatMap(({ startSeconds, endSeconds, text }, index) => {
     const start = Math.max(0, Math.round(startSeconds * fps));
     const end = Math.min(timelineDuration, Math.round(endSeconds * fps));
 
@@ -1375,18 +1465,20 @@ const createImportedCaptionClips = ({
       return [];
     }
 
-    return [{
-      id: `${batchId}-${index}`,
-      label: text,
-      track: "caption",
-      start,
-      duration: end - start,
-      color: "#ef4444",
-      caption: {
-        ...style,
-        content: text,
+    return [
+      {
+        id: `${batchId}-${index}`,
+        label: text,
+        track: "caption",
+        start,
+        duration: end - start,
+        color: "#ef4444",
+        caption: {
+          ...style,
+          content: text,
+        },
       },
-    }];
+    ];
   });
 
 export const MyComposition = () => {
@@ -1403,7 +1495,7 @@ export const MyComposition = () => {
   );
 };
 
-export const MyComponent: React.FC<Props> = ({project}) => {
+export const MyComponent: React.FC<Props> = ({ project }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const musicInputRef = useRef<HTMLInputElement>(null);
   const stickerInputRef = useRef<HTMLInputElement>(null);
@@ -1411,7 +1503,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   const captionFileInputRef = useRef<HTMLInputElement>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const previewWindowRef = useRef<HTMLDivElement>(null);
-  const videoLayerControlDragRef = useRef<VideoLayerControlHistoryGesture | null>(null);
+  const videoLayerControlDragRef =
+    useRef<VideoLayerControlHistoryGesture | null>(null);
   const mediaPreviewVolumeDragRef = useRef(false);
   const previewSourceRef = useRef<string | null>(null);
   const timelineContentRef = useRef<HTMLDivElement>(null);
@@ -1436,18 +1529,22 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     ),
   );
   const nextSourceGroupIndexRef = useRef(nextSourceGroupIndex);
-  const [analyzingMediaItems, setAnalyzingMediaItems] = useState<AnalyzingMediaItem[]>([]);
+  const [analyzingMediaItems, setAnalyzingMediaItems] = useState<
+    AnalyzingMediaItem[]
+  >([]);
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(
     initialProject?.selectedMediaId ??
-    initialProject?.mediaItems[0]?.id ??
-    initialMediaItems[0].id,
+      initialProject?.mediaItems[0]?.id ??
+      initialMediaItems[0].id,
   );
   const [mediaPreviewTime, setMediaPreviewTime] = useState(0);
   const [mediaPreviewDuration, setMediaPreviewDuration] = useState(0);
   const [isMediaPreviewPlaying, setIsMediaPreviewPlaying] = useState(false);
   const [mediaPreviewVolume, setMediaPreviewVolume] = useState(1);
-  const [isMediaPreviewVolumeOpen, setIsMediaPreviewVolumeOpen] = useState(false);
-  const [isMediaPreviewVolumeAdjusting, setIsMediaPreviewVolumeAdjusting] = useState(false);
+  const [isMediaPreviewVolumeOpen, setIsMediaPreviewVolumeOpen] =
+    useState(false);
+  const [isMediaPreviewVolumeAdjusting, setIsMediaPreviewVolumeAdjusting] =
+    useState(false);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const [mediaPreviewFrame, setMediaPreviewFrame] = useState(0);
   const [projectStatus, setProjectStatus] = useState("");
@@ -1455,7 +1552,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   const [playheadFrame, setPlayheadFrame] = useState(0);
   const [selectedTrack, setSelectedTrack] = useState<TrackName>("main");
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
-  const [selectedVideoLayer, setSelectedVideoLayer] = useState<number | null>(null);
+  const [selectedVideoLayer, setSelectedVideoLayer] = useState<number | null>(
+    null,
+  );
   const selectedClipIdRef = useRef(selectedClipId);
   const autoCaptionRequestRef = useRef<symbol | null>(null);
   const autoCaptionAbortControllerRef = useRef<AbortController | null>(null);
@@ -1471,13 +1570,14 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   const [isAudioTrackVisible, setIsAudioTrackVisible] = useState(false);
   const [pointerDrag, setPointerDrag] = useState<PointerDrag | null>(null);
   const [trimDrag, setTrimDrag] = useState<TrimDrag | null>(null);
-  const [videoDropTarget, setVideoDropTarget] = useState<VideoDropTarget | null>(
-    null,
-  );
+  const [videoDropTarget, setVideoDropTarget] =
+    useState<VideoDropTarget | null>(null);
   const [replaceTargetClipId, setReplaceTargetClipId] = useState<string | null>(
     null,
   );
-  const [previewMode, setPreviewMode] = useState<"media" | "timeline">("timeline");
+  const [previewMode, setPreviewMode] = useState<"media" | "timeline">(
+    "timeline",
+  );
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubPointerId, setScrubPointerId] = useState<number | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -1486,23 +1586,30 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   const activeToolRef = useRef(activeTool);
   const [textDraft, setTextDraft] = useState("");
   const [captionDraft, setCaptionDraft] = useState("");
-  const [captionMode, setCaptionMode] = useState<"actions" | "manual" | "auto" | "upload" | "lyrics">("actions");
-  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(
-    defaultCaptionStyle,
-  );
-  const [captionStatus, setCaptionStatus] = useState<
-    {kind: "idle" | "loading" | "error" | "success"; message: string}
-  >({kind: "idle", message: ""});
+  const [captionMode, setCaptionMode] = useState<
+    "actions" | "manual" | "auto" | "upload" | "lyrics"
+  >("actions");
+  const [captionStyle, setCaptionStyle] =
+    useState<CaptionStyle>(defaultCaptionStyle);
+  const [captionStatus, setCaptionStatus] = useState<{
+    kind: "idle" | "loading" | "error" | "success";
+    message: string;
+  }>({ kind: "idle", message: "" });
   const [isAutoCaptionLoading, setIsAutoCaptionLoading] = useState(false);
   const [isKeepMainVoiceLoading, setIsKeepMainVoiceLoading] = useState(false);
-  const [stickerItems, setStickerItems] = useState<StickerItem[]>(builtInStickers);
-  const [stickerInteraction, setStickerInteraction] = useState<StickerInteraction | null>(null);
-  const [cutoutInteraction, setCutoutInteraction] = useState<StickerInteraction | null>(null);
+  const [stickerItems, setStickerItems] =
+    useState<StickerItem[]>(builtInStickers);
+  const [stickerInteraction, setStickerInteraction] =
+    useState<StickerInteraction | null>(null);
+  const [cutoutInteraction, setCutoutInteraction] =
+    useState<CutoutInteraction | null>(null);
   const [cutoutTimelineDrag, setCutoutTimelineDrag] =
     useState<TextTimelineDrag | null>(null);
   const cutoutMaskDragRef = useRef<CutoutMaskDrag | null>(null);
   const cutoutMaskCleanupRef = useRef<(() => void) | null>(null);
-  const [cutoutBrushMode, setCutoutBrushMode] = useState<"move" | "erase" | "restore">("move");
+  const [cutoutBrushMode, setCutoutBrushMode] = useState<
+    "move" | "erase" | "restore"
+  >("move");
   const [cutoutBrushSize, setCutoutBrushSize] = useState(12);
   const [isAutoCutoutLoading, setIsAutoCutoutLoading] = useState(false);
   const [textTimelineDrag, setTextTimelineDrag] =
@@ -1511,12 +1618,14 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     useState<TextPreviewDrag | null>(null);
   const [captionPreviewDrag, setCaptionPreviewDrag] =
     useState<CaptionPreviewDrag | null>(null);
-  const [textResizeDrag, setTextResizeDrag] =
-    useState<TextResizeDrag | null>(null);
+  const [textResizeDrag, setTextResizeDrag] = useState<TextResizeDrag | null>(
+    null,
+  );
   const [captionResizeDrag, setCaptionResizeDrag] =
     useState<CaptionResizeDrag | null>(null);
-  const [textRotateDrag, setTextRotateDrag] =
-    useState<TextRotateDrag | null>(null);
+  const [textRotateDrag, setTextRotateDrag] = useState<TextRotateDrag | null>(
+    null,
+  );
   const [cropInputMode, setCropInputMode] = useState<"sliders" | "manual">(
     "sliders",
   );
@@ -1529,9 +1638,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
   const projectDuration = useMemo(() => getTimelineDuration(clips), [clips]);
   const mainVideoLayerEnd = useMemo(() => getVideoLayerEnd(clips, 0), [clips]);
-  const draggedMediaItem = pointerDrag?.type === "media"
-    ? mediaItems.find((item) => item.id === pointerDrag.id)
-    : null;
+  const draggedMediaItem =
+    pointerDrag?.type === "media"
+      ? mediaItems.find((item) => item.id === pointerDrag.id)
+      : null;
   const mainAppendTargetWidth = draggedMediaItem
     ? Math.max(
         96,
@@ -1559,7 +1669,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     if (!pendingCommit) return;
 
     pendingAutoCutoutCommitRef.current = null;
-    const committedClip = clips.find((clip) => clip.id === pendingCommit.clipId);
+    const committedClip = clips.find(
+      (clip) => clip.id === pendingCommit.clipId,
+    );
     if (committedClip?.src === pendingCommit.processedSrc) {
       setProjectStatus("Background removed");
     }
@@ -1585,21 +1697,22 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   const mainClipSpeed = mainClip?.speed ?? 1;
   const mainClipVolume = mainClip?.volume ?? 1;
   const selectedClip = clips.find((clip) => clip.id === selectedClipId);
-  const selectedCaptionClip = selectedClip?.track === "caption" && selectedClip.caption
-    ? selectedClip
-    : null;
-  const selectedCaptionSourceClip = selectedClip &&
-    (
-      selectedClip.track === "main" || selectedClip.track === "upper"
-    ) &&
+  const selectedCaptionClip =
+    selectedClip?.track === "caption" && selectedClip.caption
+      ? selectedClip
+      : null;
+  const selectedCaptionSourceClip =
+    selectedClip &&
+    (selectedClip.track === "main" || selectedClip.track === "upper") &&
     selectedClip.src
-    ? selectedClip
-    : null;
-  const selectedMainVoiceClip = selectedClip?.track === "main" &&
+      ? selectedClip
+      : null;
+  const selectedMainVoiceClip =
+    selectedClip?.track === "main" &&
     selectedClip.mediaType !== "image" &&
     selectedClip.src
-    ? selectedClip
-    : null;
+      ? selectedClip
+      : null;
   const canKeepMainVoice = Boolean(
     selectedMainVoiceClip?.linkedClipId &&
     clips.some(
@@ -1625,26 +1738,36 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         .map(getVideoLayer)
         .filter((videoLayer): videoLayer is number => videoLayer !== null),
     );
-    const boundariesByLayer = new Map<number, Array<{
-      outgoingClipId: string;
-      incomingClipId: string;
-      frame: number;
-      outgoingLabel: string;
-      incomingLabel: string;
-      maxDuration: number;
-      duration: number;
-    }>>();
+    const boundariesByLayer = new Map<
+      number,
+      Array<{
+        outgoingClipId: string;
+        incomingClipId: string;
+        frame: number;
+        outgoingLabel: string;
+        incomingLabel: string;
+        maxDuration: number;
+        duration: number;
+      }>
+    >();
 
     for (const videoLayer of videoLayers) {
       const boundaries = getTimelineTransitionBoundaries(clips, videoLayer)
         .map((boundary) => {
-          const outgoingClip = clips.find((clip) => clip.id === boundary.outgoingClipId);
-          const incomingClip = clips.find((clip) => clip.id === boundary.incomingClipId);
+          const outgoingClip = clips.find(
+            (clip) => clip.id === boundary.outgoingClipId,
+          );
+          const incomingClip = clips.find(
+            (clip) => clip.id === boundary.incomingClipId,
+          );
           if (!outgoingClip || !incomingClip) {
             return null;
           }
 
-          const maxDuration = Math.min(outgoingClip.duration, incomingClip.duration);
+          const maxDuration = Math.min(
+            outgoingClip.duration,
+            incomingClip.duration,
+          );
 
           return {
             ...boundary,
@@ -1667,9 +1790,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
     return boundariesByLayer;
   }, [clips]);
-  const contextualAudioSelectionId = selectedClip?.track === "audio"
-    ? selectedClip.linkedClipId ?? null
-    : selectedClipId;
+  const contextualAudioSelectionId =
+    selectedClip?.track === "audio"
+      ? (selectedClip.linkedClipId ?? null)
+      : selectedClipId;
   const contextualAudioClips = useMemo(
     () => getContextualAudioClips(clips, contextualAudioSelectionId),
     [clips, contextualAudioSelectionId],
@@ -1683,25 +1807,27 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     clips,
     selectedVideoLayer,
   );
-  const {hasSelectedVideoLayer} = selectedVideoLayerControlState;
+  const { hasSelectedVideoLayer } = selectedVideoLayerControlState;
   const selectedTextClip =
     clipControlTarget?.track === "text" && clipControlTarget.text
       ? clipControlTarget
       : null;
+  const selectedTextContent = selectedTextClip?.text?.content ?? null;
   const selectedCutoutClip =
     clipControlTarget?.track === "cutout" && clipControlTarget.cutout
       ? clipControlTarget
       : null;
   const selectedCutoutRequestFingerprint =
     createCutoutRequestSnapshot(selectedCutoutClip)?.serializedClip ?? "";
-  const activeCutoutAtPlayhead = clips.find(
-    (clip) =>
-      clip.track === "cutout" &&
-      Boolean(clip.cutout) &&
-      !clip.hidden &&
-      playheadFrame >= clip.start &&
-      playheadFrame < clip.start + clip.duration,
-  ) ?? null;
+  const activeCutoutAtPlayhead =
+    clips.find(
+      (clip) =>
+        clip.track === "cutout" &&
+        Boolean(clip.cutout) &&
+        !clip.hidden &&
+        playheadFrame >= clip.start &&
+        playheadFrame < clip.start + clip.duration,
+    ) ?? null;
   const selectedCutoutCanSplit = Boolean(
     selectedCutoutClip &&
     playheadFrame > selectedCutoutClip.start &&
@@ -1709,7 +1835,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   );
   const splitCutoutTarget = selectedCutoutCanSplit
     ? selectedCutoutClip
-    : activeCutoutAtPlayhead ?? selectedCutoutClip;
+    : (activeCutoutAtPlayhead ?? selectedCutoutClip);
   const canSplitSelectedCutout = Boolean(
     splitCutoutTarget &&
     playheadFrame > splitCutoutTarget.start &&
@@ -1717,13 +1843,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   );
   const canResetSelectedCutout = Boolean(
     selectedCutoutClip &&
-    (
-      (selectedCutoutClip.cutout?.maskStrokes?.length ?? 0) > 0 ||
-      (
-        selectedCutoutClip.cutout?.originalSrc &&
-        selectedCutoutClip.src !== selectedCutoutClip.cutout.originalSrc
-      )
-    ),
+    ((selectedCutoutClip.cutout?.maskStrokes?.length ?? 0) > 0 ||
+      (selectedCutoutClip.cutout?.originalSrc &&
+        selectedCutoutClip.src !== selectedCutoutClip.cutout.originalSrc)),
   );
   const selectedTextStyle = {
     fontSize: selectedTextClip?.text?.fontSize ?? 42,
@@ -1739,16 +1861,20 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     ...defaultCaptionStyle,
     ...selectedCaptionClip?.caption,
   };
-  const selectedClipSpeed = clipControlTarget?.speed ?? selectedVideoLayerControlState.speed;
-  const selectedClipVolume = clipControlTarget?.volume ?? selectedVideoLayerControlState.volume;
+  const selectedClipSpeed =
+    clipControlTarget?.speed ?? selectedVideoLayerControlState.speed;
+  const selectedClipVolume =
+    clipControlTarget?.volume ?? selectedVideoLayerControlState.volume;
   const selectedClipEffect = clipControlTarget?.visual?.effect ?? "none";
   const selectedClipFilter = clipControlTarget?.visual?.filter ?? "none";
-  const selectedEffectIntensity = selectedClipEffect === "none"
-    ? 0
-    : clipControlTarget?.visual?.effectIntensity ?? 100;
-  const selectedFilterIntensity = selectedClipFilter === "none"
-    ? 0
-    : clipControlTarget?.visual?.filterIntensity ?? 100;
+  const selectedEffectIntensity =
+    selectedClipEffect === "none"
+      ? 0
+      : (clipControlTarget?.visual?.effectIntensity ?? 100);
+  const selectedFilterIntensity =
+    selectedClipFilter === "none"
+      ? 0
+      : (clipControlTarget?.visual?.filterIntensity ?? 100);
   const selectedClipAnimation = clipControlTarget?.animation ?? {
     preset: "none" as ClipAnimationPreset,
     timing: "start" as ClipAnimationTiming,
@@ -1761,47 +1887,51 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   };
   const rotateHandleLeft =
     selectedClipAdjustment.cropLeft +
-    (100 - selectedClipAdjustment.cropLeft - selectedClipAdjustment.cropRight) / 2;
+    (100 - selectedClipAdjustment.cropLeft - selectedClipAdjustment.cropRight) /
+      2;
   const rotateHandleTop = getVisibleRotateHandleTop(
     selectedClipAdjustment.cropTop,
   );
-  const canEditSelectedSpeed = hasSelectedVideoLayer ||
+  const canEditSelectedSpeed =
+    hasSelectedVideoLayer ||
     clipControlTarget?.track === "main" ||
     clipControlTarget?.track === "upper" ||
     clipControlTarget?.track === "cutout" ||
     clipControlTarget?.track === "audio";
   const canEditSelectedVisual =
     clipControlTarget?.track === "main" || clipControlTarget?.track === "upper";
-  const canEditSelectedVolume = hasSelectedVideoLayer || Boolean(
-    clipControlTarget &&
+  const canEditSelectedVolume =
+    hasSelectedVideoLayer ||
+    Boolean(
+      clipControlTarget &&
       clipControlTarget.track !== "sticker" &&
       clipControlTarget.cutout?.mediaKind !== "image",
-  );
-  const layerControlLabel = selectedVideoLayer === 0
-    ? "Main track"
-    : selectedVideoLayer === null
-      ? ""
-      : `Video layer ${selectedVideoLayer > 0 ? "+" : ""}${selectedVideoLayer}`;
-  const clipControlHeading = activeTool === "audio"
-    ? "Audio controls"
-    : activeTool === "animations"
-      ? "Animation controls"
-      : activeTool === "effects"
-        ? "Effect controls"
-        : activeTool === "filters"
-          ? "Filter controls"
-          : "Clip controls";
+    );
+  const layerControlLabel =
+    selectedVideoLayer === 0
+      ? "Main track"
+      : selectedVideoLayer === null
+        ? ""
+        : `Video layer ${selectedVideoLayer > 0 ? "+" : ""}${selectedVideoLayer}`;
+  const clipControlHeading =
+    activeTool === "audio"
+      ? "Audio controls"
+      : activeTool === "animations"
+        ? "Animation controls"
+        : activeTool === "effects"
+          ? "Effect controls"
+          : activeTool === "filters"
+            ? "Filter controls"
+            : "Clip controls";
   const selectedMedia = mediaItems.find((item) => item.id === selectedMediaId);
   const selectedMediaType = selectedMedia
     ? getMediaItemType(selectedMedia)
     : null;
   const isSelectedMediaScene =
-    selectedMediaType === "video" &&
-    isDetectedSceneMediaItem(selectedMedia);
+    selectedMediaType === "video" && isDetectedSceneMediaItem(selectedMedia);
   const mediaPreviewStartSeconds = (selectedMedia?.sourceStart ?? 0) / fps;
   const mediaPreviewEndSeconds =
-    mediaPreviewStartSeconds +
-    (selectedMedia?.durationInFrames ?? 0) / fps;
+    mediaPreviewStartSeconds + (selectedMedia?.durationInFrames ?? 0) / fps;
   const mediaPreviewSceneDurationSeconds =
     (selectedMedia?.durationInFrames ?? 0) / fps;
   const mediaPreviewSeekMinSeconds = isSelectedMediaScene
@@ -1851,13 +1981,15 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     firstClip.start - secondClip.start ||
     firstClip.id.localeCompare(secondClip.id);
   const activeVideoLayers = getActiveVideoLayersAtFrame(clips, playheadFrame);
-  const timelinePreviewVideoClips = clips.filter(
-    (clip) =>
-      (clip.track === "main" || clip.track === "upper") &&
-      clip.src &&
-      !clip.hidden &&
-      !isImageClip(clip),
-  ).sort(compareTimelinePreviewVideoClips);
+  const timelinePreviewVideoClips = clips
+    .filter(
+      (clip) =>
+        (clip.track === "main" || clip.track === "upper") &&
+        clip.src &&
+        !clip.hidden &&
+        !isImageClip(clip),
+    )
+    .sort(compareTimelinePreviewVideoClips);
   const previewVideoLayers = Array.from(
     new Set(
       clips
@@ -1875,8 +2007,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     const videoLayer = getVideoLayer(clip);
     return videoLayer === null ? 0 : previewVideoLayers.indexOf(videoLayer) + 1;
   };
-  const topVisibleVideoClip =
-    activeVideoLayers[activeVideoLayers.length - 1];
+  const topVisibleVideoClip = activeVideoLayers[activeVideoLayers.length - 1];
   const activeStickerClips = getActiveClipsAtFrame(
     clips,
     "sticker",
@@ -1898,12 +2029,14 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     playheadFrame,
   ).filter((clip) => clip.caption);
   const transcriptClips = useMemo(
-    () => clips
-      .filter((clip) =>
-        clip.track === "caption" &&
-        clip.caption?.generationId?.startsWith("transcript-"),
-      )
-      .sort((a, b) => a.start - b.start),
+    () =>
+      clips
+        .filter(
+          (clip) =>
+            clip.track === "caption" &&
+            clip.caption?.generationId?.startsWith("transcript-"),
+        )
+        .sort((a, b) => a.start - b.start),
     [clips],
   );
   const playbackAudioClips = useMemo(
@@ -1913,79 +2046,95 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     ],
     [clips, playheadFrame],
   );
-  const timelineRows = useMemo<TimelineRow[]>(
-    () => {
-      const secondaryVideoLayers = Array.from(
-        new Set(
-          clips
-            .map(getVideoLayer)
-            .filter((layer): layer is number => layer !== null && layer !== 0),
-        ),
-      );
-      const upperLayers = secondaryVideoLayers
-        .filter((layer) => layer > 0)
-        .sort((a, b) => b - a);
-      const lowerLayers = secondaryVideoLayers
-        .filter((layer) => layer < 0)
-        .sort((a, b) => b - a);
+  const timelineRows = useMemo<TimelineRow[]>(() => {
+    const secondaryVideoLayers = Array.from(
+      new Set(
+        clips
+          .map(getVideoLayer)
+          .filter((layer): layer is number => layer !== null && layer !== 0),
+      ),
+    );
+    const upperLayers = secondaryVideoLayers
+      .filter((layer) => layer > 0)
+      .sort((a, b) => b - a);
+    const lowerLayers = secondaryVideoLayers
+      .filter((layer) => layer < 0)
+      .sort((a, b) => b - a);
 
-      return [
-        ...upperLayers.map((videoLayer) => ({
-          key: `video-${videoLayer}`,
-          id: "upper" as TrackName,
-          label: "",
-          videoLayer,
-        })),
-        ...(hasClipsOnTrack(clips, "sticker")
-          ? [{key: "sticker", id: "sticker" as TrackName, label: "Sticker track"}]
-          : []),
-        ...(hasClipsOnTrack(clips, "cutout")
-          ? [{key: "cutout", id: "cutout" as TrackName, label: "Cutout track"}]
-          : []),
-        ...(hasClipsOnTrack(clips, "text")
-          ? [{key: "text", id: "text" as TrackName, label: "Text track"}]
-          : []),
-        ...(hasClipsOnTrack(clips, "caption")
-          ? [{key: "caption", id: "caption" as TrackName, label: "Caption track"}]
-          : []),
-        {key: "main", id: "main" as TrackName, label: "Main track", videoLayer: 0},
-        ...lowerLayers.map((videoLayer) => ({
-          key: `video-${videoLayer}`,
-          id: "upper" as TrackName,
-          label: "",
-          videoLayer,
-        })),
-        ...((isAudioTrackVisible && contextualAudioClips.length > 0) ||
-        (activeTool === "audio" && hasClipsOnTrack(clips, "audio"))
-          ? [{key: "audio", id: "audio" as TrackName, label: "Audio track"}]
-          : []),
-      ];
-    },
-    [activeTool, contextualAudioClips.length, clips, isAudioTrackVisible],
-  );
-  const previewSource = previewMode === "timeline"
-    ? topVisibleVideoClip
-    : selectedMedia
-      ? {
-          id: selectedMedia.id,
-          label: selectedMedia.label,
-          src: selectedMedia.src,
-          mediaType: getMediaItemType(selectedMedia),
-          start: 0,
-          speed: mainClipSpeed,
-          volume: mainClipVolume,
-        }
-      : undefined;
+    return [
+      ...upperLayers.map((videoLayer) => ({
+        key: `video-${videoLayer}`,
+        id: "upper" as TrackName,
+        label: "",
+        videoLayer,
+      })),
+      ...(hasClipsOnTrack(clips, "sticker")
+        ? [
+            {
+              key: "sticker",
+              id: "sticker" as TrackName,
+              label: "Sticker track",
+            },
+          ]
+        : []),
+      ...(hasClipsOnTrack(clips, "cutout")
+        ? [{ key: "cutout", id: "cutout" as TrackName, label: "Cutout track" }]
+        : []),
+      ...(hasClipsOnTrack(clips, "text")
+        ? [{ key: "text", id: "text" as TrackName, label: "Text track" }]
+        : []),
+      ...(hasClipsOnTrack(clips, "caption")
+        ? [
+            {
+              key: "caption",
+              id: "caption" as TrackName,
+              label: "Caption track",
+            },
+          ]
+        : []),
+      {
+        key: "main",
+        id: "main" as TrackName,
+        label: "Main track",
+        videoLayer: 0,
+      },
+      ...lowerLayers.map((videoLayer) => ({
+        key: `video-${videoLayer}`,
+        id: "upper" as TrackName,
+        label: "",
+        videoLayer,
+      })),
+      ...((isAudioTrackVisible && contextualAudioClips.length > 0) ||
+      (activeTool === "audio" && hasClipsOnTrack(clips, "audio"))
+        ? [{ key: "audio", id: "audio" as TrackName, label: "Audio track" }]
+        : []),
+    ];
+  }, [activeTool, contextualAudioClips.length, clips, isAudioTrackVisible]);
+  const previewSource =
+    previewMode === "timeline"
+      ? topVisibleVideoClip
+      : selectedMedia
+        ? {
+            id: selectedMedia.id,
+            label: selectedMedia.label,
+            src: selectedMedia.src,
+            mediaType: getMediaItemType(selectedMedia),
+            start: 0,
+            speed: mainClipSpeed,
+            volume: mainClipVolume,
+          }
+        : undefined;
   const isTimelinePreview = previewMode === "timeline";
-  const isCanvasPreviewPlaying = previewMode === "media"
-    ? isMediaPreviewPlaying
-    : isPreviewPlaying;
-  const previewSpeed = previewMode === "timeline"
-    ? topVisibleVideoClip?.speed ?? 1
-    : mainClipSpeed;
-  const previewVolume = previewMode === "timeline"
-    ? topVisibleVideoClip?.volume ?? 1
-    : mainClipVolume;
+  const isCanvasPreviewPlaying =
+    previewMode === "media" ? isMediaPreviewPlaying : isPreviewPlaying;
+  const previewSpeed =
+    previewMode === "timeline"
+      ? (topVisibleVideoClip?.speed ?? 1)
+      : mainClipSpeed;
+  const previewVolume =
+    previewMode === "timeline"
+      ? (topVisibleVideoClip?.volume ?? 1)
+      : mainClipVolume;
   const previewVideoMuted =
     previewVolume === 0 ||
     (previewMode === "timeline" &&
@@ -1994,7 +2143,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         playheadFrame,
         topVisibleVideoClip?.id ?? null,
       ));
-  const hasAudioTimelineRow = timelineRows.some((track) => track.id === "audio");
+  const hasAudioTimelineRow = timelineRows.some(
+    (track) => track.id === "audio",
+  );
 
   useEffect(() => {
     mediaPreviewVolumeDragRef.current = false;
@@ -2018,22 +2169,23 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   }, [activeTool, selectedCaptionClip]);
 
   useEffect(() => {
-    if (activeTool !== "text" || !selectedTextClip?.text) {
+    if (activeTool !== "text" || selectedTextContent === null) {
       return;
     }
-    setTextDraft(selectedTextClip.text.content);
-  }, [activeTool, selectedTextClip?.id, selectedTextClip?.text?.content]);
+    setTextDraft(selectedTextContent);
+  }, [activeTool, selectedTextClip?.id, selectedTextContent]);
 
-  const commitClipChange = useCallback((
-    updater: (currentClips: TimelineClip[]) => TimelineClip[],
-  ) => {
-    setTimelineHistory((currentHistory) =>
-      applyTimelineHistoryEdit(
-        currentHistory,
-        updater(currentHistory.present),
-      ),
-    );
-  }, []);
+  const commitClipChange = useCallback(
+    (updater: (currentClips: TimelineClip[]) => TimelineClip[]) => {
+      setTimelineHistory((currentHistory) =>
+        applyTimelineHistoryEdit(
+          currentHistory,
+          updater(currentHistory.present),
+        ),
+      );
+    },
+    [],
+  );
 
   const undoLastClipChange = () => {
     setTimelineHistory(undoTimelineHistory);
@@ -2045,7 +2197,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
   const resetCaptionStatus = () => {
     if (captionStatus.kind !== "idle") {
-      setCaptionStatus({kind: "idle", message: ""});
+      setCaptionStatus({ kind: "idle", message: "" });
     }
   };
 
@@ -2061,7 +2213,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     keepMainVoiceAbortControllerRef.current = null;
     keepMainVoiceRequestRef.current = null;
     setIsKeepMainVoiceLoading(false);
-    setCaptionStatus({kind: "idle", message: ""});
+    setCaptionStatus({ kind: "idle", message: "" });
   }, []);
 
   useEffect(() => {
@@ -2104,11 +2256,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
   useEffect(() => {
     abortAutoCutoutRequest();
-  }, [
-    selectedCutoutRequestFingerprint,
-    activeTool,
-    abortAutoCutoutRequest,
-  ]);
+  }, [selectedCutoutRequestFingerprint, activeTool, abortAutoCutoutRequest]);
 
   useEffect(() => {
     return () => abortAutoCutoutRequest();
@@ -2254,13 +2402,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
   const updateSelectedCaptionStyle = (style: Partial<CaptionStyle>) => {
     commitClipChange((currentClips) =>
-      setCaptionStyleById(
-        currentClips,
-        selectedCaptionClip?.id ?? null,
-        style,
-      ),
+      setCaptionStyleById(currentClips, selectedCaptionClip?.id ?? null, style),
     );
-    setCaptionStyle((currentStyle) => ({...currentStyle, ...style}));
+    setCaptionStyle((currentStyle) => ({ ...currentStyle, ...style }));
     setPreviewMode("timeline");
   };
 
@@ -2270,7 +2414,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     commitClipChange((currentClips) =>
       currentClips.map((clip) =>
         clip.id === selectedCaptionClip.id && clip.caption
-          ? {...clip, label: content, caption: {...clip.caption, content}}
+          ? { ...clip, label: content, caption: { ...clip.caption, content } }
           : clip,
       ),
     );
@@ -2279,22 +2423,21 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
   const updateSelectedTextRotation = (rotation: number) => {
     commitClipChange((currentClips) =>
-      setTextRotationById(
-        currentClips,
-        selectedTextClip?.id ?? null,
-        rotation,
-      ),
+      setTextRotationById(currentClips, selectedTextClip?.id ?? null, rotation),
     );
     setPreviewMode("timeline");
   };
 
-  const getCurrentSavedProject = useCallback(() =>
-    createSavedEditorProject({
-      clips,
-      mediaItems,
-      selectedMediaId,
-      nextSourceGroupIndex,
-    }), [clips, mediaItems, nextSourceGroupIndex, selectedMediaId]);
+  const getCurrentSavedProject = useCallback(
+    () =>
+      createSavedEditorProject({
+        clips,
+        mediaItems,
+        selectedMediaId,
+        nextSourceGroupIndex,
+      }),
+    [clips, mediaItems, nextSourceGroupIndex, selectedMediaId],
+  );
 
   const saveProjectToStorage = useCallback(() => {
     try {
@@ -2302,7 +2445,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       const serializedProject = JSON.stringify(nextProject, null, 2);
       persistProjectToStorage(nextProject);
       downloadBrowserFile(
-        new Blob([serializedProject], {type: "application/json"}),
+        new Blob([serializedProject], { type: "application/json" }),
         `video-editor-project-${Date.now()}.json`,
       );
       setProjectStatus("Project saved and downloaded");
@@ -2353,7 +2496,12 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     return () => {
       video.removeEventListener("loadedmetadata", seekToMediaPreviewStart);
     };
-  }, [isSelectedMediaScene, mediaPreviewStartSeconds, previewMode, selectedMediaId]);
+  }, [
+    isSelectedMediaScene,
+    mediaPreviewStartSeconds,
+    previewMode,
+    selectedMediaId,
+  ]);
 
   const exportProjectVideo = useCallback(async () => {
     if (isExporting) {
@@ -2365,7 +2513,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
     if (
       nextProject.clips.some((clip) => isBrowserOnlySource(clip.src)) ||
-      nextProject.mediaItems.some((mediaItem) => isBrowserOnlySource(mediaItem.src))
+      nextProject.mediaItems.some((mediaItem) =>
+        isBrowserOnlySource(mediaItem.src),
+      )
     ) {
       setProjectStatus(
         "Please import old browser-only clips again before exporting.",
@@ -2379,8 +2529,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     try {
       const response = await fetch("/api/export", {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({project: nextProject}),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: nextProject }),
       });
 
       if (!response.ok) {
@@ -2388,7 +2538,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         let message = responseBody;
         try {
           const parsed = JSON.parse(responseBody) as {
-            error?: {message?: string};
+            error?: { message?: string };
           };
           message = parsed.error?.message ?? responseBody;
         } catch {
@@ -2539,7 +2689,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       clipId: clipControlTarget.id,
       centerX: bounds.left + bounds.width / 2,
       centerY: bounds.top + bounds.height / 2,
-      rotationOffset: selectedClipAdjustment.rotation -
+      rotationOffset:
+        selectedClipAdjustment.rotation -
         getManualRotationAngle(
           bounds.left + bounds.width / 2,
           bounds.top + bounds.height / 2,
@@ -2566,11 +2717,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       return;
     }
 
-    const nextClips = splitClipByIdAtFrame(
-      clips,
-      targetClip.id,
-      playheadFrame,
-    );
+    const nextClips = splitClipByIdAtFrame(clips, targetClip.id, playheadFrame);
     if (nextClips === clips) {
       setProjectStatus("Move the red playhead inside the selected clip");
       return;
@@ -2586,7 +2733,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     if (isAutoCutoutLoading) return;
     if (!splitCutoutTarget) return;
     if (!canSplitSelectedCutout) {
-      setProjectStatus("Move the red playhead inside the cutout before splitting");
+      setProjectStatus(
+        "Move the red playhead inside the cutout before splitting",
+      );
       return;
     }
     const nextClips = splitClipByIdAtFrame(
@@ -2625,36 +2774,48 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     );
     setSelectedTrack("upper");
     setPreviewMode("timeline");
-    setIsAudioTrackVisible(sourceClip?.track === "audio" || Boolean(sourceClip?.linkedClipId));
+    setIsAudioTrackVisible(
+      sourceClip?.track === "audio" || Boolean(sourceClip?.linkedClipId),
+    );
   };
 
   const toggleClipMute = (clipId: string) => {
-    commitClipChange((currentClips) => toggleClipMuteById(currentClips, clipId));
+    commitClipChange((currentClips) =>
+      toggleClipMuteById(currentClips, clipId),
+    );
     setPreviewMode("timeline");
   };
 
-  const selectTransitionBoundary = useCallback((
-    incomingClipId: string,
-    track: TrackName,
-  ) => {
-    setSelectedVideoLayer(null);
-    setSelectedClipId(incomingClipId);
-    setSelectedTrack(track);
-    setIsAudioTrackVisible(false);
-    setActiveTool("animations");
-    setPreviewMode("timeline");
-  }, []);
+  const selectTransitionBoundary = useCallback(
+    (incomingClipId: string, track: TrackName) => {
+      setSelectedVideoLayer(null);
+      setSelectedClipId(incomingClipId);
+      setSelectedTrack(track);
+      setIsAudioTrackVisible(false);
+      setActiveTool("animations");
+      setPreviewMode("timeline");
+    },
+    [],
+  );
 
-  const selectTimelineClip = (clip: TimelineClip, pointerFrame?: number | null) => {
+  const selectTimelineClip = (
+    clip: TimelineClip,
+    pointerFrame?: number | null,
+  ) => {
     setSelectedVideoLayer(null);
     setSelectedClipId(clip.id);
     setSelectedTrack(clip.track);
-    const isVideoClip = clip.track === "main" || clip.track === "upper" || clip.track === "cutout";
+    const isVideoClip =
+      clip.track === "main" ||
+      clip.track === "upper" ||
+      clip.track === "cutout";
     if (isVideoClip && pointerFrame !== null && pointerFrame !== undefined) {
-      setPlayheadFrame(Math.max(
-        clip.start,
-        Math.min(clip.start + clip.duration - 1, pointerFrame),
-      ));
+      setPlayheadFrame(
+        Math.max(
+          clip.start,
+          Math.min(clip.start + clip.duration - 1, pointerFrame),
+        ),
+      );
       setPreviewMode("timeline");
     } else if (clip.track === "text" || clip.track === "caption") {
       setPlayheadFrame(Math.max(clip.start, clip.start + clip.duration - 1));
@@ -2662,10 +2823,12 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     }
     if (clip.track === "text") {
       setActiveTool("text");
+    } else if (clip.track === "caption") {
+      setCaptionMode("manual");
+      setActiveTool("captions");
     }
-    const contextualSelectionId = clip.track === "audio"
-      ? clip.linkedClipId ?? null
-      : clip.id;
+    const contextualSelectionId =
+      clip.track === "audio" ? (clip.linkedClipId ?? null) : clip.id;
     setIsAudioTrackVisible(
       getContextualAudioClips(clips, contextualSelectionId).length > 0,
     );
@@ -2673,14 +2836,16 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
   const selectTrackClipAtFrame = (track: TrackName, frame: number) => {
     setSelectedVideoLayer(null);
-    const clip = getActiveClipAtFrame(clips, track, frame) ??
+    const clip =
+      getActiveClipAtFrame(clips, track, frame) ??
       clips.find((candidate) => candidate.track === track);
 
     setSelectedTrack(track);
     setSelectedClipId(clip?.id ?? null);
-    const contextualSelectionId = clip?.track === "audio"
-      ? clip.linkedClipId ?? null
-      : clip?.id ?? null;
+    const contextualSelectionId =
+      clip?.track === "audio"
+        ? (clip.linkedClipId ?? null)
+        : (clip?.id ?? null);
     setIsAudioTrackVisible(
       getContextualAudioClips(clips, contextualSelectionId).length > 0,
     );
@@ -2688,18 +2853,20 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
   const selectVideoLayerClipAtFrame = (videoLayer: number, frame: number) => {
     setSelectedVideoLayer(null);
-    const clip = clips.find(
-      (candidate) =>
-        getVideoLayer(candidate) === videoLayer &&
-        frame >= candidate.start &&
-        frame < candidate.start + candidate.duration,
-    ) ?? clips.find((candidate) => getVideoLayer(candidate) === videoLayer);
+    const clip =
+      clips.find(
+        (candidate) =>
+          getVideoLayer(candidate) === videoLayer &&
+          frame >= candidate.start &&
+          frame < candidate.start + candidate.duration,
+      ) ?? clips.find((candidate) => getVideoLayer(candidate) === videoLayer);
 
     setSelectedTrack(videoLayer === 0 ? "main" : "upper");
     setSelectedClipId(clip?.id ?? null);
-    const contextualSelectionId = clip?.track === "audio"
-      ? clip.linkedClipId ?? null
-      : clip?.id ?? null;
+    const contextualSelectionId =
+      clip?.track === "audio"
+        ? (clip.linkedClipId ?? null)
+        : (clip?.id ?? null);
     setIsAudioTrackVisible(
       getContextualAudioClips(clips, contextualSelectionId).length > 0,
     );
@@ -2712,7 +2879,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     setSelectedTrack(videoLayer === 0 ? "main" : "upper");
     setIsAudioTrackVisible(
       clips.some(
-        (clip) => getVideoLayer(clip) === videoLayer && Boolean(clip.linkedClipId),
+        (clip) =>
+          getVideoLayer(clip) === videoLayer && Boolean(clip.linkedClipId),
       ),
     );
   };
@@ -2722,23 +2890,26 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     selectTrackClipAtFrame("audio", playheadFrame);
   };
 
-  const addStickerAtPlayhead = useCallback((stickerItem: StickerItem) => {
-    const id = `sticker-${Date.now()}-${stickerItem.id}`;
-    const stickerClip = createStickerClip({
-      id,
-      label: stickerItem.label,
-      src: stickerItem.src,
-      playheadFrame,
-    });
+  const addStickerAtPlayhead = useCallback(
+    (stickerItem: StickerItem) => {
+      const id = `sticker-${Date.now()}-${stickerItem.id}`;
+      const stickerClip = createStickerClip({
+        id,
+        label: stickerItem.label,
+        src: stickerItem.src,
+        playheadFrame,
+      });
 
-    commitClipChange((currentClips) =>
-      appendStickerClip(currentClips, stickerClip),
-    );
-    setSelectedClipId(id);
-    setSelectedTrack("sticker");
-    setIsAudioTrackVisible(false);
-    setPreviewMode("timeline");
-  }, [commitClipChange, playheadFrame]);
+      commitClipChange((currentClips) =>
+        appendStickerClip(currentClips, stickerClip),
+      );
+      setSelectedClipId(id);
+      setSelectedTrack("sticker");
+      setIsAudioTrackVisible(false);
+      setPreviewMode("timeline");
+    },
+    [commitClipChange, playheadFrame],
+  );
 
   const uploadSticker = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files ?? []).filter((file) =>
@@ -2763,7 +2934,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   ) => {
     const input = event.currentTarget;
     const selectedFiles = Array.from(input.files ?? []).filter(
-      (file) => file.type.startsWith("image/") || file.type.startsWith("video/"),
+      (file) =>
+        file.type.startsWith("image/") || file.type.startsWith("video/"),
     );
 
     if (selectedFiles.length === 0) return;
@@ -2782,7 +2954,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                 : Promise.resolve(90),
               uploadMediaFile(file),
             ]);
-            const label = (uploadedMedia.label || file.name).replace(/\.[^.]+$/, "");
+            const label = (uploadedMedia.label || file.name).replace(
+              /\.[^.]+$/,
+              "",
+            );
 
             if (!isVideo) {
               return [
@@ -2829,7 +3004,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   };
 
   const processSelectedCutoutAutomatically = async (): Promise<void> => {
-    const requestTiming = createAutomaticCutoutRequestTiming(selectedCutoutClip, fps);
+    const requestTiming = createAutomaticCutoutRequestTiming(
+      selectedCutoutClip,
+      fps,
+    );
     const mediaKind = selectedCutoutClip?.cutout?.mediaKind;
     if (
       !requestTiming ||
@@ -2844,17 +3022,24 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
     const requestToken = Symbol("auto-cutout-request");
     const abortController = new AbortController();
-    const {requestSnapshot, requestSource, sourceStartSeconds, durationSeconds} = requestTiming;
+    const {
+      requestSnapshot,
+      requestSource,
+      sourceStartSeconds,
+      durationSeconds,
+    } = requestTiming;
     const clipId = requestSnapshot.clipId;
     const originalSource = requestSource.src;
     const selectionStillMatches = (currentClips: TimelineClip[]) => {
       const currentClip = currentClips.find((clip) => clip.id === clipId);
-      return activeToolRef.current === "cutout" &&
+      return (
+        activeToolRef.current === "cutout" &&
         isCutoutRequestSnapshotCurrent(
           requestSnapshot,
           selectedClipIdRef.current,
           currentClip,
-        );
+        )
+      );
     };
     const requestIsActive = () =>
       autoCutoutRequestRef.current === requestToken &&
@@ -2880,7 +3065,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         [sourceBlob],
         getCaptionSourceFileName(selectedCutoutClip, sourceBlob),
         {
-          type: sourceBlob.type || (mediaKind === "image" ? "image/png" : "video/mp4"),
+          type:
+            sourceBlob.type ||
+            (mediaKind === "image" ? "image/png" : "video/mp4"),
         },
       );
       const formData = new FormData();
@@ -2899,10 +3086,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       let payload: {
         src?: string;
         mimeType?: string;
-        error?: {message?: string};
+        error?: { message?: string };
       };
       try {
-        payload = await response.json() as typeof payload;
+        payload = (await response.json()) as typeof payload;
       } catch {
         throw new Error(
           response.ok
@@ -2948,7 +3135,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     if (!content) return;
 
     const id = `text-${Date.now()}`;
-    const textClip = createTextClip({id, content, playheadFrame});
+    const textClip = createTextClip({ id, content, playheadFrame });
     commitClipChange((currentClips) => [...currentClips, textClip]);
     setSelectedClipId(id);
     setSelectedTrack("text");
@@ -3002,41 +3189,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       backgroundColor: captionClip.caption.backgroundColor,
     });
     setCaptionMode("manual");
-    setCaptionStatus({kind: "success", message: "Caption added"});
-  };
-
-  const applySelectedCaption = () => {
-    if (!selectedCaptionClip?.caption) {
-      return;
-    }
-
-    const content = captionDraft.trim();
-    if (!content) {
-      setCaptionStatus({
-        kind: "error",
-        message: "Enter caption text before updating the selection.",
-      });
-      return;
-    }
-
-    commitClipChange((currentClips) =>
-      currentClips.map((clip) =>
-        clip.id === selectedCaptionClip.id && clip.caption
-          ? {
-              ...clip,
-              label: content,
-              caption: {
-                ...clip.caption,
-                ...captionStyle,
-                content,
-              },
-            }
-          : clip
-      ),
-    );
-    setSelectedTrack("caption");
-    setPreviewMode("timeline");
-    setCaptionStatus({kind: "success", message: "Selected caption updated"});
+    setCaptionStatus({ kind: "success", message: "Caption added" });
   };
 
   const uploadCaptionFile = async (
@@ -3068,10 +3221,15 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       });
 
       if (importedCaptions.length === 0) {
-        throw new Error("No valid caption cues could be imported from this file.");
+        throw new Error(
+          "No valid caption cues could be imported from this file.",
+        );
       }
 
-      commitClipChange((currentClips) => [...currentClips, ...importedCaptions]);
+      commitClipChange((currentClips) => [
+        ...currentClips,
+        ...importedCaptions,
+      ]);
       setSelectedClipId(importedCaptions[0]?.id ?? null);
       setSelectedTrack("caption");
       setIsAudioTrackVisible(false);
@@ -3083,258 +3241,273 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     } catch (error) {
       setCaptionStatus({
         kind: "error",
-        message: error instanceof Error
-          ? error.message
-          : "Caption file import failed. Please try another file.",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Caption file import failed. Please try another file.",
       });
     }
 
     event.currentTarget.value = "";
   };
 
-  const generateCaptionBatch = useCallback(async (kind: "auto" | "lyrics" | "transcript") => {
-    if (autoCaptionRequestRef.current) {
-      abortAutoCaptionRequest();
-    }
+  const generateCaptionBatch = useCallback(
+    async (kind: "auto" | "lyrics" | "transcript") => {
+      if (autoCaptionRequestRef.current) {
+        abortAutoCaptionRequest();
+      }
 
-    if (!selectedCaptionSourceClip) {
+      if (!selectedCaptionSourceClip) {
+        setCaptionStatus({
+          kind: "error",
+          message:
+            kind === "lyrics"
+              ? "Select a main or upper video clip before generating auto lyrics."
+              : kind === "transcript"
+                ? "Select a main or upper video clip before generating a transcript."
+                : "Select a main or upper video clip before generating auto captions.",
+        });
+        return;
+      }
+
+      const requestToken = Symbol("auto-caption-request");
+      const selectionVersion = autoCaptionSelectionVersionRef.current;
+      const sourceClipId = selectedCaptionSourceClip.id;
+      const sourceClipSrc = selectedCaptionSourceClip.src;
+      const sourceClipSourceStart = selectedCaptionSourceClip.sourceStart ?? 0;
+      const sourceClipDuration = selectedCaptionSourceClip.duration;
+      const sourceClipSpeed = selectedCaptionSourceClip.speed ?? 1;
+      const sourceStartSeconds =
+        (selectedCaptionSourceClip.sourceStart ?? 0) / fps;
+      const sourceDurationSeconds =
+        (selectedCaptionSourceClip.duration *
+          (selectedCaptionSourceClip.speed ?? 1)) /
+        fps;
+      const abortController = new AbortController();
+      const isActiveAutoCaptionRequest = () =>
+        autoCaptionRequestRef.current === requestToken &&
+        autoCaptionSelectionVersionRef.current === selectionVersion;
+      autoCaptionRequestRef.current = requestToken;
+      autoCaptionAbortControllerRef.current = abortController;
+      setIsAutoCaptionLoading(true);
       setCaptionStatus({
-        kind: "error",
-        message: kind === "lyrics"
-          ? "Select a main or upper video clip before generating auto lyrics."
-          : kind === "transcript"
-            ? "Select a main or upper video clip before generating a transcript."
-            : "Select a main or upper video clip before generating auto captions.",
+        kind: "loading",
+        message:
+          kind === "lyrics"
+            ? "Generating auto lyrics..."
+            : kind === "transcript"
+              ? "Transcribing selected clip..."
+              : "Generating auto captions...",
       });
-      return;
-    }
 
-    const requestToken = Symbol("auto-caption-request");
-    const selectionVersion = autoCaptionSelectionVersionRef.current;
-    const sourceClipId = selectedCaptionSourceClip.id;
-    const sourceClipSrc = selectedCaptionSourceClip.src;
-    const sourceClipSourceStart = selectedCaptionSourceClip.sourceStart ?? 0;
-    const sourceClipDuration = selectedCaptionSourceClip.duration;
-    const sourceClipSpeed = selectedCaptionSourceClip.speed ?? 1;
-    const sourceStartSeconds = ((selectedCaptionSourceClip.sourceStart ?? 0) / fps);
-    const sourceDurationSeconds = (selectedCaptionSourceClip.duration * (selectedCaptionSourceClip.speed ?? 1)) / fps;
-    const abortController = new AbortController();
-    const isActiveAutoCaptionRequest = () =>
-      autoCaptionRequestRef.current === requestToken &&
-      autoCaptionSelectionVersionRef.current === selectionVersion;
-    autoCaptionRequestRef.current = requestToken;
-    autoCaptionAbortControllerRef.current = abortController;
-    setIsAutoCaptionLoading(true);
-    setCaptionStatus({
-      kind: "loading",
-      message: kind === "lyrics"
-        ? "Generating auto lyrics..."
-        : kind === "transcript"
-          ? "Transcribing selected clip..."
-          : "Generating auto captions...",
-    });
-
-    try {
-      const clipResponse = await fetch(resolveMediaSource(selectedCaptionSourceClip.src!), {
-        signal: abortController.signal,
-      });
-      if (!isActiveAutoCaptionRequest()) {
-        return;
-      }
-      if (!clipResponse.ok) {
-        throw new Error("Could not load the selected clip for auto captions.");
-      }
-
-      const clipBlob = await clipResponse.blob();
-      if (!isActiveAutoCaptionRequest()) {
-        return;
-      }
-      const clipFileName = getCaptionSourceFileName(
-        selectedCaptionSourceClip,
-        clipBlob,
-      );
-      const clipFile = new File([clipBlob], clipFileName, {type: clipBlob.type || "application/octet-stream"});
-      const formData = new FormData();
-      formData.append("file", clipFile);
-      formData.append("sourceStart", String(sourceStartSeconds));
-      formData.append("duration", String(sourceDurationSeconds));
-
-      const transcriptionResponse = await fetch("/api/transcribe", {
-        method: "POST",
-        body: formData,
-        signal: abortController.signal,
-      });
-      if (!isActiveAutoCaptionRequest()) {
-        return;
-      }
-
-      let payload: unknown;
       try {
-        payload = await transcriptionResponse.json();
-      } catch {
+        const clipResponse = await fetch(
+          resolveMediaSource(selectedCaptionSourceClip.src!),
+          {
+            signal: abortController.signal,
+          },
+        );
         if (!isActiveAutoCaptionRequest()) {
           return;
         }
-        throw new Error(
-          transcriptionResponse.ok
-            ? "Transcription response did not include caption segments."
-            : kind === "lyrics"
-              ? "Auto lyric generation failed. Please try again."
-              : kind === "transcript"
-                ? "Transcript generation failed. Please try again."
-                : "Auto caption generation failed. Please try again.",
+        if (!clipResponse.ok) {
+          throw new Error(
+            "Could not load the selected clip for auto captions.",
+          );
+        }
+
+        const clipBlob = await clipResponse.blob();
+        if (!isActiveAutoCaptionRequest()) {
+          return;
+        }
+        const clipFileName = getCaptionSourceFileName(
+          selectedCaptionSourceClip,
+          clipBlob,
         );
-      }
-      if (!isActiveAutoCaptionRequest()) {
-        return;
-      }
-      const serverErrorMessage =
-        typeof payload === "object" &&
-        payload !== null &&
-        !Array.isArray(payload) &&
-        "error" in payload &&
-        typeof payload.error === "object" &&
-        payload.error !== null &&
-        "message" in payload.error &&
-        typeof payload.error.message === "string" &&
-        payload.error.message.trim()
-          ? payload.error.message.trim()
-          : null;
-      if (!transcriptionResponse.ok) {
-        throw new Error(
-          serverErrorMessage ??
-            (
-              kind === "lyrics"
+        const clipFile = new File([clipBlob], clipFileName, {
+          type: clipBlob.type || "application/octet-stream",
+        });
+        const formData = new FormData();
+        formData.append("file", clipFile);
+        formData.append("sourceStart", String(sourceStartSeconds));
+        formData.append("duration", String(sourceDurationSeconds));
+
+        const transcriptionResponse = await fetch("/api/transcribe", {
+          method: "POST",
+          body: formData,
+          signal: abortController.signal,
+        });
+        if (!isActiveAutoCaptionRequest()) {
+          return;
+        }
+
+        let payload: unknown;
+        try {
+          payload = await transcriptionResponse.json();
+        } catch {
+          if (!isActiveAutoCaptionRequest()) {
+            return;
+          }
+          throw new Error(
+            transcriptionResponse.ok
+              ? "Transcription response did not include caption segments."
+              : kind === "lyrics"
                 ? "Auto lyric generation failed. Please try again."
                 : kind === "transcript"
                   ? "Transcript generation failed. Please try again."
-                  : "Auto caption generation failed. Please try again."
-            ),
-        );
-      }
-      if (
-        typeof payload !== "object" ||
-        payload === null ||
-        Array.isArray(payload) ||
-        !("segments" in payload) ||
-        !Array.isArray(payload.segments)
-      ) {
-        throw new Error("Transcription response did not include caption segments.");
-      }
+                  : "Auto caption generation failed. Please try again.",
+          );
+        }
+        if (!isActiveAutoCaptionRequest()) {
+          return;
+        }
+        const serverErrorMessage =
+          typeof payload === "object" &&
+          payload !== null &&
+          !Array.isArray(payload) &&
+          "error" in payload &&
+          typeof payload.error === "object" &&
+          payload.error !== null &&
+          "message" in payload.error &&
+          typeof payload.error.message === "string" &&
+          payload.error.message.trim()
+            ? payload.error.message.trim()
+            : null;
+        if (!transcriptionResponse.ok) {
+          throw new Error(
+            serverErrorMessage ??
+              (kind === "lyrics"
+                ? "Auto lyric generation failed. Please try again."
+                : kind === "transcript"
+                  ? "Transcript generation failed. Please try again."
+                  : "Auto caption generation failed. Please try again."),
+          );
+        }
+        if (
+          typeof payload !== "object" ||
+          payload === null ||
+          Array.isArray(payload) ||
+          !("segments" in payload) ||
+          !Array.isArray(payload.segments)
+        ) {
+          throw new Error(
+            "Transcription response did not include caption segments.",
+          );
+        }
 
-      const currentSourceClip = clipsRef.current.find(
-        (clip) => clip.id === sourceClipId,
-      );
-      if (
-        !isActiveAutoCaptionRequest() ||
-        selectedClipIdRef.current !== sourceClipId ||
-        !currentSourceClip ||
-        (
-          currentSourceClip.track !== "main" &&
-          currentSourceClip.track !== "upper"
-        ) ||
-        !currentSourceClip.src ||
-        currentSourceClip.src !== sourceClipSrc ||
-        (currentSourceClip.sourceStart ?? 0) !== sourceClipSourceStart ||
-        currentSourceClip.duration !== sourceClipDuration ||
-        (currentSourceClip.speed ?? 1) !== sourceClipSpeed
-      ) {
-        return;
-      }
-
-      const generatedCaptions = createGeneratedCaptionClips({
-        sourceClip: {
-          ...currentSourceClip,
-          sourceStart: 0,
-        },
-        segments: payload.segments,
-        fps,
-        timelineDuration: getTimelineDuration(clipsRef.current),
-        generationId: `${kind === "lyrics" ? "lyric" : kind === "transcript" ? "transcript" : "caption"}-batch-${Date.now()}`,
-        style: captionStyle,
-      });
-      if (generatedCaptions.length === 0) {
-        throw new Error(
-          kind === "lyrics"
-            ? "No lyric segments were returned for the selected clip."
-            : kind === "transcript"
-              ? "No speech was found in the selected clip."
-              : "No caption segments were returned for the selected clip.",
-        );
-      }
-
-      commitClipChange((currentClips) => {
-        const commitSourceClip = currentClips.find(
+        const currentSourceClip = clipsRef.current.find(
           (clip) => clip.id === sourceClipId,
         );
         if (
+          !isActiveAutoCaptionRequest() ||
           selectedClipIdRef.current !== sourceClipId ||
-          !commitSourceClip ||
-          (
-            commitSourceClip.track !== "main" &&
-            commitSourceClip.track !== "upper"
-          ) ||
-          !commitSourceClip.src ||
-          commitSourceClip.src !== sourceClipSrc ||
-          (commitSourceClip.sourceStart ?? 0) !== sourceClipSourceStart ||
-          commitSourceClip.duration !== sourceClipDuration ||
-          (commitSourceClip.speed ?? 1) !== sourceClipSpeed
+          !currentSourceClip ||
+          (currentSourceClip.track !== "main" &&
+            currentSourceClip.track !== "upper") ||
+          !currentSourceClip.src ||
+          currentSourceClip.src !== sourceClipSrc ||
+          (currentSourceClip.sourceStart ?? 0) !== sourceClipSourceStart ||
+          currentSourceClip.duration !== sourceClipDuration ||
+          (currentSourceClip.speed ?? 1) !== sourceClipSpeed
         ) {
-          return currentClips;
+          return;
         }
 
-        return replaceGeneratedCaptionBatch(
-          currentClips,
-          sourceClipId,
-          generatedCaptions,
-        );
-      });
-      if (kind !== "transcript") {
-        setSelectedClipId(generatedCaptions[0]?.id ?? null);
-        setSelectedTrack("caption");
-        setIsAudioTrackVisible(false);
+        const generatedCaptions = createGeneratedCaptionClips({
+          sourceClip: {
+            ...currentSourceClip,
+            sourceStart: 0,
+          },
+          segments: payload.segments,
+          fps,
+          timelineDuration: getTimelineDuration(clipsRef.current),
+          generationId: `${kind === "lyrics" ? "lyric" : kind === "transcript" ? "transcript" : "caption"}-batch-${Date.now()}`,
+          style: captionStyle,
+        });
+        if (generatedCaptions.length === 0) {
+          throw new Error(
+            kind === "lyrics"
+              ? "No lyric segments were returned for the selected clip."
+              : kind === "transcript"
+                ? "No speech was found in the selected clip."
+                : "No caption segments were returned for the selected clip.",
+          );
+        }
+
+        commitClipChange((currentClips) => {
+          const commitSourceClip = currentClips.find(
+            (clip) => clip.id === sourceClipId,
+          );
+          if (
+            selectedClipIdRef.current !== sourceClipId ||
+            !commitSourceClip ||
+            (commitSourceClip.track !== "main" &&
+              commitSourceClip.track !== "upper") ||
+            !commitSourceClip.src ||
+            commitSourceClip.src !== sourceClipSrc ||
+            (commitSourceClip.sourceStart ?? 0) !== sourceClipSourceStart ||
+            commitSourceClip.duration !== sourceClipDuration ||
+            (commitSourceClip.speed ?? 1) !== sourceClipSpeed
+          ) {
+            return currentClips;
+          }
+
+          return replaceGeneratedCaptionBatch(
+            currentClips,
+            sourceClipId,
+            generatedCaptions,
+          );
+        });
+        if (kind !== "transcript") {
+          setSelectedClipId(generatedCaptions[0]?.id ?? null);
+          setSelectedTrack("caption");
+          setIsAudioTrackVisible(false);
+        }
+        setPreviewMode("timeline");
+        setCaptionStatus({
+          kind: "success",
+          message:
+            kind === "lyrics"
+              ? `Added ${generatedCaptions.length} lyric captions.`
+              : kind === "transcript"
+                ? `Transcript ready with ${generatedCaptions.length} timed segments.`
+                : `Added ${generatedCaptions.length} auto captions.`,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        if (!isActiveAutoCaptionRequest()) {
+          return;
+        }
+        setCaptionStatus({
+          kind: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : kind === "lyrics"
+                ? "Auto lyric generation failed. Please try again."
+                : kind === "transcript"
+                  ? "Transcript generation failed. Please try again."
+                  : "Auto caption generation failed. Please try again.",
+        });
+      } finally {
+        if (autoCaptionRequestRef.current === requestToken) {
+          autoCaptionRequestRef.current = null;
+          setIsAutoCaptionLoading(false);
+        }
+        if (autoCaptionAbortControllerRef.current === abortController) {
+          autoCaptionAbortControllerRef.current = null;
+        }
       }
-      setPreviewMode("timeline");
-      setCaptionStatus({
-        kind: "success",
-        message: kind === "lyrics"
-          ? `Added ${generatedCaptions.length} lyric captions.`
-          : kind === "transcript"
-            ? `Transcript ready with ${generatedCaptions.length} timed segments.`
-            : `Added ${generatedCaptions.length} auto captions.`,
-      });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return;
-      }
-      if (!isActiveAutoCaptionRequest()) {
-        return;
-      }
-      setCaptionStatus({
-        kind: "error",
-        message: error instanceof Error
-          ? error.message
-          : kind === "lyrics"
-            ? "Auto lyric generation failed. Please try again."
-            : kind === "transcript"
-              ? "Transcript generation failed. Please try again."
-              : "Auto caption generation failed. Please try again.",
-      });
-    } finally {
-      if (autoCaptionRequestRef.current === requestToken) {
-        autoCaptionRequestRef.current = null;
-        setIsAutoCaptionLoading(false);
-      }
-      if (autoCaptionAbortControllerRef.current === abortController) {
-        autoCaptionAbortControllerRef.current = null;
-      }
-    }
-  }, [
-    abortAutoCaptionRequest,
-    captionStyle,
-    commitClipChange,
-    selectedCaptionSourceClip,
-  ]);
+    },
+    [
+      abortAutoCaptionRequest,
+      captionStyle,
+      commitClipChange,
+      selectedCaptionSourceClip,
+    ],
+  );
 
   const generateAutoCaptions = useCallback(async () => {
     await generateCaptionBatch("auto");
@@ -3357,7 +3530,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     if (!snapshot || !canKeepMainVoice || !selectedMainVoiceClip?.src) {
       setCaptionStatus({
         kind: "error",
-        message: "Select a main video clip with its linked audio before keeping the main voice.",
+        message:
+          "Select a main video clip with its linked audio before keeping the main voice.",
       });
       return;
     }
@@ -3382,7 +3556,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     keepMainVoiceRequestRef.current = requestToken;
     keepMainVoiceAbortControllerRef.current = abortController;
     setIsKeepMainVoiceLoading(true);
-    setCaptionStatus({kind: "loading", message: "Extracting audio..."});
+    setCaptionStatus({ kind: "loading", message: "Extracting audio..." });
 
     try {
       const clipResponse = await fetch(resolveMediaSource(sourceClipSrc), {
@@ -3392,7 +3566,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         return;
       }
       if (!clipResponse.ok) {
-        throw new Error("Could not load the selected clip for main voice detection.");
+        throw new Error(
+          "Could not load the selected clip for main voice detection.",
+        );
       }
 
       const clipBlob = await clipResponse.blob();
@@ -3402,14 +3578,16 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       const clipFile = new File(
         [clipBlob],
         getCaptionSourceFileName(selectedMainVoiceClip, clipBlob),
-        {type: clipBlob.type || "video/mp4"},
+        {
+          type: clipBlob.type || "video/mp4",
+        },
       );
       const formData = new FormData();
       formData.append("file", clipFile);
       formData.append("sourceStart", String(sourceStartSeconds));
       formData.append("duration", String(sourceDurationSeconds));
 
-      setCaptionStatus({kind: "loading", message: "Detecting speakers..."});
+      setCaptionStatus({ kind: "loading", message: "Detecting speakers..." });
       const dominantVoiceResponse = await fetch("/api/detect-dominant-voice", {
         method: "POST",
         body: formData,
@@ -3450,7 +3628,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
           : null;
       if (!dominantVoiceResponse.ok) {
         throw new Error(
-          serverErrorMessage ?? "Main voice detection failed. Please try again.",
+          serverErrorMessage ??
+            "Main voice detection failed. Please try again.",
         );
       }
       if (
@@ -3460,10 +3639,15 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         !("ranges" in payload) ||
         !Array.isArray(payload.ranges)
       ) {
-        throw new Error("Main voice detection response did not include ranges.");
+        throw new Error(
+          "Main voice detection response did not include ranges.",
+        );
       }
 
-      setCaptionStatus({kind: "loading", message: "Finding the main voice..."});
+      setCaptionStatus({
+        kind: "loading",
+        message: "Finding the main voice...",
+      });
       if (!isCurrentRequest()) {
         return;
       }
@@ -3479,7 +3663,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
           typeof range.endSeconds !== "number" ||
           !Number.isFinite(range.endSeconds)
         ) {
-          throw new Error("Main voice detection response included an invalid range.");
+          throw new Error(
+            "Main voice detection response included an invalid range.",
+          );
         }
 
         return {
@@ -3491,7 +3677,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       if (!isCurrentRequest()) {
         return;
       }
-      setCaptionStatus({kind: "loading", message: "Removing other sections..."});
+      setCaptionStatus({
+        kind: "loading",
+        message: "Removing other sections...",
+      });
       if (!isCurrentRequest()) {
         return;
       }
@@ -3507,13 +3696,19 @@ export const MyComponent: React.FC<Props> = ({project}) => {
           return currentClips;
         }
 
-        return keepDominantVoiceInLinkedVideo(currentClips, sourceClipId, ranges, fps);
+        return keepDominantVoiceInLinkedVideo(
+          currentClips,
+          sourceClipId,
+          ranges,
+          fps,
+        );
       });
       setCaptionStatus({
         kind: "success",
-        message: ranges.length === 1
-          ? "Kept 1 main voice section."
-          : `Kept ${ranges.length} main voice sections.`,
+        message:
+          ranges.length === 1
+            ? "Kept 1 main voice section."
+            : `Kept ${ranges.length} main voice sections.`,
       });
       setPreviewMode("timeline");
       setIsAudioTrackVisible(true);
@@ -3526,9 +3721,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       }
       setCaptionStatus({
         kind: "error",
-        message: error instanceof Error
-          ? error.message
-          : "Main voice detection failed. Please try again.",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Main voice detection failed. Please try again.",
       });
     } finally {
       if (keepMainVoiceRequestRef.current === requestToken) {
@@ -3658,18 +3854,24 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   const startCutoutInteraction = (
     event: PointerEvent<HTMLElement>,
     clip: TimelineClip,
-    mode: StickerInteraction["mode"],
+    mode: CutoutInteraction["mode"],
+    handle?: CaptionResizeHandle,
   ) => {
     if (isAutoCutoutLoading) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
+    const cutoutElement =
+      event.currentTarget.closest<HTMLElement>(".preview-cutout");
     selectTimelineClip(clip);
     setCutoutInteraction({
       clipId: clip.id,
       mode,
+      handle,
       startX: event.clientX,
       startY: event.clientY,
+      baseWidth: cutoutElement?.offsetWidth ?? 1,
+      baseHeight: cutoutElement?.offsetHeight ?? 1,
       originalClips: clips,
     });
   };
@@ -3715,7 +3917,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       x: ((event.clientX - bounds.x) / bounds.width) * 100,
       y: ((event.clientY - bounds.y) / bounds.height) * 100,
     };
-    const stroke = {mode, size: cutoutBrushSize, points: [point]};
+    const stroke = { mode, size: cutoutBrushSize, points: [point] };
     const originalClips = clipsRef.current;
     setTimelineHistory((currentHistory) => ({
       ...currentHistory,
@@ -3762,11 +3964,11 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     drag.points = [...drag.points, point];
     setTimelineHistory((currentHistory) => ({
       ...currentHistory,
-      present: appendCutoutMaskStroke(
-        drag.originalClips,
-        drag.clipId,
-        {mode: drag.mode, size: drag.size, points: drag.points},
-      ),
+      present: appendCutoutMaskStroke(drag.originalClips, drag.clipId, {
+        mode: drag.mode,
+        size: drag.size,
+        points: drag.points,
+      }),
     }));
   };
 
@@ -3797,7 +3999,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     handle: CaptionResizeHandle,
   ) => {
     const previewBounds = previewWindowRef.current?.getBoundingClientRect();
-    const textBounds = event.currentTarget.parentElement?.getBoundingClientRect();
+    const textBounds =
+      event.currentTarget.parentElement?.getBoundingClientRect();
     if (!clip.text || !previewBounds || !textBounds) return;
 
     event.preventDefault();
@@ -3806,7 +4009,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     setIsPreviewPlaying(false);
     selectTimelineClip(clip);
     setTextPreviewDrag(null);
-    const animationPresentation = getTextAnimationPresentation(clip, playheadFrame);
+    const animationPresentation = getTextAnimationPresentation(
+      clip,
+      playheadFrame,
+    );
     setTextResizeDrag({
       clipId: clip.id,
       handle,
@@ -3814,10 +4020,14 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       startY: event.clientY,
       startCenterX: clip.text.x,
       startCenterY: clip.text.y,
-      startWidth: (event.currentTarget.parentElement!.offsetWidth / previewBounds.width) * 100,
-      startHeight: (event.currentTarget.parentElement!.offsetHeight / previewBounds.height) * 100,
-      startRotation:
-        (clip.text.rotation ?? 0) + animationPresentation.rotation,
+      startWidth:
+        (event.currentTarget.parentElement!.offsetWidth / previewBounds.width) *
+        100,
+      startHeight:
+        (event.currentTarget.parentElement!.offsetHeight /
+          previewBounds.height) *
+        100,
+      startRotation: (clip.text.rotation ?? 0) + animationPresentation.rotation,
       startScale: animationPresentation.scale,
       previewWidth: previewBounds.width,
       previewHeight: previewBounds.height,
@@ -3835,16 +4045,19 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       ".selected-preview-caption",
     );
     const captionBounds = captionElement?.getBoundingClientRect();
-    if (!clip.caption || !previewBounds || !captionBounds || !captionElement) return;
+    if (!clip.caption || !previewBounds || !captionBounds || !captionElement)
+      return;
 
     const measureBounds = (fontSize: number) => {
       if (Math.round(fontSize) === Math.round(clip.caption!.fontSize)) {
-        return {width: captionBounds.width, height: captionBounds.height};
+        return { width: captionBounds.width, height: captionBounds.height };
       }
       const clone = captionElement.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll(".caption-resize-handle").forEach((resizeHandle) => {
-        resizeHandle.remove();
-      });
+      clone
+        .querySelectorAll(".caption-resize-handle")
+        .forEach((resizeHandle) => {
+          resizeHandle.remove();
+        });
       clone.style.visibility = "hidden";
       clone.style.pointerEvents = "none";
       clone.style.left = "0";
@@ -3854,7 +4067,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       previewWindowRef.current?.append(clone);
       const measured = clone.getBoundingClientRect();
       clone.remove();
-      return {width: measured.width, height: measured.height};
+      return { width: measured.width, height: measured.height };
     };
     const maximumFontSize = getMaximumFittingCaptionFontSize({
       requestedFontSize: 160,
@@ -3901,7 +4114,13 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       centerY,
       rotationOffset:
         clip.text.rotation -
-        getManualRotationAngle(centerX, centerY, event.clientX, event.clientY, 0),
+        getManualRotationAngle(
+          centerX,
+          centerY,
+          event.clientX,
+          event.clientY,
+          0,
+        ),
       originalClips: clips,
     });
   };
@@ -3933,49 +4152,48 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     });
   };
 
-  const createMediaTimelineClips = useCallback((
-    mediaItem: MediaItem,
-    videoLayer: number,
-    startFrame: number,
-  ) => {
-    const timestamp = Date.now();
-    const videoId = `video-${timestamp}-${mediaItem.id}`;
-    const label = mediaItem.label.replace(/\.[^.]+$/, "");
-    const duration = Math.max(1, mediaItem.durationInFrames);
+  const createMediaTimelineClips = useCallback(
+    (mediaItem: MediaItem, videoLayer: number, startFrame: number) => {
+      const timestamp = Date.now();
+      const videoId = `video-${timestamp}-${mediaItem.id}`;
+      const label = mediaItem.label.replace(/\.[^.]+$/, "");
+      const duration = Math.max(1, mediaItem.durationInFrames);
 
-    if (getMediaItemType(mediaItem) === "image") {
-      const track = videoLayer === 0 ? "main" : "upper";
+      if (getMediaItemType(mediaItem) === "image") {
+        const track = videoLayer === 0 ? "main" : "upper";
+        return {
+          videoId,
+          clips: [
+            createImageMediaClip({
+              id: videoId,
+              track,
+              label,
+              src: mediaItem.src,
+              start: Math.max(0, startFrame),
+              duration,
+            }),
+          ] as TimelineClip[],
+        };
+      }
+
+      const audioId = `video-audio-${timestamp}-${mediaItem.id}`;
       return {
         videoId,
-        clips: [
-          createImageMediaClip({
-            id: videoId,
-            track,
-            label,
-            src: mediaItem.src,
-            start: Math.max(0, startFrame),
-            duration,
-          }),
-        ] as TimelineClip[],
+        clips: createVideoMediaPair({
+          videoId,
+          audioId,
+          track: videoLayer === 0 ? "main" : "upper",
+          label,
+          src: mediaItem.src,
+          start: Math.max(0, startFrame),
+          duration: mediaItem.durationInFrames,
+          sourceStart: mediaItem.sourceStart ?? 0,
+          sourceDuration: mediaItem.sourceDurationInFrames,
+        }) as TimelineClip[],
       };
-    }
-
-    const audioId = `video-audio-${timestamp}-${mediaItem.id}`;
-    return {
-      videoId,
-      clips: createVideoMediaPair({
-        videoId,
-        audioId,
-        track: videoLayer === 0 ? "main" : "upper",
-        label,
-        src: mediaItem.src,
-        start: Math.max(0, startFrame),
-        duration: mediaItem.durationInFrames,
-        sourceStart: mediaItem.sourceStart ?? 0,
-        sourceDuration: mediaItem.sourceDurationInFrames,
-      }) as TimelineClip[],
-    };
-  }, []);
+    },
+    [],
+  );
 
   const recoverUnavailableVideo = useCallback(async (clipId: string) => {
     const unavailableClip = clipsRef.current.find((clip) => clip.id === clipId);
@@ -3984,13 +4202,19 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       ? getPublicMediaFallbackSource(unavailableClip)
       : null;
 
-    if (!missingSrc || !fallbackSrc || unavailableRecoveryRef.current.has(missingSrc)) {
+    if (
+      !missingSrc ||
+      !fallbackSrc ||
+      unavailableRecoveryRef.current.has(missingSrc)
+    ) {
       return;
     }
 
     unavailableRecoveryRef.current.add(missingSrc);
     try {
-      const response = await fetch(resolveMediaSource(fallbackSrc), {method: "HEAD"});
+      const response = await fetch(resolveMediaSource(fallbackSrc), {
+        method: "HEAD",
+      });
       if (!isPlayableMediaResponse(response)) {
         setProjectStatus(
           `The file for ${unavailableClip.label} is missing. Import that same video again to reconnect it.`,
@@ -4006,17 +4230,19 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         );
         return present === currentHistory.present
           ? currentHistory
-          : {...currentHistory, present};
+          : { ...currentHistory, present };
       });
       setMediaItems((currentItems) =>
         currentItems.map((mediaItem) => {
           if (mediaItem.src !== missingSrc) return mediaItem;
-          const reconnectedItem = {...mediaItem, src: fallbackSrc};
+          const reconnectedItem = { ...mediaItem, src: fallbackSrc };
           delete reconnectedItem.sourceDurationInFrames;
           return reconnectedItem;
         }),
       );
-      setProjectStatus(`Reconnected ${unavailableClip.label} to its matching public video.`);
+      setProjectStatus(
+        `Reconnected ${unavailableClip.label} to its matching public video.`,
+      );
     } catch {
       setProjectStatus(
         `The file for ${unavailableClip.label} is missing. Import that same video again to reconnect it.`,
@@ -4028,14 +4254,17 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     let cancelled = false;
     const savedUploadClips = clips.filter(
       (clip) =>
-        (clip.track === "main" || clip.track === "upper" || clip.track === "cutout") &&
+        (clip.track === "main" ||
+          clip.track === "upper" ||
+          clip.track === "cutout") &&
         isStoredUploadSource(clip.src),
     );
 
     savedUploadClips.forEach((clip) => {
-      if (!clip.src || sourceAvailabilityChecksRef.current.has(clip.src)) return;
+      if (!clip.src || sourceAvailabilityChecksRef.current.has(clip.src))
+        return;
       sourceAvailabilityChecksRef.current.add(clip.src);
-      void fetch(resolveMediaSource(clip.src), {method: "HEAD"})
+      void fetch(resolveMediaSource(clip.src), { method: "HEAD" })
         .then((response) => {
           if (!isPlayableMediaResponse(response) && !cancelled) {
             void recoverUnavailableVideo(clip.id);
@@ -4051,44 +4280,43 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
   }, [clips, recoverUnavailableVideo]);
 
-  const reconcileTimelineClipSourceDuration = useCallback((
-    videoClip: TimelineClip,
-    event: SyntheticEvent<HTMLVideoElement>,
-  ) => {
-    if (!videoClip.src) return;
-    const sourceDuration = durationToFrames(event.currentTarget.duration);
-    setTimelineHistory((currentHistory) => {
-      const present = reconcileClipSourceDuration(
-        currentHistory.present,
-        videoClip.src ?? "",
-        sourceDuration,
+  const reconcileTimelineClipSourceDuration = useCallback(
+    (videoClip: TimelineClip, event: SyntheticEvent<HTMLVideoElement>) => {
+      if (!videoClip.src) return;
+      const sourceDuration = durationToFrames(event.currentTarget.duration);
+      setTimelineHistory((currentHistory) => {
+        const present = reconcileClipSourceDuration(
+          currentHistory.present,
+          videoClip.src ?? "",
+          sourceDuration,
+        );
+        return present === currentHistory.present
+          ? currentHistory
+          : { ...currentHistory, present };
+      });
+    },
+    [],
+  );
+
+  const placeMediaOnVideoLayer = useCallback(
+    (mediaItem: MediaItem, videoLayer: number, startFrame: number) => {
+      const mediaTiming = { duration: mediaItem.durationInFrames };
+      const { videoId, clips: mediaClips } = createMediaTimelineClips(
+        { ...mediaItem, durationInFrames: mediaTiming.duration },
+        videoLayer,
+        startFrame,
       );
-      return present === currentHistory.present
-        ? currentHistory
-        : {...currentHistory, present};
-    });
-  }, []);
 
-  const placeMediaOnVideoLayer = useCallback((
-    mediaItem: MediaItem,
-    videoLayer: number,
-    startFrame: number,
-  ) => {
-    const mediaTiming = {duration: mediaItem.durationInFrames};
-    const {videoId, clips: mediaClips} = createMediaTimelineClips(
-      {...mediaItem, durationInFrames: mediaTiming.duration},
-      videoLayer,
-      startFrame,
-    );
-
-    commitClipChange((currentClips) =>
-      placeVideoPairOnLayer(currentClips, mediaClips, videoLayer, startFrame),
-    );
-    setSelectedClipId(videoId);
-    setSelectedVideoLayer(null);
-    setSelectedTrack(videoLayer === 0 ? "main" : "upper");
-    setIsAudioTrackVisible(getMediaItemType(mediaItem) === "video");
-  }, [commitClipChange, createMediaTimelineClips]);
+      commitClipChange((currentClips) =>
+        placeVideoPairOnLayer(currentClips, mediaClips, videoLayer, startFrame),
+      );
+      setSelectedClipId(videoId);
+      setSelectedVideoLayer(null);
+      setSelectedTrack(videoLayer === 0 ? "main" : "upper");
+      setIsAudioTrackVisible(getMediaItemType(mediaItem) === "video");
+    },
+    [commitClipChange, createMediaTimelineClips],
+  );
 
   const togglePreviewPlayback = () => {
     previewVideoRef.current?.pause();
@@ -4108,7 +4336,11 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   const toggleTimelinePlayback = togglePreviewPlayback;
 
   const toggleMediaPreviewPlayback = () => {
-    if (previewMode !== "media" || !selectedMedia || getMediaItemType(selectedMedia) === "image") {
+    if (
+      previewMode !== "media" ||
+      !selectedMedia ||
+      getMediaItemType(selectedMedia) === "image"
+    ) {
       return;
     }
 
@@ -4162,7 +4394,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
           setRecordingError("The recording was too short to add.");
         }
       } catch (error) {
-        setRecordingError(error instanceof Error ? error.message : "Recording failed.");
+        setRecordingError(
+          error instanceof Error ? error.message : "Recording failed.",
+        );
       } finally {
         voiceRecorderRef.current = null;
         setIsRecording(false);
@@ -4171,7 +4405,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     }
 
     if (!BrowserVoiceRecorder.isSupported()) {
-      setRecordingError("Microphone recording is not supported in this browser.");
+      setRecordingError(
+        "Microphone recording is not supported in this browser.",
+      );
       return;
     }
 
@@ -4193,7 +4429,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     if (isSelectedMediaScene) {
       video.currentTime = mediaPreviewStartSeconds;
     }
-    const {duration} = video;
+    const { duration } = video;
     setMediaPreviewDuration(Number.isFinite(duration) ? duration : 0);
     setMediaPreviewTime(video.currentTime);
     setMediaPreviewFrame(0);
@@ -4232,9 +4468,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     setIsMediaPreviewPlaying(false);
   };
 
-  const handleMediaPreviewSeek = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
+  const handleMediaPreviewSeek = (event: ChangeEvent<HTMLInputElement>) => {
     if (!isMediaPreviewSeekEnabled) return;
 
     const nextTime = Number(event.currentTarget.value);
@@ -4253,7 +4487,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   const handleMediaPreviewVolumeChange = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
-    const nextVolume = Math.max(0, Math.min(1, Number(event.currentTarget.value)));
+    const nextVolume = Math.max(
+      0,
+      Math.min(1, Number(event.currentTarget.value)),
+    );
     setMediaPreviewVolume(nextVolume);
     if (previewVideoRef.current && previewMode === "media") {
       previewVideoRef.current.volume = nextVolume;
@@ -4276,7 +4513,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
   };
 
   const handleMediaPreviewBlur = (event: React.FocusEvent<HTMLDivElement>) => {
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    if (event.currentTarget.contains(event.relatedTarget as Node | null))
+      return;
     closeMediaPreviewVolumeIfInactive();
   };
 
@@ -4318,10 +4556,12 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       sourceGroupIndex: firstSourceGroupIndex + index,
       analyzingId: `analyzing-${importTimestamp}-${index}`,
     }));
-    const orderedSourceFileIds = imports.map(({sourceFileId}) => sourceFileId);
+    const orderedSourceFileIds = imports.map(
+      ({ sourceFileId }) => sourceFileId,
+    );
     const newAnalyzingItems = imports
-      .filter(({mediaType}) => mediaType === "video")
-      .map(({file, analyzingId}) => ({id: analyzingId, label: file.name}));
+      .filter(({ mediaType }) => mediaType === "video")
+      .map(({ file, analyzingId }) => ({ id: analyzingId, label: file.name }));
 
     if (newAnalyzingItems.length > 0) {
       setAnalyzingMediaItems((currentItems) => [
@@ -4335,11 +4575,17 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       const results = await mapWithConcurrency(
         imports,
         2,
-        async ({file, mediaType, sourceFileId, sourceGroupIndex, analyzingId}) => {
+        async ({
+          file,
+          mediaType,
+          sourceFileId,
+          sourceGroupIndex,
+          analyzingId,
+        }) => {
           const previewSrc = URL.createObjectURL(file);
           try {
             if (mediaType === "video") {
-              const {sceneItems, usedFallback} = await analyzeImportedVideo({
+              const { sceneItems, usedFallback } = await analyzeImportedVideo({
                 file,
                 sourceFileId,
                 sourceGroupIndex,
@@ -4356,7 +4602,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
               return {
                 fileName: file.name,
                 mediaId: sceneItems[0].id,
-                outcome: usedFallback ? "fallback" as const : "imported" as const,
+                outcome: usedFallback
+                  ? ("fallback" as const)
+                  : ("imported" as const),
               };
             }
 
@@ -4391,7 +4639,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
             return {
               fileName: file.name,
               outcome: "failed" as const,
-              message: error instanceof Error ? error.message : "Import failed.",
+              message:
+                error instanceof Error ? error.message : "Import failed.",
             };
           } finally {
             URL.revokeObjectURL(previewSrc);
@@ -4413,19 +4662,24 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         setIsMediaPreviewPlaying(false);
         setPreviewMode("media");
       }
-      const fallbackFiles = results.filter((result) => result.outcome === "fallback");
-      const failedFiles = results.filter((result) => result.outcome === "failed");
+      const fallbackFiles = results.filter(
+        (result) => result.outcome === "fallback",
+      );
+      const failedFiles = results.filter(
+        (result) => result.outcome === "failed",
+      );
 
       if (fallbackFiles.length > 0) {
-        const failedSuffix = failedFiles.length > 0
-          ? ` ${failedFiles.length} other file${failedFiles.length === 1 ? "" : "s"} failed to import.`
-          : "";
+        const failedSuffix =
+          failedFiles.length > 0
+            ? ` ${failedFiles.length} other file${failedFiles.length === 1 ? "" : "s"} failed to import.`
+            : "";
         setProjectStatus(
-          `Scene detection was unavailable for ${fallbackFiles.map(({fileName}) => fileName).join(", ")}; imported as full-duration scenes.${failedSuffix}`,
+          `Scene detection was unavailable for ${fallbackFiles.map(({ fileName }) => fileName).join(", ")}; imported as full-duration scenes.${failedSuffix}`,
         );
       } else if (failedFiles.length > 0) {
         setProjectStatus(
-          `Import failed for ${failedFiles.map(({fileName}) => fileName).join(", ")}: ${failedFiles[0].message}`,
+          `Import failed for ${failedFiles.map(({ fileName }) => fileName).join(", ")}: ${failedFiles[0].message}`,
         );
       } else {
         setProjectStatus("Media imported and saved");
@@ -4481,21 +4735,26 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       setProjectStatus("Music imported");
     } catch (error) {
       setProjectStatus(
-        error instanceof Error ? `Music import failed: ${error.message}` : "Music import failed.",
+        error instanceof Error
+          ? `Music import failed: ${error.message}`
+          : "Music import failed.",
       );
     } finally {
       input.value = "";
     }
   };
 
-  const updatePlayheadFromPointer = useCallback((clientX: number) => {
-    const frame = getPointerTimelineFrame(clientX);
-    if (frame === null) return;
+  const updatePlayheadFromPointer = useCallback(
+    (clientX: number) => {
+      const frame = getPointerTimelineFrame(clientX);
+      if (frame === null) return;
 
-    const maximumFrame = Math.max(0, projectDuration - 1);
-    setPlayheadFrame(Math.max(0, Math.min(maximumFrame, frame)));
-    setPreviewMode("timeline");
-  }, [getPointerTimelineFrame, projectDuration]);
+      const maximumFrame = Math.max(0, projectDuration - 1);
+      setPlayheadFrame(Math.max(0, Math.min(maximumFrame, frame)));
+      setPreviewMode("timeline");
+    },
+    [getPointerTimelineFrame, projectDuration],
+  );
 
   const startTimelineScrub = (event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
@@ -4507,35 +4766,34 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     updatePlayheadFromPointer(event.clientX);
   };
 
-  const getVideoDropTargetFromElement = useCallback((
-    element: Element | null,
-  ): VideoDropTarget | null => {
-    if (element?.closest("[data-append-main-track]")) {
-      return {kind: "append-main"};
-    }
+  const getVideoDropTargetFromElement = useCallback(
+    (element: Element | null): VideoDropTarget | null => {
+      if (element?.closest("[data-append-main-track]")) {
+        return { kind: "append-main" };
+      }
 
-    const insertLayerElement = element?.closest("[data-insert-video-layer]");
-    const insertVideoLayer = Number(
-      insertLayerElement?.getAttribute("data-insert-video-layer"),
-    );
-    if (Number.isFinite(insertVideoLayer) && insertVideoLayer !== 0) {
-      return {kind: "insert-layer", videoLayer: insertVideoLayer};
-    }
+      const insertLayerElement = element?.closest("[data-insert-video-layer]");
+      const insertVideoLayer = Number(
+        insertLayerElement?.getAttribute("data-insert-video-layer"),
+      );
+      if (Number.isFinite(insertVideoLayer) && insertVideoLayer !== 0) {
+        return { kind: "insert-layer", videoLayer: insertVideoLayer };
+      }
 
-    const newLayerElement = element?.closest("[data-new-video-layer]");
-    const direction = newLayerElement?.getAttribute("data-new-video-layer");
-    if (direction === "above" || direction === "below") {
-      return {kind: "new-layer", direction};
-    }
+      const newLayerElement = element?.closest("[data-new-video-layer]");
+      const direction = newLayerElement?.getAttribute("data-new-video-layer");
+      if (direction === "above" || direction === "below") {
+        return { kind: "new-layer", direction };
+      }
 
-    const videoLayerElement = element?.closest("[data-video-layer]");
-    const videoLayer = Number(
-      videoLayerElement?.getAttribute("data-video-layer"),
-    );
-    return Number.isFinite(videoLayer)
-      ? {kind: "layer", videoLayer}
-      : null;
-  }, []);
+      const videoLayerElement = element?.closest("[data-video-layer]");
+      const videoLayer = Number(
+        videoLayerElement?.getAttribute("data-video-layer"),
+      );
+      return Number.isFinite(videoLayer) ? { kind: "layer", videoLayer } : null;
+    },
+    [],
+  );
 
   const startPointerDrag = (
     event: PointerEvent<HTMLElement>,
@@ -4579,24 +4837,22 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
     const updateDropTarget = (x: number, y: number) => {
       const element = document.elementFromPoint(x, y);
-      const replaceClip = element?.closest(
-        "[data-replace-clip-id]",
-      );
-      const replaceClipId = replaceClip?.getAttribute(
-        "data-replace-clip-id",
-      );
+      const replaceClip = element?.closest("[data-replace-clip-id]");
+      const replaceClipId = replaceClip?.getAttribute("data-replace-clip-id");
       const target = getVideoDropTargetFromElement(element);
 
       if (pointerDrag.type === "media" && replaceClipId) {
-        setVideoDropTarget({kind: "layer", videoLayer: 0});
+        setVideoDropTarget({ kind: "layer", videoLayer: 0 });
         setReplaceTargetClipId(replaceClipId);
         return;
       }
 
-      const draggedClip = pointerDrag.type === "timeline"
-        ? clips.find((clip) => clip.id === pointerDrag.id)
-        : null;
-      const isVideoDrag = pointerDrag.type === "media" ||
+      const draggedClip =
+        pointerDrag.type === "timeline"
+          ? clips.find((clip) => clip.id === pointerDrag.id)
+          : null;
+      const isVideoDrag =
+        pointerDrag.type === "media" ||
         (draggedClip ? getVideoLayer(draggedClip) !== null : false);
 
       if (target && isVideoDrag) {
@@ -4628,20 +4884,22 @@ export const MyComponent: React.FC<Props> = ({project}) => {
             : getNextVideoLayer(clips, "below")
           : target.kind === "insert-layer"
             ? target.videoLayer
-          : target.kind === "append-main"
-            ? 0
-            : target.videoLayer
+            : target.kind === "append-main"
+              ? 0
+              : target.videoLayer
         : null;
 
       if (targetVideoLayer !== null) {
         const pointerFrame = getPointerTimelineFrame(event.clientX) ?? 0;
 
         if (pointerDrag.type === "media") {
-          const mediaItem = mediaItems.find((item) => item.id === pointerDrag.id);
+          const mediaItem = mediaItems.find(
+            (item) => item.id === pointerDrag.id,
+          );
 
           if (mediaItem) {
             if (target?.kind === "append-main") {
-              const {videoId, clips: mediaClips} = createMediaTimelineClips(
+              const { videoId, clips: mediaClips } = createMediaTimelineClips(
                 mediaItem,
                 0,
                 getVideoLayerEnd(clips, 0),
@@ -4664,7 +4922,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
               setSelectedTrack("main");
               setIsAudioTrackVisible(getMediaItemType(mediaItem) === "video");
             } else if (target?.kind === "insert-layer") {
-              const {videoId, clips: mediaClips} = createMediaTimelineClips(
+              const { videoId, clips: mediaClips } = createMediaTimelineClips(
                 mediaItem,
                 targetVideoLayer,
                 pointerFrame,
@@ -4687,7 +4945,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
             }
           }
         } else {
-          const targetStart = pointerFrame - (pointerDrag.grabOffsetFrames ?? 0);
+          const targetStart =
+            pointerFrame - (pointerDrag.grabOffsetFrames ?? 0);
           const target = clips.find((clip) => clip.id === pointerDrag.id);
           const timelineBoundary = target
             ? getExpandedTimelineBoundary(
@@ -4824,8 +5083,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishCrop, {once: true});
-    window.addEventListener("pointercancel", finishCrop, {once: true});
+    window.addEventListener("pointerup", finishCrop, { once: true });
+    window.addEventListener("pointercancel", finishCrop, { once: true });
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishCrop);
@@ -4869,8 +5128,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishRotate, {once: true});
-    window.addEventListener("pointercancel", finishRotate, {once: true});
+    window.addEventListener("pointerup", finishRotate, { once: true });
+    window.addEventListener("pointercancel", finishRotate, { once: true });
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishRotate);
@@ -4924,8 +5183,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishDrag, {once: true});
-    window.addEventListener("pointercancel", finishDrag, {once: true});
+    window.addEventListener("pointerup", finishDrag, { once: true });
+    window.addEventListener("pointercancel", finishDrag, { once: true });
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishDrag);
@@ -4979,8 +5238,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishDrag, {once: true});
-    window.addEventListener("pointercancel", finishDrag, {once: true});
+    window.addEventListener("pointerup", finishDrag, { once: true });
+    window.addEventListener("pointercancel", finishDrag, { once: true });
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishDrag);
@@ -5013,7 +5272,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         present: moveTextOverlay(
           textPreviewDrag.originalClips,
           textPreviewDrag.clipId,
-          {x, y},
+          { x, y },
           {
             halfWidthPercent: textPreviewDrag.halfWidthPercent,
             halfHeightPercent: textPreviewDrag.halfHeightPercent,
@@ -5036,8 +5295,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishDrag, {once: true});
-    window.addEventListener("pointercancel", finishDrag, {once: true});
+    window.addEventListener("pointerup", finishDrag, { once: true });
+    window.addEventListener("pointercancel", finishDrag, { once: true });
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishDrag);
@@ -5071,7 +5330,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         present: moveCaptionOverlay(
           captionPreviewDrag.originalClips,
           captionPreviewDrag.clipId,
-          {x, y},
+          { x, y },
           {
             halfWidthPercent: captionPreviewDrag.halfWidthPercent,
             halfHeightPercent: captionPreviewDrag.halfHeightPercent,
@@ -5094,8 +5353,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishDrag, {once: true});
-    window.addEventListener("pointercancel", finishDrag, {once: true});
+    window.addEventListener("pointerup", finishDrag, { once: true });
+    window.addEventListener("pointercancel", finishDrag, { once: true });
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishDrag);
@@ -5147,8 +5406,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishResize, {once: true});
-    window.addEventListener("pointercancel", finishResize, {once: true});
+    window.addEventListener("pointerup", finishResize, { once: true });
+    window.addEventListener("pointercancel", finishResize, { once: true });
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishResize);
@@ -5204,8 +5463,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishResize, {once: true});
-    window.addEventListener("pointercancel", finishResize, {once: true});
+    window.addEventListener("pointerup", finishResize, { once: true });
+    window.addEventListener("pointercancel", finishResize, { once: true });
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishResize);
@@ -5247,8 +5506,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishRotate, {once: true});
-    window.addEventListener("pointercancel", finishRotate, {once: true});
+    window.addEventListener("pointerup", finishRotate, { once: true });
+    window.addEventListener("pointercancel", finishRotate, { once: true });
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishRotate);
@@ -5282,13 +5541,22 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       if (stickerInteraction.mode === "move") {
         nextTransform = {
           ...originalTransform,
-          x: Math.max(0, Math.min(100, originalTransform.x + (deltaX / bounds.width) * 100)),
-          y: Math.max(0, Math.min(100, originalTransform.y + (deltaY / bounds.height) * 100)),
+          x: Math.max(
+            0,
+            Math.min(100, originalTransform.x + (deltaX / bounds.width) * 100),
+          ),
+          y: Math.max(
+            0,
+            Math.min(100, originalTransform.y + (deltaY / bounds.height) * 100),
+          ),
         };
       } else if (stickerInteraction.mode === "scale") {
         nextTransform = {
           ...originalTransform,
-          scale: Math.max(0.2, Math.min(4, originalTransform.scale + (deltaX + deltaY) / 180)),
+          scale: Math.max(
+            0.2,
+            Math.min(4, originalTransform.scale + (deltaX + deltaY) / 180),
+          ),
         };
       } else {
         nextTransform = {
@@ -5301,7 +5569,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         ...currentHistory,
         present: currentHistory.present.map((clip) =>
           clip.id === stickerInteraction.clipId
-            ? {...clip, sticker: nextTransform}
+            ? { ...clip, sticker: nextTransform }
             : clip,
         ),
       }));
@@ -5317,7 +5585,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp, {once: true});
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
@@ -5344,14 +5612,29 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       if (cutoutInteraction.mode === "move") {
         nextTransform = {
           ...originalTransform,
-          x: Math.max(0, Math.min(100, originalTransform.x + (deltaX / bounds.width) * 100)),
-          y: Math.max(0, Math.min(100, originalTransform.y + (deltaY / bounds.height) * 100)),
+          x: Math.max(
+            0,
+            Math.min(100, originalTransform.x + (deltaX / bounds.width) * 100),
+          ),
+          y: Math.max(
+            0,
+            Math.min(100, originalTransform.y + (deltaY / bounds.height) * 100),
+          ),
         };
-      } else if (cutoutInteraction.mode === "scale") {
-        nextTransform = {
-          ...originalTransform,
-          scale: Math.max(0.15, Math.min(4, originalTransform.scale + (deltaX + deltaY) / 180)),
-        };
+      } else if (
+        cutoutInteraction.mode === "resize" &&
+        cutoutInteraction.handle
+      ) {
+        nextTransform = resizeCutoutTransform({
+          transform: originalTransform,
+          handle: cutoutInteraction.handle,
+          deltaX,
+          deltaY,
+          baseWidth: cutoutInteraction.baseWidth,
+          baseHeight: cutoutInteraction.baseHeight,
+          previewWidth: bounds.width,
+          previewHeight: bounds.height,
+        });
       } else {
         nextTransform = {
           ...originalTransform,
@@ -5363,7 +5646,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
         ...currentHistory,
         present: currentHistory.present.map((clip) =>
           clip.id === cutoutInteraction.clipId
-            ? {...clip, cutout: nextTransform}
+            ? { ...clip, cutout: nextTransform }
             : clip,
         ),
       }));
@@ -5379,8 +5662,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishInteraction, {once: true});
-    window.addEventListener("pointercancel", finishInteraction, {once: true});
+    window.addEventListener("pointerup", finishInteraction, { once: true });
+    window.addEventListener("pointercancel", finishInteraction, { once: true });
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishInteraction);
@@ -5412,9 +5695,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     };
 
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", stopScrubbing, {once: true});
-    window.addEventListener("pointercancel", stopScrubbing, {once: true});
-    window.addEventListener("blur", stopScrubbing, {once: true});
+    window.addEventListener("pointerup", stopScrubbing, { once: true });
+    window.addEventListener("pointercancel", stopScrubbing, { once: true });
+    window.addEventListener("blur", stopScrubbing, { once: true });
 
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
@@ -5432,27 +5715,29 @@ export const MyComponent: React.FC<Props> = ({project}) => {
     }
 
     video.playbackRate = previewMode === "media" ? 1 : previewSpeed;
-    video.volume = previewMode === "media"
-      ? mediaPreviewVolume
-      : Math.min(previewVolume, 1);
+    video.volume =
+      previewMode === "media" ? mediaPreviewVolume : Math.min(previewVolume, 1);
     video.muted = previewMode === "media" ? false : previewVideoMuted;
 
     if (previewSource?.src !== previewSourceRef.current) {
       previewSourceRef.current = previewSource?.src ?? null;
     }
 
-    const desiredTime = previewMode === "timeline"
-      ? topVisibleVideoClip
-        ? Math.max(0, getClipSourceTime(topVisibleVideoClip, playheadFrame, fps))
-        : 0
-      : mediaPreviewTime;
+    const desiredTime =
+      previewMode === "timeline"
+        ? topVisibleVideoClip
+          ? Math.max(
+              0,
+              getClipSourceTime(topVisibleVideoClip, playheadFrame, fps),
+            )
+          : 0
+        : mediaPreviewTime;
     if (Math.abs(video.currentTime - desiredTime) > 0.12) {
       video.currentTime = desiredTime;
     }
 
-    const shouldPlay = previewMode === "media"
-      ? isMediaPreviewPlaying
-      : isPreviewPlaying;
+    const shouldPlay =
+      previewMode === "media" ? isMediaPreviewPlaying : isPreviewPlaying;
     if (!shouldPlay) {
       video.pause();
       return;
@@ -5545,61 +5830,85 @@ export const MyComponent: React.FC<Props> = ({project}) => {
               setActiveTool("media");
               abortAutoCaptionRequest();
             }}
-          >Media</button>
+          >
+            Media
+          </button>
           <button
             className={activeTool === "audio" ? "active-tool" : ""}
             type="button"
             onClick={openAudioControls}
-          >Audio</button>
+          >
+            Audio
+          </button>
           <button
             className={activeTool === "text" ? "active-tool" : ""}
             type="button"
             onClick={() => setActiveTool("text")}
-          >Text</button>
+          >
+            Text
+          </button>
           <button
             className={activeTool === "stickers" ? "active-tool" : ""}
             type="button"
             onClick={() => setActiveTool("stickers")}
-          >Stickers</button>
+          >
+            Stickers
+          </button>
           <button
             className={activeTool === "cutout" ? "active-tool" : ""}
             type="button"
             onClick={() => setActiveTool("cutout")}
-          >Cutout</button>
+          >
+            Cutout
+          </button>
           <button
             className={activeTool === "animations" ? "active-tool" : ""}
             type="button"
             onClick={() => openVisualTool("animations")}
-          >Animations</button>
+          >
+            Animations
+          </button>
           <button
             className={activeTool === "effects" ? "active-tool" : ""}
             type="button"
             onClick={() => openVisualTool("effects")}
-          >Effects</button>
+          >
+            Effects
+          </button>
           <button
             className={activeTool === "captions" ? "active-tool" : ""}
             type="button"
             onClick={() => setActiveTool("captions")}
-          >Captions</button>
+          >
+            Captions
+          </button>
           <button
             className={activeTool === "transcript" ? "active-tool" : ""}
             type="button"
             onClick={() => setActiveTool("transcript")}
-          >Transcript</button>
+          >
+            Transcript
+          </button>
           <button
             className={activeTool === "filters" ? "active-tool" : ""}
             type="button"
             onClick={() => openVisualTool("filters")}
-          >Filters</button>
+          >
+            Filters
+          </button>
           <button
             className={activeTool === "adjustment" ? "active-tool" : ""}
             type="button"
             onClick={() => openVisualTool("adjustment")}
-          >Adjustment</button>
+          >
+            Adjustment
+          </button>
         </nav>
         <div className="project-actions">
           {projectStatus ? (
-            <span className="project-status" role="status">{projectStatus}</span>
+            <span className="project-status" role="status">
+              {projectStatus}
+            </span>
           ) : null}
           <button
             className="save-button"
@@ -5628,163 +5937,179 @@ export const MyComponent: React.FC<Props> = ({project}) => {
       >
         <aside className="media-panel">
           <div className="media-library">
-            {activeTool === "media" ? <>
-            <div className="library-actions">
-              <button
-                className="import-button"
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                Import
-              </button>
-              <button
-                className={`record-button ${isRecording ? "is-recording" : ""}`}
-                type="button"
-                onClick={() => void toggleVoiceRecording()}
-                aria-label={isRecording ? "Stop voice recording" : "Record voice narration"}
-              >
-                {isRecording ? "Stop" : "Record"}
-              </button>
-              <input
-                ref={fileInputRef}
-                className="hidden-file-input"
-                type="file"
-                accept="image/*,video/*"
-                multiple
-                onChange={importMediaFromGallery}
-              />
-            </div>
-            {recordingError ? (
-              <div className="recording-error" role="alert">{recordingError}</div>
-            ) : null}
-
-            <div className="media-grid" aria-label="Imported media">
-              {analyzingMediaItems.map((analyzingItem) => (
-                <div
-                  className="media-thumb is-analyzing"
-                  draggable={false}
-                  key={analyzingItem.id}
-                  role="status"
-                >
-                  <div className="media-analysis-content">
-                    <span className="media-analysis-spinner" aria-hidden="true" />
-                    <span>Detecting scenes...</span>
+            {activeTool === "media" ? (
+              <>
+                <div className="library-actions">
+                  <button
+                    className="import-button"
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    Import
+                  </button>
+                  <button
+                    className={`record-button ${isRecording ? "is-recording" : ""}`}
+                    type="button"
+                    onClick={() => void toggleVoiceRecording()}
+                    aria-label={
+                      isRecording
+                        ? "Stop voice recording"
+                        : "Record voice narration"
+                    }
+                  >
+                    {isRecording ? "Stop" : "Record"}
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    className="hidden-file-input"
+                    type="file"
+                    accept="image/*,video/*"
+                    multiple
+                    onChange={importMediaFromGallery}
+                  />
+                </div>
+                {recordingError ? (
+                  <div className="recording-error" role="alert">
+                    {recordingError}
                   </div>
-                  <strong>{analyzingItem.label}</strong>
-                </div>
-              ))}
-              {mediaItems.map((mediaItem) => (
-                <div
-                  className={`media-thumb ${
-                    selectedMediaId === mediaItem.id ? "selected-media" : ""
-                  }`}
-                  key={mediaItem.id}
-                >
-                  <button
-                    className="media-thumb-select"
-                    type="button"
-                    onPointerDown={(event) => {
-                      startMediaDrag(event, mediaItem);
-                    }}
-                    onClick={() => chooseMedia(mediaItem)}
-                  >
-                    {mediaItem.sceneIndex ? (
-                      <span className="added-chip scene-chip">
-                        Scene {mediaItem.sceneIndex}
-                      </span>
-                    ) : (
-                      <span className="added-chip">Added</span>
-                    )}
-                  {getMediaItemType(mediaItem) === "image" ? (
-                    <Img
-                      className="media-thumb-image"
-                      src={resolveMediaSource(mediaItem.src)}
-                    />
-                  ) : (
-                    // eslint-disable-next-line @remotion/warn-native-media-tag
-                    <video
-                      className="media-thumb-video"
-                      src={resolveMediaSource(mediaItem.src)}
-                      muted
-                      playsInline
-                      preload="metadata"
-                      onLoadedMetadata={(event) => {
-                        if (mediaItem.sourceFileId) {
-                          event.currentTarget.currentTime =
-                            (mediaItem.sourceStart ?? 0) / fps;
-                          return;
-                        }
-                        const durationInFrames = durationToFrames(
-                          event.currentTarget.duration,
-                        );
-                        setMediaItems((currentItems) =>
-                          currentItems.map((item) =>
-                            item.id === mediaItem.id
-                              ? {
-                                  ...item,
-                                  durationInFrames,
-                                  duration: formatMediaDuration(durationInFrames),
-                                  mediaType: "video",
-                                }
-                              : item,
-                          ),
-                        );
-                      }}
-                    />
-                  )}
-                    <span className="media-duration">{mediaItem.duration}</span>
-                    <strong>{mediaItem.label}</strong>
-                  </button>
-                  {selectedMediaId === mediaItem.id &&
-                  mediaItem.sourceFileId &&
-                  getMediaItemType(mediaItem) === "video" ? (
-                    <button
-                      aria-label="Split scene"
-                      title="Split scene"
-                      className="media-split-button"
-                      type="button"
-                      disabled={mediaPreviewFrame <= 0 ||
-                        mediaPreviewFrame >= mediaItem.durationInFrames}
-                      onPointerDown={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                      }}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        splitSelectedMediaScene(mediaItem);
-                      }}
+                ) : null}
+
+                <div className="media-grid" aria-label="Imported media">
+                  {analyzingMediaItems.map((analyzingItem) => (
+                    <div
+                      className="media-thumb is-analyzing"
+                      draggable={false}
+                      key={analyzingItem.id}
+                      role="status"
                     >
-                      <span aria-hidden="true">&#9986;</span>
-                    </button>
-                  ) : null}
-                  <button
-                    aria-label={`Delete ${mediaItem.label}`}
-                    title={`Delete ${mediaItem.label}`}
-                    className="media-delete-button"
-                    type="button"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      deleteMediaItem(mediaItem.id);
-                    }}
-                  >
-                    <span aria-hidden="true">&#128465;</span>
-                  </button>
+                      <div className="media-analysis-content">
+                        <span
+                          className="media-analysis-spinner"
+                          aria-hidden="true"
+                        />
+                        <span>Detecting scenes...</span>
+                      </div>
+                      <strong>{analyzingItem.label}</strong>
+                    </div>
+                  ))}
+                  {mediaItems.map((mediaItem) => (
+                    <div
+                      className={`media-thumb ${selectedMediaId === mediaItem.id ? "selected-media" : ""}`}
+                      key={mediaItem.id}
+                    >
+                      <button
+                        className="media-thumb-select"
+                        type="button"
+                        onPointerDown={(event) => {
+                          startMediaDrag(event, mediaItem);
+                        }}
+                        onClick={() => chooseMedia(mediaItem)}
+                      >
+                        {mediaItem.sceneIndex ? (
+                          <span className="added-chip scene-chip">
+                            Scene {mediaItem.sceneIndex}
+                          </span>
+                        ) : (
+                          <span className="added-chip">Added</span>
+                        )}
+                        {getMediaItemType(mediaItem) === "image" ? (
+                          <Img
+                            className="media-thumb-image"
+                            src={resolveMediaSource(mediaItem.src)}
+                          />
+                        ) : (
+                          // eslint-disable-next-line @remotion/warn-native-media-tag
+                          <video
+                            className="media-thumb-video"
+                            src={resolveMediaSource(mediaItem.src)}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            onLoadedMetadata={(event) => {
+                              if (mediaItem.sourceFileId) {
+                                event.currentTarget.currentTime =
+                                  (mediaItem.sourceStart ?? 0) / fps;
+                                return;
+                              }
+                              const durationInFrames = durationToFrames(
+                                event.currentTarget.duration,
+                              );
+                              setMediaItems((currentItems) =>
+                                currentItems.map((item) =>
+                                  item.id === mediaItem.id
+                                    ? {
+                                        ...item,
+                                        durationInFrames,
+                                        duration:
+                                          formatMediaDuration(durationInFrames),
+                                        mediaType: "video",
+                                      }
+                                    : item,
+                                ),
+                              );
+                            }}
+                          />
+                        )}
+                        <span className="media-duration">
+                          {mediaItem.duration}
+                        </span>
+                        <strong>{mediaItem.label}</strong>
+                      </button>
+                      {selectedMediaId === mediaItem.id &&
+                      mediaItem.sourceFileId &&
+                      getMediaItemType(mediaItem) === "video" ? (
+                        <button
+                          aria-label="Split scene"
+                          title="Split scene"
+                          className="media-split-button"
+                          type="button"
+                          disabled={
+                            mediaPreviewFrame <= 0 ||
+                            mediaPreviewFrame >= mediaItem.durationInFrames
+                          }
+                          onPointerDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            splitSelectedMediaScene(mediaItem);
+                          }}
+                        >
+                          <span aria-hidden="true">&#9986;</span>
+                        </button>
+                      ) : null}
+                      <button
+                        aria-label={`Delete ${mediaItem.label}`}
+                        title={`Delete ${mediaItem.label}`}
+                        className="media-delete-button"
+                        type="button"
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          deleteMediaItem(mediaItem.id);
+                        }}
+                      >
+                        <span aria-hidden="true">&#128465;</span>
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            </> : activeTool === "cutout" ? (
+              </>
+            ) : activeTool === "cutout" ? (
               <div className="cutout-tool-panel">
                 <button
                   className="import-button"
                   type="button"
                   onClick={() => cutoutInputRef.current?.click()}
-                >Import cutout</button>
+                >
+                  Import cutout
+                </button>
                 <input
                   ref={cutoutInputRef}
                   className="hidden-file-input"
@@ -5793,48 +6118,75 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                   multiple
                   onChange={(event) => void importCutoutFromGallery(event)}
                 />
-                <p>Choose an image or video. It will appear at the red playhead.</p>
+                <p>
+                  Choose an image or video. It will appear at the red playhead.
+                </p>
                 <div className="cutout-format-hint">
-                  Transparent PNG and WebM files keep their transparent background.
+                  Transparent PNG and WebM files keep their transparent
+                  background.
                 </div>
                 <div className="cutout-mask-controls">
                   <strong>Background</strong>
-                  <div className="cutout-mode-control" role="group" aria-label="Cutout editing mode">
+                  <div
+                    className="cutout-mode-control"
+                    role="group"
+                    aria-label="Cutout editing mode"
+                  >
                     <button
                       type="button"
-                      className={cutoutBrushMode === "move" ? "selected-option" : ""}
+                      className={
+                        cutoutBrushMode === "move" ? "selected-option" : ""
+                      }
                       aria-label="Move cutout"
                       title="Move and resize"
                       onClick={() => setCutoutBrushMode("move")}
                       disabled={isAutoCutoutLoading}
-                    >Move</button>
+                    >
+                      Move
+                    </button>
                     <button
                       type="button"
-                      className={cutoutBrushMode === "erase" ? "selected-option" : ""}
+                      className={
+                        cutoutBrushMode === "erase" ? "selected-option" : ""
+                      }
                       aria-label="Erase cutout background"
                       title="Erase background manually"
                       onClick={() => setCutoutBrushMode("erase")}
                       disabled={!selectedCutoutClip || isAutoCutoutLoading}
-                    >Erase</button>
+                    >
+                      Erase
+                    </button>
                     <button
                       type="button"
-                      className={cutoutBrushMode === "restore" ? "selected-option" : ""}
+                      className={
+                        cutoutBrushMode === "restore" ? "selected-option" : ""
+                      }
                       aria-label="Restore cutout background"
                       title="Restore erased areas"
                       onClick={() => setCutoutBrushMode("restore")}
                       disabled={!selectedCutoutClip || isAutoCutoutLoading}
-                    >Restore</button>
+                    >
+                      Restore
+                    </button>
                   </div>
                   <label className="cutout-brush-control">
-                    <span>Brush <strong>{cutoutBrushSize}</strong></span>
+                    <span>
+                      Brush <strong>{cutoutBrushSize}</strong>
+                    </span>
                     <input
                       type="range"
                       min="2"
                       max="32"
                       value={cutoutBrushSize}
                       aria-label="Cutout brush size"
-                      onChange={(event) => setCutoutBrushSize(Number(event.currentTarget.value))}
-                      disabled={!selectedCutoutClip || cutoutBrushMode === "move" || isAutoCutoutLoading}
+                      onChange={(event) =>
+                        setCutoutBrushSize(Number(event.currentTarget.value))
+                      }
+                      disabled={
+                        !selectedCutoutClip ||
+                        cutoutBrushMode === "move" ||
+                        isAutoCutoutLoading
+                      }
                     />
                   </label>
                   <button
@@ -5842,18 +6194,24 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                     className="secondary-action-button auto-cutout-button"
                     onClick={() => void processSelectedCutoutAutomatically()}
                     disabled={!selectedCutoutClip || isAutoCutoutLoading}
-                  >{isAutoCutoutLoading ? "Working..." : "Auto cutout"}</button>
+                  >
+                    {isAutoCutoutLoading ? "Working..." : "Auto cutout"}
+                  </button>
                   <div className="cutout-action-row">
                     <button
                       type="button"
                       className="icon-tool-button"
                       aria-label="Split cutout at playhead"
-                      title={canSplitSelectedCutout
-                        ? "Split at red playhead"
-                        : "Place the red playhead inside the selected cutout"}
+                      title={
+                        canSplitSelectedCutout
+                          ? "Split at red playhead"
+                          : "Place the red playhead inside the selected cutout"
+                      }
                       onClick={splitSelectedCutoutAtPlayhead}
                       disabled={!splitCutoutTarget || isAutoCutoutLoading}
-                    >✂</button>
+                    >
+                      ✂
+                    </button>
                     <button
                       type="button"
                       className="icon-tool-button"
@@ -5861,7 +6219,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                       title="Reset erased areas"
                       onClick={resetSelectedCutoutMask}
                       disabled={!canResetSelectedCutout || isAutoCutoutLoading}
-                    >↺</button>
+                    >
+                      ↺
+                    </button>
                   </div>
                   <div className="cutout-history-row">
                     <button
@@ -5870,51 +6230,64 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                       aria-label="Undo cutout edit"
                       title="Undo"
                       onClick={undoLastClipChange}
-                      disabled={timelineHistory.past.length === 0 || isAutoCutoutLoading}
-                    >↶</button>
+                      disabled={
+                        timelineHistory.past.length === 0 || isAutoCutoutLoading
+                      }
+                    >
+                      ↶
+                    </button>
                     <button
                       type="button"
                       className="icon-tool-button"
                       aria-label="Redo cutout edit"
                       title="Redo"
                       onClick={redoLastClipChange}
-                      disabled={timelineHistory.future.length === 0 || isAutoCutoutLoading}
-                    >↷</button>
+                      disabled={
+                        timelineHistory.future.length === 0 ||
+                        isAutoCutoutLoading
+                      }
+                    >
+                      ↷
+                    </button>
                   </div>
                 </div>
               </div>
-            ) : activeTool === "stickers" ? <>
-              <div className="library-actions">
-                <button
-                  className="import-button"
-                  type="button"
-                  onClick={() => stickerInputRef.current?.click()}
-                >Upload sticker</button>
-                <input
-                  ref={stickerInputRef}
-                  className="hidden-file-input"
-                  type="file"
-                  accept="image/png,image/webp,image/gif"
-                  multiple
-                  onChange={uploadSticker}
-                />
-              </div>
-              <div className="sticker-grid" aria-label="Sticker library">
-                {stickerItems.map((stickerItem) => (
+            ) : activeTool === "stickers" ? (
+              <>
+                <div className="library-actions">
                   <button
-                    className="sticker-library-item"
-                    key={stickerItem.id}
+                    className="import-button"
                     type="button"
-                    title={`Add ${stickerItem.label} at playhead`}
-                    onClick={() => addStickerAtPlayhead(stickerItem)}
+                    onClick={() => stickerInputRef.current?.click()}
                   >
-                    {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
-                    <img src={stickerItem.src} alt="" />
-                    <span>{stickerItem.label}</span>
+                    Upload sticker
                   </button>
-                ))}
-              </div>
-            </> : activeTool === "text" ? (
+                  <input
+                    ref={stickerInputRef}
+                    className="hidden-file-input"
+                    type="file"
+                    accept="image/png,image/webp,image/gif"
+                    multiple
+                    onChange={uploadSticker}
+                  />
+                </div>
+                <div className="sticker-grid" aria-label="Sticker library">
+                  {stickerItems.map((stickerItem) => (
+                    <button
+                      className="sticker-library-item"
+                      key={stickerItem.id}
+                      type="button"
+                      title={`Add ${stickerItem.label} at playhead`}
+                      onClick={() => addStickerAtPlayhead(stickerItem)}
+                    >
+                      {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
+                      <img src={stickerItem.src} alt="" />
+                      <span>{stickerItem.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : activeTool === "text" ? (
               <div className="text-tool-panel">
                 <label htmlFor="text-overlay-input">
                   {selectedTextClip ? "Edit text" : "Text"}
@@ -5924,7 +6297,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                   value={textDraft}
                   maxLength={120}
                   placeholder={
-                    selectedTextClip ? "Edit the selected text" : "Type your text"
+                    selectedTextClip
+                      ? "Edit the selected text"
+                      : "Type your text"
                   }
                   onChange={(event) => setTextDraft(event.currentTarget.value)}
                 />
@@ -5943,7 +6318,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                       ? commitSelectedTextContent
                       : addTextAtPlayhead
                   }
-                >{selectedTextClip ? "Commit changes" : "Add text at playhead"}</button>
+                >
+                  {selectedTextClip ? "Commit changes" : "Add text at playhead"}
+                </button>
               </div>
             ) : activeTool === "transcript" ? (
               <div className="transcript-tool-panel">
@@ -5952,7 +6329,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                   <span>{transcriptClips.length} segments</span>
                 </div>
                 <p className="caption-auto-copy">
-                  Select a video on the main or overlay track, then generate a timed transcript from its audio.
+                  Select a video on the main or overlay track, then generate a
+                  timed transcript from its audio.
                 </p>
                 {!selectedCaptionSourceClip ? (
                   <p className="caption-auto-hint">
@@ -5967,10 +6345,14 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                   <button
                     className="import-button"
                     type="button"
-                    disabled={isAutoCaptionLoading || !selectedCaptionSourceClip}
+                    disabled={
+                      isAutoCaptionLoading || !selectedCaptionSourceClip
+                    }
                     onClick={generateTranscript}
                   >
-                    {isAutoCaptionLoading ? "Working..." : "Generate transcript"}
+                    {isAutoCaptionLoading
+                      ? "Working..."
+                      : "Generate transcript"}
                   </button>
                   <button
                     className="secondary-action-button"
@@ -5990,7 +6372,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                   </div>
                 ) : null}
                 {transcriptClips.length > 0 ? (
-                  <div className="transcript-segment-list" aria-label="Transcript segments">
+                  <div
+                    className="transcript-segment-list"
+                    aria-label="Transcript segments"
+                  >
                     {transcriptClips.map((clip) => (
                       <button
                         className="transcript-segment"
@@ -6015,7 +6400,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
             ) : activeTool === "captions" ? (
               <div className="caption-tool-panel">
                 {captionMode === "actions" ? (
-                  <div className="caption-action-grid" aria-label="Caption actions">
+                  <div
+                    className="caption-action-grid"
+                    aria-label="Caption actions"
+                  >
                     {captionActionTiles.map((tile) => (
                       <button
                         key={tile.mode}
@@ -6023,8 +6411,15 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                         type="button"
                         onClick={() => openCaptionMode(tile.mode)}
                       >
-                        <span className="caption-action-icon" aria-hidden="true">{tile.icon}</span>
-                        <span className="caption-action-label">{tile.label}</span>
+                        <span
+                          className="caption-action-icon"
+                          aria-hidden="true"
+                        >
+                          {tile.icon}
+                        </span>
+                        <span className="caption-action-label">
+                          {tile.label}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -6035,26 +6430,52 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                         className="caption-back-button"
                         type="button"
                         onClick={goBackToCaptionActions}
-                      >Back</button>
+                      >
+                        Back
+                      </button>
                       <strong>
-                        {captionActionTiles.find((tile) => tile.mode === captionMode)?.label}
+                        {
+                          captionActionTiles.find(
+                            (tile) => tile.mode === captionMode,
+                          )?.label
+                        }
                       </strong>
                     </div>
-                    {captionMode === "manual" ? (
-                      <>
-                        <label htmlFor="caption-overlay-input">Caption</label>
-                        <textarea
-                          id="caption-overlay-input"
-                          value={captionDraft}
-                          maxLength={180}
-                          placeholder="Type your caption"
-                          onChange={(event) => {
-                            setCaptionDraft(event.currentTarget.value);
-                            resetCaptionStatus();
-                          }}
-                        />
-                      </>
-                    ) : null}
+                    {captionMode === "manual" &&
+                      (selectedCaptionClip ? (
+                        <div className="caption-selection-summary">
+                          <strong>Editing selected caption</strong>
+                          <span>
+                            Use the caption inspector to change its words and
+                            style.
+                          </span>
+                          <button
+                            className="secondary-action-button"
+                            type="button"
+                            onClick={() => {
+                              setSelectedClipId(null);
+                              setCaptionDraft("");
+                              resetCaptionStatus();
+                            }}
+                          >
+                            New caption
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="caption-manual-form">
+                          <label htmlFor="caption-overlay-input">Caption</label>
+                          <textarea
+                            id="caption-overlay-input"
+                            value={captionDraft}
+                            maxLength={180}
+                            placeholder="Type your caption"
+                            onChange={(event) => {
+                              setCaptionDraft(event.currentTarget.value);
+                              resetCaptionStatus();
+                            }}
+                          />
+                        </div>
+                      ))}
                     {captionMode === "upload" ? (
                       <div className="caption-auto-panel">
                         <p className="caption-auto-copy">
@@ -6068,134 +6489,79 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                           onChange={uploadCaptionFile}
                         />
                         <p className="caption-auto-hint">
-                          Files are parsed locally in your browser and never uploaded.
+                          Files are parsed locally in your browser and never
+                          uploaded.
                         </p>
                       </div>
                     ) : null}
                     {captionMode === "auto" ? (
                       <div className="caption-auto-panel">
                         <p className="caption-auto-copy">
-                          Generate captions from the selected main or upper video clip.
+                          Generate captions from the selected main or upper
+                          video clip.
                         </p>
                         {!selectedCaptionSourceClip ? (
                           <p className="caption-auto-hint">
-                            Select a main or upper video clip before generating auto captions.
+                            Select a main or upper video clip before generating
+                            auto captions.
                           </p>
                         ) : null}
                         <button
                           className="import-button"
                           type="button"
-                          disabled={isAutoCaptionLoading || !selectedCaptionSourceClip}
+                          disabled={
+                            isAutoCaptionLoading || !selectedCaptionSourceClip
+                          }
                           onClick={generateAutoCaptions}
                         >
-                          {isAutoCaptionLoading ? "Generating..." : "Generate auto captions"}
+                          {isAutoCaptionLoading
+                            ? "Generating..."
+                            : "Generate auto captions"}
                         </button>
                       </div>
                     ) : null}
                     {captionMode === "lyrics" ? (
                       <div className="caption-auto-panel">
                         <p className="caption-auto-copy">
-                          Generate lyric captions from the selected main or upper video clip.
+                          Generate lyric captions from the selected main or
+                          upper video clip.
                         </p>
                         {!selectedCaptionSourceClip ? (
                           <p className="caption-auto-hint">
-                            Select a main or upper video clip before generating auto lyrics.
+                            Select a main or upper video clip before generating
+                            auto lyrics.
                           </p>
                         ) : null}
                         <button
                           className="import-button"
                           type="button"
-                          disabled={isAutoCaptionLoading || !selectedCaptionSourceClip}
+                          disabled={
+                            isAutoCaptionLoading || !selectedCaptionSourceClip
+                          }
                           onClick={generateAutoLyrics}
                         >
-                          {isAutoCaptionLoading ? "Generating..." : "Generate auto lyrics"}
+                          {isAutoCaptionLoading
+                            ? "Generating..."
+                            : "Generate auto lyrics"}
                         </button>
                       </div>
                     ) : null}
-                    <div className="caption-style-grid">
-                      <label>
-                        <strong>Font size</strong>
-                        <input
-                          type="range"
-                          min={1}
-                          max={160}
-                          step={1}
-                          value={captionStyle.fontSize}
-                          onChange={(event) => {
-                            setCaptionStyle((currentStyle) => ({
-                              ...currentStyle,
-                              fontSize: Number(event.currentTarget.value),
-                            }));
-                            resetCaptionStatus();
-                          }}
-                        />
-                      </label>
-                      <label>
-                        <strong>Text color</strong>
-                        <input
-                          type="color"
-                          value={captionStyle.textColor}
-                          onChange={(event) => {
-                            setCaptionStyle((currentStyle) => ({
-                              ...currentStyle,
-                              textColor: event.currentTarget.value,
-                            }));
-                            resetCaptionStatus();
-                          }}
-                        />
-                      </label>
-                      <label className="caption-toggle">
-                        <input
-                          type="checkbox"
-                          checked={captionStyle.backgroundEnabled}
-                          onChange={(event) => {
-                            setCaptionStyle((currentStyle) => ({
-                              ...currentStyle,
-                              backgroundEnabled: event.currentTarget.checked,
-                            }));
-                            resetCaptionStatus();
-                          }}
-                        />
-                        <strong>Background</strong>
-                      </label>
-                      <label>
-                        <strong>Background color</strong>
-                        <input
-                          type="color"
-                          value={captionStyle.backgroundColor.slice(0, 7)}
-                          disabled={!captionStyle.backgroundEnabled}
-                          onChange={(event) => {
-                            setCaptionStyle((currentStyle) => ({
-                              ...currentStyle,
-                              backgroundColor: `${event.currentTarget.value}cc`,
-                            }));
-                            resetCaptionStatus();
-                          }}
-                        />
-                      </label>
-                    </div>
-                    {captionMode === "manual" ? (
-                      <>
-                        {selectedCaptionClip?.caption ? (
-                          <button
-                            className="record-button"
-                            type="button"
-                            disabled={!captionDraft.trim()}
-                            onClick={applySelectedCaption}
-                          >Update selected caption</button>
-                        ) : null}
-                        <button
-                          className="import-button"
-                          type="button"
-                          disabled={!captionDraft.trim()}
-                          onClick={addCaptionAtPlayhead}
-                        >Add caption at playhead</button>
-                      </>
+                    {captionMode === "manual" && !selectedCaptionClip ? (
+                      <button
+                        className="import-button"
+                        type="button"
+                        disabled={!captionDraft.trim()}
+                        onClick={addCaptionAtPlayhead}
+                      >
+                        Add caption at playhead
+                      </button>
                     ) : null}
                     {captionStatus.message ? (
                       <div
                         className={`caption-status caption-status-${captionStatus.kind}`}
-                        role={captionStatus.kind === "error" ? "alert" : "status"}
+                        role={
+                          captionStatus.kind === "error" ? "alert" : "status"
+                        }
                       >
                         {captionStatus.message}
                       </div>
@@ -6206,7 +6572,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
             ) : activeTool === "animations" ? (
               <div className="visual-tool-panel animation-tool-panel">
                 <strong>Animations</strong>
-                <span>Select a main or overlay clip, then choose how it appears.</span>
+                <span>
+                  Select a main or overlay clip, then choose how it appears.
+                </span>
                 <div className="visual-option-grid">
                   {animationOptions.map((option) => (
                     <button
@@ -6224,7 +6592,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                     </button>
                   ))}
                 </div>
-                <div className="animation-segment-control" aria-label="Animation timing">
+                <div
+                  className="animation-segment-control"
+                  aria-label="Animation timing"
+                >
                   {animationTimingOptions.map((option) => (
                     <button
                       className={
@@ -6243,7 +6614,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                 </div>
                 <label className="visual-intensity-control">
                   <span>
-                    Duration <em>{(selectedClipAnimation.duration / fps).toFixed(1)}s</em>
+                    Duration{" "}
+                    <em>
+                      {(selectedClipAnimation.duration / fps).toFixed(1)}s
+                    </em>
                   </span>
                   <input
                     aria-label="Animation duration"
@@ -6263,7 +6637,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                     }
                   />
                 </label>
-                <div className="animation-segment-control" aria-label="Animation speed feel">
+                <div
+                  className="animation-segment-control"
+                  aria-label="Animation speed feel"
+                >
                   {animationEasingOptions.map((option) => (
                     <button
                       className={
@@ -6287,12 +6664,16 @@ export const MyComponent: React.FC<Props> = ({project}) => {
             ) : activeTool === "effects" ? (
               <div className="visual-tool-panel">
                 <strong>Effects</strong>
-                <span>Select a main or overlay clip, then choose an effect.</span>
+                <span>
+                  Select a main or overlay clip, then choose an effect.
+                </span>
                 <div className="visual-option-grid">
                   {effectOptions.map((option) => (
                     <button
                       className={
-                        selectedClipEffect === option.id ? "active-visual-option" : ""
+                        selectedClipEffect === option.id
+                          ? "active-visual-option"
+                          : ""
                       }
                       key={option.id}
                       type="button"
@@ -6304,7 +6685,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                   ))}
                 </div>
                 <label className="visual-intensity-control">
-                  <span>Intensity <em>{selectedEffectIntensity}%</em></span>
+                  <span>
+                    Intensity <em>{selectedEffectIntensity}%</em>
+                  </span>
                   <input
                     aria-label="Effect intensity"
                     type="range"
@@ -6312,7 +6695,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                     max={100}
                     step={1}
                     value={selectedEffectIntensity}
-                    disabled={!canEditSelectedVisual || selectedClipEffect === "none"}
+                    disabled={
+                      !canEditSelectedVisual || selectedClipEffect === "none"
+                    }
                     onChange={(event) =>
                       updateSelectedEffectIntensity(
                         Number(event.currentTarget.value),
@@ -6329,7 +6714,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                   {filterOptions.map((option) => (
                     <button
                       className={
-                        selectedClipFilter === option.id ? "active-visual-option" : ""
+                        selectedClipFilter === option.id
+                          ? "active-visual-option"
+                          : ""
                       }
                       key={option.id}
                       type="button"
@@ -6341,7 +6728,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                   ))}
                 </div>
                 <label className="visual-intensity-control">
-                  <span>Intensity <em>{selectedFilterIntensity}%</em></span>
+                  <span>
+                    Intensity <em>{selectedFilterIntensity}%</em>
+                  </span>
                   <input
                     aria-label="Filter intensity"
                     type="range"
@@ -6349,7 +6738,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                     max={100}
                     step={1}
                     value={selectedFilterIntensity}
-                    disabled={!canEditSelectedVisual || selectedClipFilter === "none"}
+                    disabled={
+                      !canEditSelectedVisual || selectedClipFilter === "none"
+                    }
                     onChange={(event) =>
                       updateSelectedFilterIntensity(
                         Number(event.currentTarget.value),
@@ -6368,7 +6759,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                     onClick={() =>
                       updateSelectedClipAdjustment(defaultClipAdjustment)
                     }
-                  >Reset</button>
+                  >
+                    Reset
+                  </button>
                 </div>
                 <span>Select a main or overlay clip.</span>
                 <label>
@@ -6419,7 +6812,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                         ),
                       })
                     }
-                  >↶</button>
+                  >
+                    ↶
+                  </button>
                   <button
                     type="button"
                     title="Rotate right 90 degrees"
@@ -6433,53 +6828,63 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                         ),
                       })
                     }
-                  >↷</button>
+                  >
+                    ↷
+                  </button>
                 </div>
                 <strong className="crop-heading">Crop edges</strong>
                 <div className="crop-mode-switch" aria-label="Crop input mode">
                   <button
-                    className={cropInputMode === "sliders" ? "active-crop-mode" : ""}
+                    className={
+                      cropInputMode === "sliders" ? "active-crop-mode" : ""
+                    }
                     type="button"
                     onClick={() => setCropInputMode("sliders")}
-                  >Sliders</button>
+                  >
+                    Sliders
+                  </button>
                   <button
-                    className={cropInputMode === "manual" ? "active-crop-mode" : ""}
+                    className={
+                      cropInputMode === "manual" ? "active-crop-mode" : ""
+                    }
                     type="button"
                     disabled={!canEditSelectedVisual}
                     onClick={() => {
                       setCropInputMode("manual");
                       setPreviewMode("timeline");
                     }}
-                  >On canvas</button>
+                  >
+                    On canvas
+                  </button>
                 </div>
                 {cropInputMode === "sliders" ? (
                   <div className="crop-control-grid">
-                    {([
-                      ["Top", "cropTop"],
-                      ["Right", "cropRight"],
-                      ["Bottom", "cropBottom"],
-                      ["Left", "cropLeft"],
-                    ] as Array<[string, keyof ClipAdjustment]>).map(
-                      ([label, property]) => (
-                        <label key={property}>
-                          <span>{label}</span>
-                          <em>{selectedClipAdjustment[property]}%</em>
-                          <input
-                            type="range"
-                            min="0"
-                            max="45"
-                            step="1"
-                            value={selectedClipAdjustment[property]}
-                            disabled={!canEditSelectedVisual}
-                            onChange={(event) =>
-                              updateSelectedClipAdjustment({
-                                [property]: Number(event.currentTarget.value),
-                              })
-                            }
-                          />
-                        </label>
-                      ),
-                    )}
+                    {(
+                      [
+                        ["Top", "cropTop"],
+                        ["Right", "cropRight"],
+                        ["Bottom", "cropBottom"],
+                        ["Left", "cropLeft"],
+                      ] as Array<[string, keyof ClipAdjustment]>
+                    ).map(([label, property]) => (
+                      <label key={property}>
+                        <span>{label}</span>
+                        <em>{selectedClipAdjustment[property]}%</em>
+                        <input
+                          type="range"
+                          min="0"
+                          max="45"
+                          step="1"
+                          value={selectedClipAdjustment[property]}
+                          disabled={!canEditSelectedVisual}
+                          onChange={(event) =>
+                            updateSelectedClipAdjustment({
+                              [property]: Number(event.currentTarget.value),
+                            })
+                          }
+                        />
+                      </label>
+                    ))}
                   </div>
                 ) : null}
               </div>
@@ -6496,7 +6901,11 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                   className={`record-button ${isRecording ? "is-recording" : ""}`}
                   type="button"
                   onClick={() => void toggleVoiceRecording()}
-                  aria-label={isRecording ? "Stop voice recording" : "Record voice narration"}
+                  aria-label={
+                    isRecording
+                      ? "Stop voice recording"
+                      : "Record voice narration"
+                  }
                 >
                   {isRecording ? "Stop" : "Record"}
                 </button>
@@ -6515,784 +6924,1017 @@ export const MyComponent: React.FC<Props> = ({project}) => {
 
         <section className="preview-panel">
           <div className="preview-shell">
-          <div
-            className="preview-window"
-            ref={previewWindowRef}
-            onMouseLeave={closeMediaPreviewVolumeIfInactive}
-            onBlurCapture={handleMediaPreviewBlur}
-          >
-            {previewSource?.src || isTimelinePreview ? (
-              <>
-                {isTimelinePreview ? (
-                  <Fragment>
-                    {activeVideoLayers
-                      .filter((videoClip) => isImageClip(videoClip))
-                      .map((videoClip) => (
-                        <Img
-                          key={videoClip.id}
-                          className="preview-image preview-layer-image"
-                          data-video-layer={getVideoLayer(videoClip)}
-                          src={resolveMediaSource(videoClip.src ?? "")}
-                          style={{
-                            ...getClipFrameStyle(videoClip, playheadFrame),
-                            ...getClipAdjustmentStyle(videoClip),
-                            ...getCutoutChromaKeyStyle(videoClip),
-                            zIndex: getPreviewVideoLayerZIndex(videoClip),
-                          }}
-                        />
-                      ))}
-                    {timelinePreviewVideoClips.map((videoClip) => {
-                      const activeIndex = activeVideoLayers.findIndex(
-                        (activeClip) => activeClip.id === videoClip.id,
-                      );
-                      const isActiveVideoClip = activeIndex >= 0;
-                      const transitionPresentation = getClipTransitionPresentation(
-                        clips,
-                        videoClip.id,
-                        playheadFrame,
-                      );
-                      const isTransitionPreviewClip =
-                        transitionPresentation.opacity !== 1 ||
-                        transitionPresentation.translateX !== 0 ||
-                        transitionPresentation.scale !== 1;
-                      const isVisibleVideoClip =
-                        isActiveVideoClip || isTransitionPreviewClip;
-                      const previewFrame = isActiveVideoClip
-                        ? playheadFrame
-                        : playheadFrame < videoClip.start
-                          ? videoClip.start
-                          : videoClip.start + videoClip.duration - 1;
-                      const videoMuted =
-                        !isActiveVideoClip ||
-                        (videoClip.volume ?? 1) === 0 ||
-                        shouldMuteVideoNativeAudio(
-                          clips,
-                          playheadFrame,
-                          videoClip.id,
+            <div
+              className="preview-window"
+              ref={previewWindowRef}
+              onMouseLeave={closeMediaPreviewVolumeIfInactive}
+              onBlurCapture={handleMediaPreviewBlur}
+            >
+              {previewSource?.src || isTimelinePreview ? (
+                <>
+                  {isTimelinePreview ? (
+                    <Fragment>
+                      {activeVideoLayers
+                        .filter((videoClip) => isImageClip(videoClip))
+                        .map((videoClip) => (
+                          <Img
+                            key={videoClip.id}
+                            className="preview-image preview-layer-image"
+                            data-video-layer={getVideoLayer(videoClip)}
+                            src={resolveMediaSource(videoClip.src ?? "")}
+                            style={{
+                              ...getClipFrameStyle(videoClip, playheadFrame),
+                              ...getClipAdjustmentStyle(videoClip),
+                              ...getCutoutChromaKeyStyle(videoClip),
+                              zIndex: getPreviewVideoLayerZIndex(videoClip),
+                            }}
+                          />
+                        ))}
+                      {timelinePreviewVideoClips.map((videoClip) => {
+                        const activeIndex = activeVideoLayers.findIndex(
+                          (activeClip) => activeClip.id === videoClip.id,
                         );
+                        const isActiveVideoClip = activeIndex >= 0;
+                        const transitionPresentation =
+                          getClipTransitionPresentation(
+                            clips,
+                            videoClip.id,
+                            playheadFrame,
+                          );
+                        const isTransitionPreviewClip =
+                          transitionPresentation.opacity !== 1 ||
+                          transitionPresentation.translateX !== 0 ||
+                          transitionPresentation.scale !== 1;
+                        const isVisibleVideoClip =
+                          isActiveVideoClip || isTransitionPreviewClip;
+                        const previewFrame = isActiveVideoClip
+                          ? playheadFrame
+                          : playheadFrame < videoClip.start
+                            ? videoClip.start
+                            : videoClip.start + videoClip.duration - 1;
+                        const videoMuted =
+                          !isActiveVideoClip ||
+                          (videoClip.volume ?? 1) === 0 ||
+                          shouldMuteVideoNativeAudio(
+                            clips,
+                            playheadFrame,
+                            videoClip.id,
+                          );
 
-                      return (
-                        // eslint-disable-next-line @remotion/warn-native-media-tag
-                        <video
-                          key={videoClip.id}
-                          className="preview-video preview-layer-video"
-                          data-video-layer={getVideoLayer(videoClip)}
-                          src={resolveMediaSource(videoClip.src ?? "")}
-                          muted={videoMuted}
-                          playsInline
-                          preload="auto"
-                          onLoadedMetadata={(event) =>
-                            reconcileTimelineClipSourceDuration(videoClip, event)}
-                          onError={() => recoverUnavailableVideo(videoClip.id)}
-                          style={{
-                            ...getClipFrameStyle(
-                              videoClip,
-                              playheadFrame,
-                              transitionPresentation,
-                            ),
-                            ...getClipAdjustmentStyle(videoClip),
-                            visibility: isVisibleVideoClip ? "visible" : "hidden",
-                            zIndex: getPreviewVideoLayerZIndex(videoClip),
-                          }}
-                          ref={(video) => {
-                            if (!video) return;
-
-                            video.playbackRate = videoClip.speed ?? 1;
-                            video.volume = Math.min(videoClip.volume ?? 1, 1);
-                            video.muted = videoMuted;
-                            const desiredTime = Math.max(
-                              0,
-                              getClipSourceTime(
-                                videoClip,
-                                previewFrame,
-                                fps,
-                              ),
-                            );
-                            if (Math.abs(video.currentTime - desiredTime) > 0.12) {
-                              video.currentTime = desiredTime;
-                            }
-                            if (isPreviewPlaying && isActiveVideoClip) {
-                              void video.play().catch(() => undefined);
-                            } else {
-                              video.pause();
-                            }
-                          }}
-                        />
-                      );
-                    })}
-                  </Fragment>
-                ) : previewSource?.src && isImageClip(previewSource) ? (
-                  <Img
-                    className="preview-image"
-                    src={resolveMediaSource(previewSource.src)}
-                    style={{
-                      ...getClipFrameStyle(undefined, playheadFrame),
-                      ...getClipAdjustmentStyle(),
-                    }}
-                  />
-                ) : (
-                  // eslint-disable-next-line @remotion/warn-native-media-tag
-                  <video
-                    ref={previewVideoRef}
-                    className="preview-video"
-                    src={resolveMediaSource(previewSource?.src ?? "")}
-                    muted={previewMode === "media" ? false : previewVideoMuted}
-                    playsInline
-                    onLoadedMetadata={handleMediaPreviewMetadata}
-                    onTimeUpdate={handleMediaPreviewTimeUpdate}
-                    onEnded={handleMediaPreviewEnded}
-                    style={{
-                      ...getClipFrameStyle(undefined, playheadFrame),
-                      ...getClipAdjustmentStyle(),
-                    }}
-                  />
-                )}
-                {isTimelinePreview
-                  ? playbackAudioClips.map((audioClip) => (
-                    // eslint-disable-next-line @remotion/warn-native-media-tag
-                    <audio
-                      key={audioClip.id}
-                      src={resolveMediaSource(audioClip.src ?? "")}
-                      ref={(audio) => {
-                        if (!audio) return;
-                        audio.playbackRate = audioClip.speed ?? 1;
-                        audio.volume = Math.min(audioClip.volume ?? 1, 1);
-                        const desiredTime = Math.max(
-                          0,
-                          getClipSourceTime(audioClip, playheadFrame, fps),
-                        );
-                        if (Math.abs(audio.currentTime - desiredTime) > 0.12) {
-                          audio.currentTime = desiredTime;
-                        }
-                        if (isPreviewPlaying) {
-                          void audio.play().catch(() => undefined);
-                        } else {
-                          audio.pause();
-                        }
-                      }}
-                    />
-                  ))
-                  : null}
-                {isTimelinePreview
-                  ? activeCutoutClips.map((cutoutClip, cutoutIndex) => {
-                    const transform = cutoutClip.cutout!;
-                    const isSelected = selectedClipId === cutoutClip.id;
-                    const isMasking =
-                      isSelected &&
-                      (cutoutBrushMode === "erase" || cutoutBrushMode === "restore");
-                    const cutoutCursorClass = !isMasking
-                      ? ""
-                      : cutoutBrushMode === "erase"
-                        ? "erase-cutout-cursor"
-                        : "restore-cutout-cursor";
-                    const maskUrl = transform.maskStrokes?.length
-                      ? createCutoutMaskDataUrl(transform)
-                      : undefined;
-                    const maskStyle: CSSProperties = maskUrl
-                      ? {
-                          WebkitMaskImage: `url("${maskUrl}")`,
-                          maskImage: `url("${maskUrl}")`,
-                          WebkitMaskSize: "100% 100%",
-                          maskSize: "100% 100%",
-                          WebkitMaskRepeat: "no-repeat",
-                          maskRepeat: "no-repeat",
-                        }
-                      : {};
-                    const restoreMaskUrl = transform.originalSrc
-                      ? createCutoutRestoreMaskDataUrl(transform)
-                      : undefined;
-                    const restoreMaskStyle: CSSProperties = restoreMaskUrl
-                      ? {
-                          WebkitMaskImage: `url("${restoreMaskUrl}")`,
-                          maskImage: `url("${restoreMaskUrl}")`,
-                          WebkitMaskSize: "100% 100%",
-                          maskSize: "100% 100%",
-                          WebkitMaskRepeat: "no-repeat",
-                          maskRepeat: "no-repeat",
-                        }
-                      : {};
-
-                    return (
-                      <div
-                        className={`preview-cutout ${isSelected ? "selected-preview-cutout" : ""} ${isMasking ? "is-masking" : ""} ${cutoutCursorClass}`}
-                        key={cutoutClip.id}
-                        data-cutout-id={cutoutClip.id}
-                        style={{
-                          left: `${transform.x}%`,
-                          top: `${transform.y}%`,
-                          translate: "-50% -50%",
-                          scale: transform.scale,
-                          rotate: `${transform.rotation}deg`,
-                          zIndex: 20 + cutoutIndex,
-                        }}
-                        onPointerDown={(event) => {
-                          if (isMasking) {
-                            startCutoutMaskStroke(event, cutoutClip, cutoutBrushMode);
-                          } else {
-                            startCutoutInteraction(event, cutoutClip, "move");
-                          }
-                        }}
-                      >
-                        {transform.mediaKind === "video" ? (
+                        return (
                           // eslint-disable-next-line @remotion/warn-native-media-tag
                           <video
-                            className="preview-cutout-media"
-                            src={resolveMediaSource(cutoutClip.src ?? "")}
-                            muted
+                            key={videoClip.id}
+                            className="preview-video preview-layer-video"
+                            data-video-layer={getVideoLayer(videoClip)}
+                            src={resolveMediaSource(videoClip.src ?? "")}
+                            muted={videoMuted}
                             playsInline
-                            draggable={false}
+                            preload="auto"
+                            onLoadedMetadata={(event) =>
+                              reconcileTimelineClipSourceDuration(
+                                videoClip,
+                                event,
+                              )
+                            }
+                            onError={() =>
+                              recoverUnavailableVideo(videoClip.id)
+                            }
                             style={{
-                              ...maskStyle,
-                              ...getCutoutChromaKeyStyle(transform),
+                              ...getClipFrameStyle(
+                                videoClip,
+                                playheadFrame,
+                                transitionPresentation,
+                              ),
+                              ...getClipAdjustmentStyle(videoClip),
+                              visibility: isVisibleVideoClip
+                                ? "visible"
+                                : "hidden",
+                              zIndex: getPreviewVideoLayerZIndex(videoClip),
                             }}
                             ref={(video) => {
                               if (!video) return;
-                              video.playbackRate = cutoutClip.speed ?? 1;
+
+                              video.playbackRate = videoClip.speed ?? 1;
+                              video.volume = Math.min(videoClip.volume ?? 1, 1);
+                              video.muted = videoMuted;
                               const desiredTime = Math.max(
                                 0,
-                                getClipSourceTime(cutoutClip, playheadFrame, fps),
+                                getClipSourceTime(videoClip, previewFrame, fps),
                               );
-                              if (Math.abs(video.currentTime - desiredTime) > 0.12) {
+                              if (
+                                Math.abs(video.currentTime - desiredTime) > 0.12
+                              ) {
                                 video.currentTime = desiredTime;
                               }
-                              if (isPreviewPlaying) {
+                              if (isPreviewPlaying && isActiveVideoClip) {
                                 void video.play().catch(() => undefined);
                               } else {
                                 video.pause();
                               }
                             }}
                           />
-                        ) : (
-                          // eslint-disable-next-line @remotion/warn-native-media-tag
-                          <img
-                            className="preview-cutout-media"
-                            src={resolveMediaSource(cutoutClip.src ?? "")}
-                            alt={cutoutClip.label}
-                            draggable={false}
-                            style={maskStyle}
-                          />
-                        )}
-                        {transform.mediaKind === "image" && transform.originalSrc ? (
-                          // eslint-disable-next-line @remotion/warn-native-media-tag
-                          <img
-                            className="preview-cutout-original"
-                            src={resolveMediaSource(transform.originalSrc)}
-                            alt=""
-                            aria-hidden="true"
-                            draggable={false}
-                            style={restoreMaskStyle}
-                          />
-                        ) : null}
-                        {isSelected ? (
-                          <>
-                            <button
-                              className="cutout-rotate-handle"
-                              type="button"
-                              aria-label="Rotate cutout"
-                              title="Drag to rotate"
-                              onPointerDown={(event) =>
-                                startCutoutInteraction(event, cutoutClip, "rotate")
-                              }
-                            />
-                            <button
-                              className="cutout-scale-handle"
-                              type="button"
-                              aria-label="Resize cutout"
-                              title="Drag to resize"
-                              onPointerDown={(event) =>
-                                startCutoutInteraction(event, cutoutClip, "scale")
-                              }
-                            />
-                            <button
-                              className="cutout-delete-button"
-                              type="button"
-                              aria-label="Delete cutout"
-                              title="Delete cutout"
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onClick={deleteSelectedClip}
-                            >×</button>
-                          </>
-                        ) : null}
-                      </div>
-                    );
-                  })
-                  : null}
-                {activeTool === "adjustment" &&
-                cropInputMode === "manual" &&
-                canEditSelectedVisual &&
-                isTimelinePreview ? (
-                  <>
-                    <div
-                      className="manual-crop-frame"
+                        );
+                      })}
+                    </Fragment>
+                  ) : previewSource?.src && isImageClip(previewSource) ? (
+                    <Img
+                      className="preview-image"
+                      src={resolveMediaSource(previewSource.src)}
                       style={{
-                        top: `${selectedClipAdjustment.cropTop}%`,
-                        right: `${selectedClipAdjustment.cropRight}%`,
-                        bottom: `${selectedClipAdjustment.cropBottom}%`,
-                        left: `${selectedClipAdjustment.cropLeft}%`,
+                        ...getClipFrameStyle(undefined, playheadFrame),
+                        ...getClipAdjustmentStyle(),
                       }}
-                    >
-                      {([
-                        "top",
-                        "right",
-                        "bottom",
-                        "left",
-                        "top-left",
-                        "top-right",
-                        "bottom-left",
-                        "bottom-right",
-                      ] as CropEdge[]).map((edge) => (
-                        <button
-                          className={`crop-handle crop-handle-${edge}`}
-                          key={edge}
-                          type="button"
-                          aria-label={`Crop ${edge}`}
-                          onPointerDown={(event) => startManualCrop(event, edge)}
-                        />
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-                {isTimelinePreview && activeCaptionClips.length > 0 ? (
-                  <div className="preview-caption-stack">
-                    {activeCaptionClips.map((captionClip, captionIndex) => {
-                      const caption = captionClip.caption;
-                      if (!caption) {
-                        return null;
+                    />
+                  ) : (
+                    // eslint-disable-next-line @remotion/warn-native-media-tag
+                    <video
+                      ref={previewVideoRef}
+                      className="preview-video"
+                      src={resolveMediaSource(previewSource?.src ?? "")}
+                      muted={
+                        previewMode === "media" ? false : previewVideoMuted
                       }
-
-                      const captionPosition = getCaptionPosition(caption);
-
-                      return (
-                        <button
-                          aria-label={`Select caption: ${caption.content}`}
-                          className={`preview-caption ${
-                            selectedClipId === captionClip.id
-                              ? "selected-preview-caption"
-                              : ""
-                          }`}
-                          key={captionClip.id}
-                          type="button"
-                          style={{
-                            left: `${captionPosition.x}%`,
-                            top: `${captionPosition.y}%`,
-                            color: caption.textColor,
-                            fontSize: `${caption.fontSize}px`,
-                            fontFamily: caption.fontFamily ?? "Inter",
-                            fontWeight: caption.fontWeight ?? "900",
-                            background: caption.backgroundEnabled
-                              ? caption.backgroundColor
-                              : "transparent",
-                            ...getTextEffectStyle(caption.effect ?? "shadow"),
-                            ...getCaptionAnimationStyle(
-                              caption,
-                              captionClip,
-                              playheadFrame,
-                            ),
-                            zIndex: 24 + captionIndex,
+                      playsInline
+                      onLoadedMetadata={handleMediaPreviewMetadata}
+                      onTimeUpdate={handleMediaPreviewTimeUpdate}
+                      onEnded={handleMediaPreviewEnded}
+                      style={{
+                        ...getClipFrameStyle(undefined, playheadFrame),
+                        ...getClipAdjustmentStyle(),
+                      }}
+                    />
+                  )}
+                  {isTimelinePreview
+                    ? playbackAudioClips.map((audioClip) => (
+                        // eslint-disable-next-line @remotion/warn-native-media-tag
+                        <audio
+                          key={audioClip.id}
+                          src={resolveMediaSource(audioClip.src ?? "")}
+                          ref={(audio) => {
+                            if (!audio) return;
+                            audio.playbackRate = audioClip.speed ?? 1;
+                            audio.volume = Math.min(audioClip.volume ?? 1, 1);
+                            const desiredTime = Math.max(
+                              0,
+                              getClipSourceTime(audioClip, playheadFrame, fps),
+                            );
+                            if (
+                              Math.abs(audio.currentTime - desiredTime) > 0.12
+                            ) {
+                              audio.currentTime = desiredTime;
+                            }
+                            if (isPreviewPlaying) {
+                              void audio.play().catch(() => undefined);
+                            } else {
+                              audio.pause();
+                            }
                           }}
-                          onPointerDown={(event) =>
-                            startCaptionPreviewDrag(event, captionClip)}
-                          onClick={() => selectTimelineClip(captionClip)}
-                        >
-                          {caption.content}
-                          {selectedClipId === captionClip.id ? (
-                            <>
-                              <span
-                                className="caption-resize-handle caption-resize-handle-top-left"
-                                onPointerDown={(event) =>
-                                  startCaptionResizeDrag(event, captionClip, "top-left")}
-                              />
-                              <span
-                                className="caption-resize-handle caption-resize-handle-top"
-                                onPointerDown={(event) =>
-                                  startCaptionResizeDrag(event, captionClip, "top")}
-                              />
-                              <span
-                                className="caption-resize-handle caption-resize-handle-top-right"
-                                onPointerDown={(event) =>
-                                  startCaptionResizeDrag(event, captionClip, "top-right")}
-                              />
-                              <span
-                                className="caption-resize-handle caption-resize-handle-right"
-                                onPointerDown={(event) =>
-                                  startCaptionResizeDrag(event, captionClip, "right")}
-                              />
-                              <span
-                                className="caption-resize-handle caption-resize-handle-bottom-right"
-                                onPointerDown={(event) =>
-                                  startCaptionResizeDrag(event, captionClip, "bottom-right")}
-                              />
-                              <span
-                                className="caption-resize-handle caption-resize-handle-bottom"
-                                onPointerDown={(event) =>
-                                  startCaptionResizeDrag(event, captionClip, "bottom")}
-                              />
-                              <span
-                                className="caption-resize-handle caption-resize-handle-bottom-left"
-                                onPointerDown={(event) =>
-                                  startCaptionResizeDrag(event, captionClip, "bottom-left")}
-                              />
-                              <span
-                                className="caption-resize-handle caption-resize-handle-left"
-                                onPointerDown={(event) =>
-                                  startCaptionResizeDrag(event, captionClip, "left")}
-                              />
-                            </>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-                {isTimelinePreview
-                  ? activeStickerClips.map((stickerClip, stickerIndex) => {
-                    if (!stickerClip.src) {
-                      return null;
-                    }
-
-                    const transform = stickerClip.sticker ?? {
-                      x: 50,
-                      y: 50,
-                      scale: 1,
-                      rotation: 0,
-                    };
-                    const isSelected = selectedClipId === stickerClip.id;
-                    return (
-                      <div
-                        className={`preview-sticker ${isSelected ? "selected-preview-sticker" : ""}`}
-                        key={stickerClip.id}
-                        style={{
-                          left: `${transform.x}%`,
-                          top: `${transform.y}%`,
-                          translate: "-50% -50%",
-                          scale: transform.scale,
-                          rotate: `${transform.rotation}deg`,
-                          zIndex: 30 + stickerIndex,
-                        }}
-                        onPointerDown={(event) =>
-                          startStickerInteraction(event, stickerClip, "move")
-                        }
-                      >
-                        {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
-                        <img src={stickerClip.src ?? ""} alt={stickerClip.label} draggable={false} />
-                        {isSelected ? <>
-                          <button
-                            className="sticker-rotate-handle"
-                            type="button"
-                            aria-label="Rotate sticker"
-                            title="Drag to rotate"
-                            onPointerDown={(event) =>
-                              startStickerInteraction(event, stickerClip, "rotate")
+                        />
+                      ))
+                    : null}
+                  {isTimelinePreview
+                    ? activeCutoutClips.map((cutoutClip, cutoutIndex) => {
+                        const transform = cutoutClip.cutout!;
+                        const cutoutScaleX =
+                          transform.scaleX ?? transform.scale;
+                        const cutoutScaleY =
+                          transform.scaleY ?? transform.scale;
+                        const fixedControlScale: CSSProperties = {
+                          scale: `${1 / Math.max(0.08, cutoutScaleX)} ${1 / Math.max(0.08, cutoutScaleY)}`,
+                        };
+                        const rotateControlStyle: CSSProperties = {
+                          ...fixedControlScale,
+                          top: `${-30 / Math.max(0.08, cutoutScaleY)}px`,
+                        };
+                        const deleteControlStyle: CSSProperties = {
+                          ...fixedControlScale,
+                          top: `${-25 / Math.max(0.08, cutoutScaleY)}px`,
+                          right: `${-25 / Math.max(0.08, cutoutScaleX)}px`,
+                        };
+                        const isSelected = selectedClipId === cutoutClip.id;
+                        const isMasking =
+                          isSelected &&
+                          (cutoutBrushMode === "erase" ||
+                            cutoutBrushMode === "restore");
+                        const cutoutCursorClass = !isMasking
+                          ? ""
+                          : cutoutBrushMode === "erase"
+                            ? "erase-cutout-cursor"
+                            : "restore-cutout-cursor";
+                        const maskUrl = transform.maskStrokes?.length
+                          ? createCutoutMaskDataUrl(transform)
+                          : undefined;
+                        const maskStyle: CSSProperties = maskUrl
+                          ? {
+                              WebkitMaskImage: `url("${maskUrl}")`,
+                              maskImage: `url("${maskUrl}")`,
+                              WebkitMaskSize: "100% 100%",
+                              maskSize: "100% 100%",
+                              WebkitMaskRepeat: "no-repeat",
+                              maskRepeat: "no-repeat",
                             }
-                          />
-                          <button
-                            className="sticker-scale-handle"
-                            type="button"
-                            aria-label="Resize sticker"
-                            title="Drag to resize"
-                            onPointerDown={(event) =>
-                              startStickerInteraction(event, stickerClip, "scale")
+                          : {};
+                        const restoreMaskUrl = transform.originalSrc
+                          ? createCutoutRestoreMaskDataUrl(transform)
+                          : undefined;
+                        const restoreMaskStyle: CSSProperties = restoreMaskUrl
+                          ? {
+                              WebkitMaskImage: `url("${restoreMaskUrl}")`,
+                              maskImage: `url("${restoreMaskUrl}")`,
+                              WebkitMaskSize: "100% 100%",
+                              maskSize: "100% 100%",
+                              WebkitMaskRepeat: "no-repeat",
+                              maskRepeat: "no-repeat",
                             }
-                          />
-                          <div className="sticker-quick-actions">
-                            <button
-                              type="button"
-                              aria-label="Duplicate sticker"
-                              title="Duplicate"
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onClick={duplicateSelectedSticker}
-                            >⧉</button>
-                            <button
-                              type="button"
-                              aria-label="Delete sticker"
-                              title="Delete"
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onClick={deleteSelectedClip}
-                            >×</button>
-                          </div>
-            </> : null}
+                          : {};
 
-                      </div>
-                    );
-                  })
-                  : null}
-                {isTimelinePreview
-                  ? activeTextClips.map((textClip, textIndex) => {
-                    const text = textClip.text;
-                    if (!text) return null;
-                    const textAnimation = getTextAnimationPresentation(textClip, playheadFrame);
-                    const rendersWords = ["star-jump", "bounce", "wave"].includes(
-                      text.animation ?? "none",
-                    );
-                    const wordTokens = rendersWords
-                      ? text.content.split(/(\s+)/)
-                      : [];
-                    const wordCount = wordTokens.filter(
-                      (token) => token && !/^\s+$/.test(token),
-                    ).length;
-                    let wordIndex = 0;
-
-                    return (
-                      <div
-                        aria-label={`Move text: ${text.content}`}
-                        className={`preview-text-overlay text-animation-${text.animation ?? "none"} ${
-                          selectedClipId === textClip.id
-                            ? "selected-preview-text"
-                            : ""
-                        } ${
-                          textPreviewDrag?.clipId === textClip.id
-                            ? "dragging-preview-text"
-                            : ""
-                        }`}
-                        key={textClip.id}
-                        role="button"
-                        tabIndex={0}
-                        style={{
-                          left: `${text.x}%`,
-                          top: `${text.y}%`,
-                          rotate: `${(text.rotation ?? 0) + textAnimation.rotation}deg`,
-                          opacity: textAnimation.opacity,
-                          color: text.color,
-                          fontFamily: text.fontFamily ?? "Inter",
-                          fontSize: `${text.fontSize}px`,
-                          fontStyle: text.fontStyle ?? "normal",
-                          fontWeight: text.fontWeight ?? "900",
-                          width: text.boxWidth ? `${text.boxWidth}%` : undefined,
-                          height: text.boxHeight ? `${text.boxHeight}%` : undefined,
-                          scale: textAnimation.scale,
-                          translate: `-50% calc(-50% + ${textAnimation.translateY}px)`,
-                          ...getTextEffectStyle(text.effect ?? "none"),
-                          zIndex: 50 + textIndex,
-                        }}
-                        onClick={() => selectTimelineClip(textClip)}
-                        onPointerDown={(event) =>
-                          startTextPreviewDrag(event, textClip)
-                        }
-                      >
-                        <span className="preview-text-content">
-                        {text.animation === "typewriter"
-                          ? text.content.slice(
-                            0,
-                            getTextAnimationVisibleCharacterCount(textClip, playheadFrame),
-                          )
-                          : rendersWords
-                            ? wordTokens.map((token, tokenIndex) => {
-                              if (!token || /^\s+$/.test(token)) {
-                                return <Fragment key={`${textClip.id}-space-${tokenIndex}`}>
-                                  {token}
-                                </Fragment>;
+                        return (
+                          <div
+                            className={`preview-cutout ${isSelected ? "selected-preview-cutout" : ""} ${isMasking ? "is-masking" : ""} ${cutoutCursorClass}`}
+                            key={cutoutClip.id}
+                            data-cutout-id={cutoutClip.id}
+                            style={{
+                              left: `${transform.x}%`,
+                              top: `${transform.y}%`,
+                              translate: "-50% -50%",
+                              scale: `${cutoutScaleX} ${cutoutScaleY}`,
+                              rotate: `${transform.rotation}deg`,
+                              zIndex: 20 + cutoutIndex,
+                            }}
+                            onPointerDown={(event) => {
+                              if (isMasking) {
+                                startCutoutMaskStroke(
+                                  event,
+                                  cutoutClip,
+                                  cutoutBrushMode,
+                                );
+                              } else {
+                                startCutoutInteraction(
+                                  event,
+                                  cutoutClip,
+                                  "move",
+                                );
                               }
-
-                              const currentWordIndex = wordIndex;
-                              wordIndex += 1;
-                              const wordAnimation = getTextAnimationWordPresentation(
-                                textClip,
-                                playheadFrame,
-                                currentWordIndex,
-                                wordCount,
-                              );
-                              const stars = getTextAnimationStars(
-                                textClip,
-                                playheadFrame,
-                                currentWordIndex,
-                                wordCount,
-                              );
-
-                              return <span
-                                className="animated-text-word"
-                                key={`${textClip.id}-word-${tokenIndex}`}
+                            }}
+                          >
+                            {transform.mediaKind === "video" ? (
+                              // eslint-disable-next-line @remotion/warn-native-media-tag
+                              <video
+                                className="preview-cutout-media"
+                                src={resolveMediaSource(cutoutClip.src ?? "")}
+                                muted
+                                playsInline
+                                draggable={false}
                                 style={{
-                                  opacity: wordAnimation.opacity,
-                                  rotate: `${wordAnimation.rotation}deg`,
-                                  scale: wordAnimation.scale,
-                                  translate: `0 ${wordAnimation.translateY}px`,
+                                  ...maskStyle,
+                                  ...getCutoutChromaKeyStyle(transform),
                                 }}
-                              >
-                                {token}
-                                {stars.map((star, starIndex) => <span
-                                  aria-hidden="true"
-                                  className="text-animation-star"
-                                  key={`${textClip.id}-star-${currentWordIndex}-${starIndex}`}
-                                  style={{
-                                    opacity: star.opacity,
-                                    rotate: `${star.rotation}deg`,
-                                    scale: star.scale,
-                                    translate: `calc(-50% + ${star.x}px) ${star.y}px`,
-                                  }}
+                                ref={(video) => {
+                                  if (!video) return;
+                                  video.playbackRate = cutoutClip.speed ?? 1;
+                                  const desiredTime = Math.max(
+                                    0,
+                                    getClipSourceTime(
+                                      cutoutClip,
+                                      playheadFrame,
+                                      fps,
+                                    ),
+                                  );
+                                  if (
+                                    Math.abs(video.currentTime - desiredTime) >
+                                    0.12
+                                  ) {
+                                    video.currentTime = desiredTime;
+                                  }
+                                  if (isPreviewPlaying) {
+                                    void video.play().catch(() => undefined);
+                                  } else {
+                                    video.pause();
+                                  }
+                                }}
+                              />
+                            ) : (
+                              // eslint-disable-next-line @remotion/warn-native-media-tag
+                              <img
+                                className="preview-cutout-media"
+                                src={resolveMediaSource(cutoutClip.src ?? "")}
+                                alt={cutoutClip.label}
+                                draggable={false}
+                                style={maskStyle}
+                              />
+                            )}
+                            {transform.mediaKind === "image" &&
+                            transform.originalSrc ? (
+                              // eslint-disable-next-line @remotion/warn-native-media-tag
+                              <img
+                                className="preview-cutout-original"
+                                src={resolveMediaSource(transform.originalSrc)}
+                                alt=""
+                                aria-hidden="true"
+                                draggable={false}
+                                style={restoreMaskStyle}
+                              />
+                            ) : null}
+                            {isSelected ? (
+                              <>
+                                <button
+                                  className="cutout-rotate-handle"
+                                  style={rotateControlStyle}
+                                  type="button"
+                                  aria-label="Rotate cutout"
+                                  title="Drag to rotate"
+                                  onPointerDown={(event) =>
+                                    startCutoutInteraction(
+                                      event,
+                                      cutoutClip,
+                                      "rotate",
+                                    )
+                                  }
+                                />
+                                {(
+                                  [
+                                    "top-left",
+                                    "top",
+                                    "top-right",
+                                    "right",
+                                    "bottom-right",
+                                    "bottom",
+                                    "bottom-left",
+                                    "left",
+                                  ] as CaptionResizeHandle[]
+                                ).map((handle) => (
+                                  <span
+                                    className={`cutout-resize-handle cutout-resize-handle-${handle}`}
+                                    key={handle}
+                                    role="presentation"
+                                    style={fixedControlScale}
+                                    onPointerDown={(event) =>
+                                      startCutoutInteraction(
+                                        event,
+                                        cutoutClip,
+                                        "resize",
+                                        handle,
+                                      )
+                                    }
+                                  />
+                                ))}
+                                <button
+                                  className="cutout-delete-button"
+                                  style={deleteControlStyle}
+                                  type="button"
+                                  aria-label="Delete cutout"
+                                  title="Delete cutout"
+                                  onPointerDown={(event) =>
+                                    event.stopPropagation()
+                                  }
+                                  onClick={deleteSelectedClip}
                                 >
-                                  ★
-                                </span>)}
-                              </span>;
-                            })
-                            : text.content}
-                        </span>
-                        {selectedClipId === textClip.id ? (
-                          <>
-                            <button
-                              className="text-rotate-handle"
-                              type="button"
-                              aria-label="Rotate text"
-                              title="Drag to rotate text"
-                              onPointerDown={(event) =>
-                                startTextRotateDrag(event, textClip)
-                              }
-                            />
-                            <span
-                              className="text-resize-handle text-resize-handle-top-left"
-                              onPointerDown={(event) => startTextResizeDrag(event, textClip, "top-left")}
-                            />
-                            <span
-                              className="text-resize-handle text-resize-handle-top"
-                              onPointerDown={(event) => startTextResizeDrag(event, textClip, "top")}
-                            />
-                            <span
-                              className="text-resize-handle text-resize-handle-top-right"
-                              onPointerDown={(event) => startTextResizeDrag(event, textClip, "top-right")}
-                            />
-                            <span
-                              className="text-resize-handle text-resize-handle-right"
-                              onPointerDown={(event) => startTextResizeDrag(event, textClip, "right")}
-                            />
-                            <span
-                              className="text-resize-handle text-resize-handle-bottom-right"
-                              onPointerDown={(event) => startTextResizeDrag(event, textClip, "bottom-right")}
-                            />
-                            <span
-                              className="text-resize-handle text-resize-handle-bottom"
-                              onPointerDown={(event) => startTextResizeDrag(event, textClip, "bottom")}
-                            />
-                            <span
-                              className="text-resize-handle text-resize-handle-bottom-left"
-                              onPointerDown={(event) => startTextResizeDrag(event, textClip, "bottom-left")}
-                            />
-                            <span
-                              className="text-resize-handle text-resize-handle-left"
-                              onPointerDown={(event) => startTextResizeDrag(event, textClip, "left")}
-                            />
-                          </>
-                        ) : null}
-                      </div>
-                    );
-                  })
-                  : null}
-                {previewMode === "media" && selectedMedia && getMediaItemType(selectedMedia) === "video" ? (
-                  <div
-                    className={`media-preview-overlay${isMediaPreviewVolumeOpen ? " volume-open" : ""}`}
-                  >
-                    <div className="media-preview-filename" title={selectedMedia.label}>
-                      {selectedMedia.label}
-                    </div>
-                    <div className="media-preview-transport">
-                      <button
-                        type="button"
-                        className="media-preview-icon-button"
-                        aria-label={isMediaPreviewPlaying ? "Pause imported video" : "Play imported video"}
-                        title={isMediaPreviewPlaying ? "Pause" : "Play"}
-                        onClick={toggleMediaPreviewPlayback}
+                                  ×
+                                </button>
+                              </>
+                            ) : null}
+                          </div>
+                        );
+                      })
+                    : null}
+                  {activeTool === "adjustment" &&
+                  cropInputMode === "manual" &&
+                  canEditSelectedVisual &&
+                  isTimelinePreview ? (
+                    <>
+                      <div
+                        className="manual-crop-frame"
+                        style={{
+                          top: `${selectedClipAdjustment.cropTop}%`,
+                          right: `${selectedClipAdjustment.cropRight}%`,
+                          bottom: `${selectedClipAdjustment.cropBottom}%`,
+                          left: `${selectedClipAdjustment.cropLeft}%`,
+                        }}
                       >
-                        {isMediaPreviewPlaying ? "\u23f8" : "\u25b6"}
-                      </button>
-                      <span>{formatMediaPreviewTime(mediaPreviewDisplayTime)}</span>
-                      <input
-                        className="media-preview-seek"
-                        type="range"
-                        min={mediaPreviewSeekMinSeconds}
-                        max={mediaPreviewSeekMaxSeconds}
-                        step="0.01"
-                        value={Math.min(
-                          mediaPreviewSeekMaxSeconds,
-                          Math.max(mediaPreviewSeekMinSeconds, mediaPreviewTime),
-                        )}
-                        aria-label="Seek imported video"
-                        disabled={!isMediaPreviewSeekEnabled}
-                        onChange={handleMediaPreviewSeek}
-                      />
-                      <span>{formatMediaPreviewTime(mediaPreviewDisplayDuration)}</span>
-                      <div className="media-preview-volume-control">
+                        {(
+                          [
+                            "top",
+                            "right",
+                            "bottom",
+                            "left",
+                            "top-left",
+                            "top-right",
+                            "bottom-left",
+                            "bottom-right",
+                          ] as CropEdge[]
+                        ).map((edge) => (
+                          <button
+                            className={`crop-handle crop-handle-${edge}`}
+                            key={edge}
+                            type="button"
+                            aria-label={`Crop ${edge}`}
+                            onPointerDown={(event) =>
+                              startManualCrop(event, edge)
+                            }
+                          />
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
+                  {isTimelinePreview && activeCaptionClips.length > 0 ? (
+                    <div className="preview-caption-stack">
+                      {activeCaptionClips.map((captionClip, captionIndex) => {
+                        const caption = captionClip.caption;
+                        if (!caption) {
+                          return null;
+                        }
+
+                        const captionPosition = getCaptionPosition(caption);
+
+                        return (
+                          <button
+                            aria-label={`Select caption: ${caption.content}`}
+                            className={`preview-caption ${
+                              selectedClipId === captionClip.id
+                                ? "selected-preview-caption"
+                                : ""
+                            }`}
+                            key={captionClip.id}
+                            type="button"
+                            style={{
+                              left: `${captionPosition.x}%`,
+                              top: `${captionPosition.y}%`,
+                              color: caption.textColor,
+                              fontSize: `${caption.fontSize}px`,
+                              fontFamily: caption.fontFamily ?? "Inter",
+                              fontWeight: caption.fontWeight ?? "900",
+                              background: caption.backgroundEnabled
+                                ? caption.backgroundColor
+                                : "transparent",
+                              ...getTextEffectStyle(caption.effect ?? "shadow"),
+                              ...getCaptionAnimationStyle(
+                                caption,
+                                captionClip,
+                                playheadFrame,
+                              ),
+                              zIndex: 24 + captionIndex,
+                            }}
+                            onPointerDown={(event) =>
+                              startCaptionPreviewDrag(event, captionClip)
+                            }
+                            onClick={() => selectTimelineClip(captionClip)}
+                          >
+                            {caption.content}
+                            {selectedClipId === captionClip.id ? (
+                              <>
+                                <span
+                                  className="caption-resize-handle caption-resize-handle-top-left"
+                                  onPointerDown={(event) =>
+                                    startCaptionResizeDrag(
+                                      event,
+                                      captionClip,
+                                      "top-left",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="caption-resize-handle caption-resize-handle-top"
+                                  onPointerDown={(event) =>
+                                    startCaptionResizeDrag(
+                                      event,
+                                      captionClip,
+                                      "top",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="caption-resize-handle caption-resize-handle-top-right"
+                                  onPointerDown={(event) =>
+                                    startCaptionResizeDrag(
+                                      event,
+                                      captionClip,
+                                      "top-right",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="caption-resize-handle caption-resize-handle-right"
+                                  onPointerDown={(event) =>
+                                    startCaptionResizeDrag(
+                                      event,
+                                      captionClip,
+                                      "right",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="caption-resize-handle caption-resize-handle-bottom-right"
+                                  onPointerDown={(event) =>
+                                    startCaptionResizeDrag(
+                                      event,
+                                      captionClip,
+                                      "bottom-right",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="caption-resize-handle caption-resize-handle-bottom"
+                                  onPointerDown={(event) =>
+                                    startCaptionResizeDrag(
+                                      event,
+                                      captionClip,
+                                      "bottom",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="caption-resize-handle caption-resize-handle-bottom-left"
+                                  onPointerDown={(event) =>
+                                    startCaptionResizeDrag(
+                                      event,
+                                      captionClip,
+                                      "bottom-left",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="caption-resize-handle caption-resize-handle-left"
+                                  onPointerDown={(event) =>
+                                    startCaptionResizeDrag(
+                                      event,
+                                      captionClip,
+                                      "left",
+                                    )
+                                  }
+                                />
+                              </>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  {isTimelinePreview
+                    ? activeStickerClips.map((stickerClip, stickerIndex) => {
+                        if (!stickerClip.src) {
+                          return null;
+                        }
+
+                        const transform = stickerClip.sticker ?? {
+                          x: 50,
+                          y: 50,
+                          scale: 1,
+                          rotation: 0,
+                        };
+                        const isSelected = selectedClipId === stickerClip.id;
+                        return (
+                          <div
+                            className={`preview-sticker ${isSelected ? "selected-preview-sticker" : ""}`}
+                            key={stickerClip.id}
+                            style={{
+                              left: `${transform.x}%`,
+                              top: `${transform.y}%`,
+                              translate: "-50% -50%",
+                              scale: transform.scale,
+                              rotate: `${transform.rotation}deg`,
+                              zIndex: 30 + stickerIndex,
+                            }}
+                            onPointerDown={(event) =>
+                              startStickerInteraction(
+                                event,
+                                stickerClip,
+                                "move",
+                              )
+                            }
+                          >
+                            {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
+                            <img
+                              src={stickerClip.src ?? ""}
+                              alt={stickerClip.label}
+                              draggable={false}
+                            />
+                            {isSelected ? (
+                              <>
+                                <button
+                                  className="sticker-rotate-handle"
+                                  type="button"
+                                  aria-label="Rotate sticker"
+                                  title="Drag to rotate"
+                                  onPointerDown={(event) =>
+                                    startStickerInteraction(
+                                      event,
+                                      stickerClip,
+                                      "rotate",
+                                    )
+                                  }
+                                />
+                                <button
+                                  className="sticker-scale-handle"
+                                  type="button"
+                                  aria-label="Resize sticker"
+                                  title="Drag to resize"
+                                  onPointerDown={(event) =>
+                                    startStickerInteraction(
+                                      event,
+                                      stickerClip,
+                                      "scale",
+                                    )
+                                  }
+                                />
+                                <div className="sticker-quick-actions">
+                                  <button
+                                    type="button"
+                                    aria-label="Duplicate sticker"
+                                    title="Duplicate"
+                                    onPointerDown={(event) =>
+                                      event.stopPropagation()
+                                    }
+                                    onClick={duplicateSelectedSticker}
+                                  >
+                                    ⧉
+                                  </button>
+                                  <button
+                                    type="button"
+                                    aria-label="Delete sticker"
+                                    title="Delete"
+                                    onPointerDown={(event) =>
+                                      event.stopPropagation()
+                                    }
+                                    onClick={deleteSelectedClip}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              </>
+                            ) : null}
+                          </div>
+                        );
+                      })
+                    : null}
+                  {isTimelinePreview
+                    ? activeTextClips.map((textClip, textIndex) => {
+                        const text = textClip.text;
+                        if (!text) return null;
+                        const textAnimation = getTextAnimationPresentation(
+                          textClip,
+                          playheadFrame,
+                        );
+                        const rendersWords = [
+                          "star-jump",
+                          "bounce",
+                          "wave",
+                        ].includes(text.animation ?? "none");
+                        const wordTokens = rendersWords
+                          ? text.content.split(/(\s+)/)
+                          : [];
+                        const wordCount = wordTokens.filter(
+                          (token) => token && !/^\s+$/.test(token),
+                        ).length;
+                        let wordIndex = 0;
+
+                        return (
+                          <div
+                            aria-label={`Move text: ${text.content}`}
+                            className={`preview-text-overlay text-animation-${text.animation ?? "none"} ${
+                              selectedClipId === textClip.id
+                                ? "selected-preview-text"
+                                : ""
+                            } ${textPreviewDrag?.clipId === textClip.id ? "dragging-preview-text" : ""}`}
+                            key={textClip.id}
+                            role="button"
+                            tabIndex={0}
+                            style={{
+                              left: `${text.x}%`,
+                              top: `${text.y}%`,
+                              rotate: `${(text.rotation ?? 0) + textAnimation.rotation}deg`,
+                              opacity: textAnimation.opacity,
+                              color: text.color,
+                              fontFamily: text.fontFamily ?? "Inter",
+                              fontSize: `${text.fontSize}px`,
+                              fontStyle: text.fontStyle ?? "normal",
+                              fontWeight: text.fontWeight ?? "900",
+                              width: text.boxWidth
+                                ? `${text.boxWidth}%`
+                                : undefined,
+                              height: text.boxHeight
+                                ? `${text.boxHeight}%`
+                                : undefined,
+                              scale: textAnimation.scale,
+                              translate: `-50% calc(-50% + ${textAnimation.translateY}px)`,
+                              ...getTextEffectStyle(text.effect ?? "none"),
+                              zIndex: 50 + textIndex,
+                            }}
+                            onClick={() => selectTimelineClip(textClip)}
+                            onPointerDown={(event) =>
+                              startTextPreviewDrag(event, textClip)
+                            }
+                          >
+                            <span className="preview-text-content">
+                              {text.animation === "typewriter"
+                                ? text.content.slice(
+                                    0,
+                                    getTextAnimationVisibleCharacterCount(
+                                      textClip,
+                                      playheadFrame,
+                                    ),
+                                  )
+                                : rendersWords
+                                  ? wordTokens.map((token, tokenIndex) => {
+                                      if (!token || /^\s+$/.test(token)) {
+                                        return (
+                                          <Fragment
+                                            key={`${textClip.id}-space-${tokenIndex}`}
+                                          >
+                                            {token}
+                                          </Fragment>
+                                        );
+                                      }
+
+                                      const currentWordIndex = wordIndex;
+                                      wordIndex += 1;
+                                      const wordAnimation =
+                                        getTextAnimationWordPresentation(
+                                          textClip,
+                                          playheadFrame,
+                                          currentWordIndex,
+                                          wordCount,
+                                        );
+                                      const stars = getTextAnimationStars(
+                                        textClip,
+                                        playheadFrame,
+                                        currentWordIndex,
+                                        wordCount,
+                                      );
+
+                                      return (
+                                        <span
+                                          className="animated-text-word"
+                                          key={`${textClip.id}-word-${tokenIndex}`}
+                                          style={{
+                                            opacity: wordAnimation.opacity,
+                                            rotate: `${wordAnimation.rotation}deg`,
+                                            scale: wordAnimation.scale,
+                                            translate: `0 ${wordAnimation.translateY}px`,
+                                          }}
+                                        >
+                                          {token}
+                                          {stars.map((star, starIndex) => (
+                                            <span
+                                              aria-hidden="true"
+                                              className="text-animation-star"
+                                              key={`${textClip.id}-star-${currentWordIndex}-${starIndex}`}
+                                              style={{
+                                                opacity: star.opacity,
+                                                rotate: `${star.rotation}deg`,
+                                                scale: star.scale,
+                                                translate: `calc(-50% + ${star.x}px) ${star.y}px`,
+                                              }}
+                                            >
+                                              ★
+                                            </span>
+                                          ))}
+                                        </span>
+                                      );
+                                    })
+                                  : text.content}
+                            </span>
+                            {selectedClipId === textClip.id ? (
+                              <>
+                                <button
+                                  className="text-rotate-handle"
+                                  type="button"
+                                  aria-label="Rotate text"
+                                  title="Drag to rotate text"
+                                  onPointerDown={(event) =>
+                                    startTextRotateDrag(event, textClip)
+                                  }
+                                />
+                                <span
+                                  className="text-resize-handle text-resize-handle-top-left"
+                                  onPointerDown={(event) =>
+                                    startTextResizeDrag(
+                                      event,
+                                      textClip,
+                                      "top-left",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="text-resize-handle text-resize-handle-top"
+                                  onPointerDown={(event) =>
+                                    startTextResizeDrag(event, textClip, "top")
+                                  }
+                                />
+                                <span
+                                  className="text-resize-handle text-resize-handle-top-right"
+                                  onPointerDown={(event) =>
+                                    startTextResizeDrag(
+                                      event,
+                                      textClip,
+                                      "top-right",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="text-resize-handle text-resize-handle-right"
+                                  onPointerDown={(event) =>
+                                    startTextResizeDrag(
+                                      event,
+                                      textClip,
+                                      "right",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="text-resize-handle text-resize-handle-bottom-right"
+                                  onPointerDown={(event) =>
+                                    startTextResizeDrag(
+                                      event,
+                                      textClip,
+                                      "bottom-right",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="text-resize-handle text-resize-handle-bottom"
+                                  onPointerDown={(event) =>
+                                    startTextResizeDrag(
+                                      event,
+                                      textClip,
+                                      "bottom",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="text-resize-handle text-resize-handle-bottom-left"
+                                  onPointerDown={(event) =>
+                                    startTextResizeDrag(
+                                      event,
+                                      textClip,
+                                      "bottom-left",
+                                    )
+                                  }
+                                />
+                                <span
+                                  className="text-resize-handle text-resize-handle-left"
+                                  onPointerDown={(event) =>
+                                    startTextResizeDrag(event, textClip, "left")
+                                  }
+                                />
+                              </>
+                            ) : null}
+                          </div>
+                        );
+                      })
+                    : null}
+                  {previewMode === "media" &&
+                  selectedMedia &&
+                  getMediaItemType(selectedMedia) === "video" ? (
+                    <div
+                      className={`media-preview-overlay${isMediaPreviewVolumeOpen ? " volume-open" : ""}`}
+                    >
+                      <div
+                        className="media-preview-filename"
+                        title={selectedMedia.label}
+                      >
+                        {selectedMedia.label}
+                      </div>
+                      <div className="media-preview-transport">
                         <button
                           type="button"
                           className="media-preview-icon-button"
-                          aria-label="Adjust imported video volume"
-                          title="Volume"
-                          aria-expanded={isMediaPreviewVolumeOpen}
-                          onClick={() => setIsMediaPreviewVolumeOpen((open) => !open)}
+                          aria-label={
+                            isMediaPreviewPlaying
+                              ? "Pause imported video"
+                              : "Play imported video"
+                          }
+                          title={isMediaPreviewPlaying ? "Pause" : "Play"}
+                          onClick={toggleMediaPreviewPlayback}
                         >
-                          {mediaPreviewVolume === 0 ? "\ud83d\udd07" : "\ud83d\udd0a"}
+                          {isMediaPreviewPlaying ? "\u23f8" : "\u25b6"}
                         </button>
-                        {isMediaPreviewVolumeOpen ? (
-                          <div className="media-preview-volume-popover">
-                            <input
-                              className="media-preview-volume-slider"
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                              value={mediaPreviewVolume}
-                              aria-label="Imported video volume"
-                              aria-orientation="vertical"
-                              aria-valuetext={`${Math.round(mediaPreviewVolume * 100)}%`}
-                              onPointerDown={handleMediaPreviewVolumePointerDown}
-                              onPointerUp={handleMediaPreviewVolumePointerEnd}
-                              onPointerCancel={handleMediaPreviewVolumePointerEnd}
-                              onLostPointerCapture={handleMediaPreviewVolumePointerEnd}
-                              onChange={handleMediaPreviewVolumeChange}
-                            />
-                            {isMediaPreviewVolumeAdjusting ? (
-                              <output className="media-preview-volume-value">
-                                {Math.round(mediaPreviewVolume * 100)}%
-                              </output>
-                            ) : null}
-                          </div>
-                        ) : null}
+                        <span>
+                          {formatMediaPreviewTime(mediaPreviewDisplayTime)}
+                        </span>
+                        <input
+                          className="media-preview-seek"
+                          type="range"
+                          min={mediaPreviewSeekMinSeconds}
+                          max={mediaPreviewSeekMaxSeconds}
+                          step="0.01"
+                          value={Math.min(
+                            mediaPreviewSeekMaxSeconds,
+                            Math.max(
+                              mediaPreviewSeekMinSeconds,
+                              mediaPreviewTime,
+                            ),
+                          )}
+                          aria-label="Seek imported video"
+                          disabled={!isMediaPreviewSeekEnabled}
+                          onChange={handleMediaPreviewSeek}
+                        />
+                        <span>
+                          {formatMediaPreviewTime(mediaPreviewDisplayDuration)}
+                        </span>
+                        <div className="media-preview-volume-control">
+                          <button
+                            type="button"
+                            className="media-preview-icon-button"
+                            aria-label="Adjust imported video volume"
+                            title="Volume"
+                            aria-expanded={isMediaPreviewVolumeOpen}
+                            onClick={() =>
+                              setIsMediaPreviewVolumeOpen((open) => !open)
+                            }
+                          >
+                            {mediaPreviewVolume === 0
+                              ? "\ud83d\udd07"
+                              : "\ud83d\udd0a"}
+                          </button>
+                          {isMediaPreviewVolumeOpen ? (
+                            <div className="media-preview-volume-popover">
+                              <input
+                                className="media-preview-volume-slider"
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value={mediaPreviewVolume}
+                                aria-label="Imported video volume"
+                                aria-orientation="vertical"
+                                aria-valuetext={`${Math.round(mediaPreviewVolume * 100)}%`}
+                                onPointerDown={
+                                  handleMediaPreviewVolumePointerDown
+                                }
+                                onPointerUp={handleMediaPreviewVolumePointerEnd}
+                                onPointerCancel={
+                                  handleMediaPreviewVolumePointerEnd
+                                }
+                                onLostPointerCapture={
+                                  handleMediaPreviewVolumePointerEnd
+                                }
+                                onChange={handleMediaPreviewVolumeChange}
+                              />
+                              {isMediaPreviewVolumeAdjusting ? (
+                                <output className="media-preview-volume-value">
+                                  {Math.round(mediaPreviewVolume * 100)}%
+                                </output>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ) : null}
-                {isTimelinePreview ? (
-                  <button
-                    className="preview-play-button"
-                    type="button"
-                    aria-label={isCanvasPreviewPlaying ? "Pause preview" : "Play preview"}
-                    title={isCanvasPreviewPlaying ? "Pause" : "Play"}
-                    onClick={toggleTimelinePlayback}
-                  >
-                    {isCanvasPreviewPlaying ? "❚❚" : "▶"}
-                  </button>
-                ) : null}
-                {isTimelinePreview && previewSource ? (
-                  <div className="preview-badge">{previewSource.label}</div>
-                ) : null}
-              </>
-            ) : (
-              <div className="empty-preview">
-                {previewMode === "media" ? "Choose a video from Media" : null}
-              </div>
-            )}
-          </div>
-          {activeTool === "adjustment" &&
-          cropInputMode === "manual" &&
-          canEditSelectedVisual &&
-          isTimelinePreview ? (
-            <button
-              className="rotate-handle canvas-rotate-handle"
-              type="button"
-              aria-label="Rotate selected clip"
-              title="Drag to rotate"
-              style={{
-                left: `${rotateHandleLeft}%`,
-                top: `${rotateHandleTop}px`,
-              }}
-              onPointerDown={startManualRotate}
-            />
-          ) : null}
+                  ) : null}
+                  {isTimelinePreview ? (
+                    <button
+                      className="preview-play-button"
+                      type="button"
+                      aria-label={
+                        isCanvasPreviewPlaying
+                          ? "Pause preview"
+                          : "Play preview"
+                      }
+                      title={isCanvasPreviewPlaying ? "Pause" : "Play"}
+                      onClick={toggleTimelinePlayback}
+                    >
+                      {isCanvasPreviewPlaying ? "❚❚" : "▶"}
+                    </button>
+                  ) : null}
+                  {isTimelinePreview && previewSource ? (
+                    <div className="preview-badge">{previewSource.label}</div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="empty-preview">
+                  {previewMode === "media" ? "Choose a video from Media" : null}
+                </div>
+              )}
+            </div>
+            {activeTool === "adjustment" &&
+            cropInputMode === "manual" &&
+            canEditSelectedVisual &&
+            isTimelinePreview ? (
+              <button
+                className="rotate-handle canvas-rotate-handle"
+                type="button"
+                aria-label="Rotate selected clip"
+                title="Drag to rotate"
+                style={{
+                  left: `${rotateHandleLeft}%`,
+                  top: `${rotateHandleTop}px`,
+                }}
+                onPointerDown={startManualRotate}
+              />
+            ) : null}
           </div>
         </section>
 
         <aside className="details-panel">
-            {selectedCaptionClip ? (
-              <div className="clip-controls caption-selected-controls">
-                <span>Caption controls: {selectedCaptionClip.label}</span>
-                <label>
+          {selectedCaptionClip ? (
+            <div className="clip-controls caption-selected-controls">
+              <div className="caption-inspector-header">
+                <strong>Caption</strong>
+                <span>{selectedCaptionClip.label}</span>
+              </div>
+              <section className="caption-control-section">
+                <label className="caption-words-field">
                   <strong>Words</strong>
                   <textarea
                     aria-label="Caption words"
@@ -7302,88 +7944,94 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                     }
                   />
                 </label>
-                <label>
-                  <strong>Font</strong>
-                  <select
-                    aria-label="Caption font"
-                    value={selectedCaptionStyle.fontFamily ?? "Inter"}
-                    onChange={(event) =>
-                      updateSelectedCaptionStyle({
-                        fontFamily: event.currentTarget.value,
-                      })
-                    }
-                  >
-                    {textFontOptions.map((font) => (
-                      <option key={font} value={font}>{font}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <strong>Size</strong>
-                  <em>{selectedCaptionStyle.fontSize}px</em>
-                  <input
-                    aria-label="Caption font size"
-                    type="range"
-                    min="1"
-                    max="160"
-                    step="1"
-                    value={selectedCaptionStyle.fontSize}
-                    onChange={(event) =>
-                      updateSelectedCaptionStyle({
-                        fontSize: Number(event.currentTarget.value),
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  <strong>Text color</strong>
-                  <input
-                    aria-label="Caption text color"
-                    type="color"
-                    value={selectedCaptionStyle.textColor}
-                    onChange={(event) =>
-                      updateSelectedCaptionStyle({
-                        textColor: event.currentTarget.value,
-                      })
-                    }
-                  />
-                </label>
-                <label className="caption-toggle">
-                  <input
-                    aria-label="Caption background enabled"
-                    type="checkbox"
-                    checked={selectedCaptionStyle.backgroundEnabled}
-                    onChange={(event) =>
-                      updateSelectedCaptionStyle({
-                        backgroundEnabled: event.currentTarget.checked,
-                      })
-                    }
-                  />
-                  <strong>Background</strong>
-                </label>
-                <label>
-                  <strong>Background color</strong>
-                  <input
-                    aria-label="Caption background color"
-                    type="color"
-                    disabled={!selectedCaptionStyle.backgroundEnabled}
-                    value={selectedCaptionStyle.backgroundColor.slice(0, 7)}
-                    onChange={(event) =>
-                      updateSelectedCaptionStyle({
-                        backgroundColor: `${event.currentTarget.value}cc`,
-                      })
-                    }
-                  />
-                </label>
-                <div className="text-toggle-row" aria-label="Caption weight">
+              </section>
+              <section className="caption-control-section">
+                <strong className="caption-section-title">Typography</strong>
+                <div className="caption-compact-grid">
+                  <label>
+                    <strong>Font</strong>
+                    <select
+                      aria-label="Caption font"
+                      value={selectedCaptionStyle.fontFamily ?? "Inter"}
+                      onChange={(event) =>
+                        updateSelectedCaptionStyle({
+                          fontFamily: event.currentTarget.value,
+                        })
+                      }
+                    >
+                      {textFontOptions.map((font) => (
+                        <option key={font} value={font}>
+                          {font}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span className="caption-control-heading">
+                      <strong>Size</strong>
+                      <em>{selectedCaptionStyle.fontSize}px</em>
+                    </span>
+                    <input
+                      aria-label="Caption font size"
+                      type="range"
+                      min="1"
+                      max="160"
+                      step="1"
+                      value={selectedCaptionStyle.fontSize}
+                      onChange={(event) =>
+                        updateSelectedCaptionStyle({
+                          fontSize: Number(event.currentTarget.value),
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="caption-inline-controls">
+                  <label className="caption-color-control">
+                    <strong>Text</strong>
+                    <input
+                      aria-label="Caption text color"
+                      type="color"
+                      value={selectedCaptionStyle.textColor}
+                      onChange={(event) =>
+                        updateSelectedCaptionStyle({
+                          textColor: event.currentTarget.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="caption-background-toggle">
+                    <input
+                      aria-label="Caption background enabled"
+                      type="checkbox"
+                      checked={selectedCaptionStyle.backgroundEnabled}
+                      onChange={(event) =>
+                        updateSelectedCaptionStyle({
+                          backgroundEnabled: event.currentTarget.checked,
+                        })
+                      }
+                    />
+                    <strong>Background</strong>
+                  </label>
+                  <label className="caption-color-control">
+                    <input
+                      aria-label="Caption background color"
+                      title="Background color"
+                      type="color"
+                      disabled={!selectedCaptionStyle.backgroundEnabled}
+                      value={selectedCaptionStyle.backgroundColor.slice(0, 7)}
+                      onChange={(event) =>
+                        updateSelectedCaptionStyle({
+                          backgroundColor: `${event.currentTarget.value}cc`,
+                        })
+                      }
+                    />
+                  </label>
                   <button
-                    className={
-                      selectedCaptionStyle.fontWeight === "900"
-                        ? "active-text-toggle"
-                        : ""
-                    }
+                    className={`caption-bold-button ${selectedCaptionStyle.fontWeight === "900" ? "active-text-toggle" : ""}`}
                     type="button"
                     aria-label="Bold caption"
+                    title="Bold"
                     onClick={() =>
                       updateSelectedCaptionStyle({
                         fontWeight:
@@ -7392,9 +8040,13 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                             : "900",
                       })
                     }
-                  >B</button>
+                  >
+                    B
+                  </button>
                 </div>
-                <strong>Effect</strong>
+              </section>
+              <section className="caption-control-section">
+                <strong className="caption-section-title">Style</strong>
                 <div className="text-effect-grid" aria-label="Caption effects">
                   {textEffectOptions.map((option) => (
                     <button
@@ -7406,13 +8058,20 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                       key={option.id}
                       type="button"
                       onClick={() =>
-                        updateSelectedCaptionStyle({effect: option.id})
+                        updateSelectedCaptionStyle({ effect: option.id })
                       }
-                    >{option.label}</button>
+                    >
+                      {option.label}
+                    </button>
                   ))}
                 </div>
-                <strong>Animation</strong>
-                <div className="text-effect-grid" aria-label="Caption animation">
+              </section>
+              <section className="caption-control-section">
+                <strong className="caption-section-title">Animation</strong>
+                <div
+                  className="text-effect-grid"
+                  aria-label="Caption animation"
+                >
                   {captionAnimationOptions.map((option) => (
                     <button
                       className={
@@ -7423,14 +8082,20 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                       key={option.id}
                       type="button"
                       onClick={() =>
-                        updateSelectedCaptionStyle({animation: option.id})
+                        updateSelectedCaptionStyle({ animation: option.id })
                       }
-                    >{option.label}</button>
+                    >
+                      {option.label}
+                    </button>
                   ))}
                 </div>
-                <label>
-                  <strong>Animation speed</strong>
-                  <em>{(selectedCaptionStyle.animationSpeed ?? 1).toFixed(2)}x</em>
+                <label className="caption-speed-control">
+                  <span className="caption-control-heading">
+                    <strong>Speed</strong>
+                    <em>
+                      {(selectedCaptionStyle.animationSpeed ?? 1).toFixed(2)}x
+                    </em>
+                  </span>
                   <input
                     aria-label="Caption animation speed"
                     type="range"
@@ -7446,203 +8111,207 @@ export const MyComponent: React.FC<Props> = ({project}) => {
                     }
                   />
                 </label>
+              </section>
+            </div>
+          ) : selectedTextClip ? (
+            <div className="clip-controls text-style-controls">
+              <span>Text controls: {selectedTextClip.label}</span>
+              <label>
+                <strong>Font</strong>
+                <select
+                  aria-label="Text font"
+                  value={selectedTextStyle.fontFamily}
+                  onChange={(event) =>
+                    updateSelectedTextStyle({
+                      fontFamily: event.currentTarget.value,
+                    })
+                  }
+                >
+                  {textFontOptions.map((font) => (
+                    <option key={font} value={font}>
+                      {font}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <strong>Size</strong>
+                <em>{selectedTextStyle.fontSize}px</em>
+                <input
+                  aria-label="Text size"
+                  type="range"
+                  min="1"
+                  max="160"
+                  step="1"
+                  value={selectedTextStyle.fontSize}
+                  onChange={(event) =>
+                    updateSelectedTextStyle({
+                      fontSize: Number(event.currentTarget.value),
+                    })
+                  }
+                />
+              </label>
+              <label>
+                <strong>Rotation</strong>
+                <em>{selectedTextStyle.rotation}Â°</em>
+                <input
+                  aria-label="Text rotation"
+                  type="range"
+                  min="-180"
+                  max="180"
+                  step="1"
+                  value={selectedTextStyle.rotation}
+                  onChange={(event) =>
+                    updateSelectedTextRotation(
+                      Number(event.currentTarget.value),
+                    )
+                  }
+                />
+              </label>
+              <label>
+                <strong>Color</strong>
+                <input
+                  aria-label="Text color"
+                  type="color"
+                  value={selectedTextStyle.color}
+                  onChange={(event) =>
+                    updateSelectedTextStyle({
+                      color: event.currentTarget.value,
+                    })
+                  }
+                />
+              </label>
+              <div className="text-toggle-row" aria-label="Text style">
+                <button
+                  className={
+                    selectedTextStyle.fontWeight === "900"
+                      ? "active-text-toggle"
+                      : ""
+                  }
+                  type="button"
+                  aria-label="Bold text"
+                  onClick={() =>
+                    updateSelectedTextStyle({
+                      fontWeight:
+                        selectedTextStyle.fontWeight === "900" ? "400" : "900",
+                    })
+                  }
+                >
+                  B
+                </button>
+                <button
+                  className={
+                    selectedTextStyle.fontStyle === "italic"
+                      ? "active-text-toggle"
+                      : ""
+                  }
+                  type="button"
+                  aria-label="Italic text"
+                  onClick={() =>
+                    updateSelectedTextStyle({
+                      fontStyle:
+                        selectedTextStyle.fontStyle === "italic"
+                          ? "normal"
+                          : "italic",
+                    })
+                  }
+                >
+                  I
+                </button>
               </div>
-            ) : selectedTextClip ? (
-              <div className="clip-controls text-style-controls">
-                <span>Text controls: {selectedTextClip.label}</span>
-                <label>
-                  <strong>Font</strong>
-                  <select
-                    aria-label="Text font"
-                    value={selectedTextStyle.fontFamily}
-                    onChange={(event) =>
-                      updateSelectedTextStyle({
-                        fontFamily: event.currentTarget.value,
-                      })
-                    }
-                  >
-                    {textFontOptions.map((font) => (
-                      <option key={font} value={font}>
-                        {font}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <strong>Size</strong>
-                  <em>{selectedTextStyle.fontSize}px</em>
-                  <input
-                    aria-label="Text size"
-                    type="range"
-                    min="1"
-                    max="160"
-                    step="1"
-                    value={selectedTextStyle.fontSize}
-                    onChange={(event) =>
-                      updateSelectedTextStyle({
-                        fontSize: Number(event.currentTarget.value),
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  <strong>Rotation</strong>
-                  <em>{selectedTextStyle.rotation}Â°</em>
-                  <input
-                    aria-label="Text rotation"
-                    type="range"
-                    min="-180"
-                    max="180"
-                    step="1"
-                    value={selectedTextStyle.rotation}
-                    onChange={(event) =>
-                      updateSelectedTextRotation(
-                        Number(event.currentTarget.value),
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  <strong>Color</strong>
-                  <input
-                    aria-label="Text color"
-                    type="color"
-                    value={selectedTextStyle.color}
-                    onChange={(event) =>
-                      updateSelectedTextStyle({
-                        color: event.currentTarget.value,
-                      })
-                    }
-                  />
-                </label>
-                <div className="text-toggle-row" aria-label="Text style">
+              <div className="text-effect-grid" aria-label="Text effects">
+                {textEffectOptions.map((option) => (
                   <button
                     className={
-                      selectedTextStyle.fontWeight === "900"
-                        ? "active-text-toggle"
+                      selectedTextStyle.effect === option.id
+                        ? "active-text-effect"
                         : ""
                     }
+                    key={option.id}
                     type="button"
-                    aria-label="Bold text"
                     onClick={() =>
-                      updateSelectedTextStyle({
-                        fontWeight:
-                          selectedTextStyle.fontWeight === "900" ? "400" : "900",
-                      })
+                      updateSelectedTextStyle({ effect: option.id })
                     }
                   >
-                    B
+                    {option.label}
                   </button>
-                  <button
-                    className={
-                      selectedTextStyle.fontStyle === "italic"
-                        ? "active-text-toggle"
-                        : ""
-                    }
-                    type="button"
-                    aria-label="Italic text"
-                    onClick={() =>
-                      updateSelectedTextStyle({
-                        fontStyle:
-                          selectedTextStyle.fontStyle === "italic"
-                            ? "normal"
-                            : "italic",
-                      })
-                    }
-                  >
-                    I
-                  </button>
-                </div>
-                <div className="text-effect-grid" aria-label="Text effects">
-                  {textEffectOptions.map((option) => (
+                ))}
+              </div>
+              <div className="text-animation-control">
+                <strong>Animation</strong>
+                <div
+                  className="text-animation-options"
+                  aria-label="Text animation"
+                >
+                  {textAnimationOptions.map((option) => (
                     <button
                       className={
-                        selectedTextStyle.effect === option.id
-                          ? "active-text-effect"
+                        selectedTextStyle.animation === option.id
+                          ? "active-text-animation"
                           : ""
                       }
+                      aria-pressed={selectedTextStyle.animation === option.id}
                       key={option.id}
                       type="button"
-                      onClick={() => updateSelectedTextStyle({effect: option.id})}
+                      onClick={() =>
+                        updateSelectedTextStyle({ animation: option.id })
+                      }
                     >
                       {option.label}
                     </button>
                   ))}
                 </div>
-                <div className="text-animation-control">
-                  <strong>Animation</strong>
-                  <div
-                    className="text-animation-options"
-                    aria-label="Text animation"
-                  >
-                    {textAnimationOptions.map((option) => (
-                      <button
-                        className={
-                          selectedTextStyle.animation === option.id
-                            ? "active-text-animation"
-                            : ""
-                        }
-                        aria-pressed={selectedTextStyle.animation === option.id}
-                        key={option.id}
-                        type="button"
-                        onClick={() => updateSelectedTextStyle({animation: option.id})}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
               </div>
-            ) : clipControlTarget || selectedVideoLayer !== null ? <div className="clip-controls">
-            <span>
-              {clipControlTarget
-                ? `${clipControlHeading}: ${clipControlTarget.label}`
-                : `Track controls: ${layerControlLabel}`}
-            </span>
-            <label>
-              <strong>Speed</strong>
-              <em>{selectedClipSpeed.toFixed(2)}x</em>
-              <input
-                type="range"
-                min="0.25"
-                max="2"
-                step="0.05"
-                value={selectedClipSpeed}
-                disabled={!canEditSelectedSpeed}
-                onPointerDown={() => startVideoLayerControlDrag("speed")}
-                onPointerUp={finishVideoLayerControlDrag}
-                onPointerCancel={finishVideoLayerControlDrag}
-                onChange={(event) => {
-                  updateSelectedClipSpeed(Number(event.currentTarget.value));
-                }}
-              />
-            </label>
-            <label>
-              <strong>Volume</strong>
-              <em>{Math.round(selectedClipVolume * 100)}%</em>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={selectedClipVolume}
-                disabled={!canEditSelectedVolume}
-                onPointerDown={() => startVideoLayerControlDrag("volume")}
-                onPointerUp={finishVideoLayerControlDrag}
-                onPointerCancel={finishVideoLayerControlDrag}
-                onChange={(event) => {
-                  updateSelectedClipVolume(Number(event.currentTarget.value));
-                }}
-              />
-            </label>
-          </div> : null}
+            </div>
+          ) : clipControlTarget || selectedVideoLayer !== null ? (
+            <div className="clip-controls">
+              <span>
+                {clipControlTarget
+                  ? `${clipControlHeading}: ${clipControlTarget.label}`
+                  : `Track controls: ${layerControlLabel}`}
+              </span>
+              <label>
+                <strong>Speed</strong>
+                <em>{selectedClipSpeed.toFixed(2)}x</em>
+                <input
+                  type="range"
+                  min="0.25"
+                  max="2"
+                  step="0.05"
+                  value={selectedClipSpeed}
+                  disabled={!canEditSelectedSpeed}
+                  onPointerDown={() => startVideoLayerControlDrag("speed")}
+                  onPointerUp={finishVideoLayerControlDrag}
+                  onPointerCancel={finishVideoLayerControlDrag}
+                  onChange={(event) => {
+                    updateSelectedClipSpeed(Number(event.currentTarget.value));
+                  }}
+                />
+              </label>
+              <label>
+                <strong>Volume</strong>
+                <em>{Math.round(selectedClipVolume * 100)}%</em>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={selectedClipVolume}
+                  disabled={!canEditSelectedVolume}
+                  onPointerDown={() => startVideoLayerControlDrag("volume")}
+                  onPointerUp={finishVideoLayerControlDrag}
+                  onPointerCancel={finishVideoLayerControlDrag}
+                  onChange={(event) => {
+                    updateSelectedClipVolume(Number(event.currentTarget.value));
+                  }}
+                />
+              </label>
+            </div>
+          ) : null}
         </aside>
       </section>
 
-      <section
-        className="timeline-panel"
-        aria-label="Timeline"
-      >
+      <section className="timeline-panel" aria-label="Timeline">
         <div className="timeline-toolbar">
           <div className="timeline-tools">
             <button
@@ -7705,405 +8374,449 @@ export const MyComponent: React.FC<Props> = ({project}) => {
             </button>
           </div>
           <strong>
-            {formatTimelineTimecode(playheadFrame, fps)} / {formatTimelineTimecode(projectDuration, fps)}
+            {formatTimelineTimecode(playheadFrame, fps)} /{" "}
+            {formatTimelineTimecode(projectDuration, fps)}
           </strong>
         </div>
         <div className="timeline-scroll">
           <div
             className="timeline-content"
             ref={timelineContentRef}
-            style={{
-              "--timeline-origin": `${timelineOrigin}px`,
-              minWidth: `${timelineOrigin + timelineCanvasWidth + 24}px`,
-            } as CSSProperties}
+            style={
+              {
+                "--timeline-origin": `${timelineOrigin}px`,
+                minWidth: `${timelineOrigin + timelineCanvasWidth + 24}px`,
+              } as CSSProperties
+            }
           >
-        <div
-          className="timeline-playhead"
-          role="slider"
-          aria-label="Timeline playhead"
-          aria-valuemin={0}
-          aria-valuemax={Math.max(0, projectDuration - 1)}
-          aria-valuenow={playheadFrame}
-          tabIndex={0}
-          onPointerDown={startTimelineScrub}
-          style={{ left: `calc(${timelineOrigin}px + ${playheadFrame * timelineScale}px)` }}
-        />
-        <div className="timeline-ruler" onPointerDown={startTimelineScrub}>
-          {timelineTicks.map((tick) => (
-            <span
-              key={tick.frame}
-              style={{left: `${timelineOrigin + tick.frame * timelineScale}px`}}
-            >
-              {tick.label}
-            </span>
-          ))}
-        </div>
-        <div
-          className={`timeline-track new-video-layer-drop ${
-            videoDropTarget?.kind === "new-layer" &&
-            videoDropTarget.direction === "above"
-              ? "drop-target"
-              : ""
-          }`}
-          data-new-video-layer="above"
-          role="group"
-          aria-label="Add video track above"
-        >
-          <div className="track-label" aria-hidden="true" />
-          <div className="track-lane" />
-        </div>
-        {timelineRows.map((track, index) => {
-          const previousVideoRow = timelineRows
-            .slice(0, index)
-            .reverse()
-            .find((row) => row.videoLayer !== undefined);
-          const insertVideoLayer =
-            track.videoLayer === undefined || !previousVideoRow
-              ? null
-              : track.videoLayer > 0
-                ? track.videoLayer + 1
-                : track.videoLayer === 0
-                  ? 1
-                  : track.videoLayer;
-
-          return (
-          <Fragment key={track.key}>
-          {insertVideoLayer !== null ? (
             <div
-              className={`timeline-track new-video-layer-drop insert-video-layer-drop ${
-                videoDropTarget?.kind === "insert-layer" &&
-                videoDropTarget.videoLayer === insertVideoLayer
-                  ? "drop-target"
-                  : ""
-              }`}
-              data-insert-video-layer={insertVideoLayer}
-              role="group"
-              aria-label="Insert video track here"
-            >
-              <div className="track-label" aria-hidden="true" />
-              <div className="track-lane" />
+              className="timeline-playhead"
+              role="slider"
+              aria-label="Timeline playhead"
+              aria-valuemin={0}
+              aria-valuemax={Math.max(0, projectDuration - 1)}
+              aria-valuenow={playheadFrame}
+              tabIndex={0}
+              onPointerDown={startTimelineScrub}
+              style={{
+                left: `calc(${timelineOrigin}px + ${playheadFrame * timelineScale}px)`,
+              }}
+            />
+            <div className="timeline-ruler" onPointerDown={startTimelineScrub}>
+              {timelineTicks.map((tick) => (
+                <span
+                  key={tick.frame}
+                  style={{
+                    left: `${timelineOrigin + tick.frame * timelineScale}px`,
+                  }}
+                >
+                  {tick.label}
+                </span>
+              ))}
             </div>
-          ) : null}
-          {track.id === "audio" ? (
             <div
               className={`timeline-track new-video-layer-drop ${
                 videoDropTarget?.kind === "new-layer" &&
-                videoDropTarget.direction === "below"
+                videoDropTarget.direction === "above"
                   ? "drop-target"
                   : ""
               }`}
-              data-new-video-layer="below"
+              data-new-video-layer="above"
               role="group"
-              aria-label="Add video track below"
+              aria-label="Add video track above"
             >
               <div className="track-label" aria-hidden="true" />
               <div className="track-lane" />
             </div>
-          ) : null}
-          <div
-            className={`timeline-track ${
-              track.id === "upper" ? "overlay-timeline-track" : ""
-            }`}
-          >
-            <div
-              className={`track-label ${
-                selectedTrack === track.id ? "selected-track-label" : ""
-              }`}
-              role={track.videoLayer !== undefined && track.videoLayer !== 0 ? "group" : undefined}
-              aria-label={track.videoLayer !== undefined && track.videoLayer !== 0
-                ? `Video layer ${
-                  track.videoLayer > 0 ? `+${track.videoLayer}` : track.videoLayer
-                }`
-                : undefined}
-              onClick={() => {
-                if (track.videoLayer !== undefined) {
-                  selectWholeVideoLayer(track.videoLayer);
-                  return;
-                }
-                selectTrackClipAtFrame(track.id, playheadFrame);
-              }}
-            >
-              {track.videoLayer !== undefined && track.videoLayer !== 0 ? "" : track.label}
-            </div>
-            <div
-              className={`track-lane ${
-                (videoDropTarget?.kind === "layer" &&
-                  videoDropTarget.videoLayer === track.videoLayer) ||
-                (videoDropTarget?.kind === "append-main" &&
-                  track.videoLayer === 0)
-                  ? "drop-target"
-                  : ""
-              } ${
-                track.videoLayer !== undefined && selectedVideoLayer === track.videoLayer
-                  ? "selected-track-lane"
-                  : ""
-              } ${
-                track.id === "upper" ? "overlay-track-lane" : ""
-              }`}
-              data-track-id={track.id}
-              data-video-layer={track.videoLayer}
-              onPointerDown={(event) => {
-                if (event.target === event.currentTarget) {
-                  const frame =
-                    getPointerTimelineFrame(event.clientX) ?? playheadFrame;
-                  if (track.videoLayer !== undefined) {
-                    selectWholeVideoLayer(track.videoLayer);
-                    return;
-                  }
-                  selectTrackClipAtFrame(track.id, Math.max(0, frame));
-                }
-                startTimelineScrub(event);
-              }}
-            >
-              {track.videoLayer === 0 && draggedMediaItem ? (
-                <div
-                  className={`main-track-append-target ${
-                    videoDropTarget?.kind === "append-main" ? "is-active" : ""
-                  }`}
-                  data-append-main-track
-                  role="button"
-                  aria-label="Append media to main track"
-                  title="Append after the last main clip"
-                  style={{
-                    left: `${mainAppendTargetLeft}px`,
-                    width: `${mainAppendTargetWidth}px`,
-                  }}
-                >
-                  +
-                </div>
-              ) : null}
-              {track.videoLayer !== undefined
-                ? (transitionBoundariesByLayer.get(track.videoLayer) ?? []).map(
-                    (boundary) => {
-                      const transitionTrack = track.videoLayer === 0 ? "main" : "upper";
-                      const transitionLabel = `Open animations for ${boundary.incomingLabel}`;
+            {timelineRows.map((track, index) => {
+              const previousVideoRow = timelineRows
+                .slice(0, index)
+                .reverse()
+                .find((row) => row.videoLayer !== undefined);
+              const insertVideoLayer =
+                track.videoLayer === undefined || !previousVideoRow
+                  ? null
+                  : track.videoLayer > 0
+                    ? track.videoLayer + 1
+                    : track.videoLayer === 0
+                      ? 1
+                      : track.videoLayer;
 
-                      return (
-                        <div
-                          key={`${boundary.outgoingClipId}-${boundary.incomingClipId}`}
-                          className="transition-anchor"
-                          style={{left: `${boundary.frame * timelineScale}px`}}
-                          onPointerDown={(event) => {
-                            event.stopPropagation();
-                          }}
-                        >
-                          <button
-                            className="transition-node"
-                            type="button"
-                            aria-label={`Open animations for ${boundary.incomingLabel}`}
-                            title={transitionLabel}
-                            onClick={() => {
-                              selectTransitionBoundary(
-                                boundary.incomingClipId,
-                                transitionTrack,
-                              );
-                            }}
-                          >
-                            +
-                          </button>
-                        </div>
-                      );
-                    },
-                  )
-                : null}
-              {clips
-                .filter(
-                  (clip) =>
-                    (track.videoLayer !== undefined
-                      ? getVideoLayer(clip) === track.videoLayer
-                      : clip.track === track.id) &&
-                    (
-                      track.id !== "audio" ||
-                      activeTool === "audio" ||
-                      contextualAudioClipIds.has(clip.id)
-                    ),
-                )
-                .map((clip) => (
-                  <div
-                    className={`timeline-clip ${
-                      clip.track === "main" ||
-                      clip.track === "upper" ||
-                      clip.track === "cutout" ||
-                      (clip.track === "text" && clip.text)
-                        ? "draggable-clip"
-                        : ""
-                    } ${clip.hidden ? "hidden-clip" : ""} ${
-                      selectedClipId === clip.id ? "selected-timeline-clip" : ""
-                    } ${
-                      replaceTargetClipId === clip.id ? "replace-target-clip" : ""
-                    }`}
-                    key={clip.id}
-                    data-replace-clip-id={
-                      clip.track === "main" ? clip.id : undefined
-                    }
-                    onPointerDown={(event) => {
-                      event.stopPropagation();
-                      const pointerFrame = getPointerTimelineFrame(event.clientX);
-                      selectTimelineClip(clip, pointerFrame);
-                      if (clip.track === "main" || clip.track === "upper") {
-                        startPointerDrag(event, clip);
-                      } else if (clip.track === "cutout" && clip.cutout) {
-                        startCutoutTimelineDrag(event, clip);
-                      } else if (clip.track === "text" && clip.text) {
-                        startTextTimelineDrag(event, clip);
-                      }
-                    }}
-                    style={{
-                      left: `${
-                        pointerDrag?.type === "timeline" &&
-                        pointerDrag.id === clip.id &&
-                        pointerDrag.pointerStartX !== undefined &&
-                        pointerDrag.originalStart !== undefined
-                          ? getDraggedClipStart({
-                              originalStart: pointerDrag.originalStart,
-                              pointerStartX: pointerDrag.pointerStartX,
-                              pointerX: pointerDrag.x,
-                              pixelsPerFrame: timelineScale,
-                            }) * timelineScale
-                          : clip.start * timelineScale
-                      }px`,
-                      width: `${clip.duration * timelineScale}px`,
-                      background: clip.color,
-                    }}
-                  >
-                    {selectedClipId === clip.id ? (
-                      <>
-                        <button
-                          className="trim-handle trim-handle-left"
-                          type="button"
-                          aria-label="Trim clip start"
-                          title="Trim start"
-                          onPointerDown={(event) => {
-                            startTrimDrag(event, clip, "left");
-                          }}
-                        />
-                        <button
-                          className="trim-handle trim-handle-right"
-                          type="button"
-                          aria-label="Trim clip end"
-                          title="Trim end"
-                          onPointerDown={(event) => {
-                            startTrimDrag(event, clip, "right");
-                          }}
-                        />
-                      </>
-                    ) : null}
-                    {clip.src && (clip.track === "main" || clip.track === "upper") ? (
-                      <>
-                        {isImageClip(clip) ? (
-                          <Img
-                            className="timeline-clip-image"
-                            src={resolveMediaSource(clip.src)}
-                            style={getClipFrameStyle(clip, playheadFrame)}
-                          />
-                        ) : (
-                          // eslint-disable-next-line @remotion/warn-native-media-tag
-                          <video
-                            className="timeline-clip-video"
-                            src={resolveMediaSource(clip.src)}
-                            onError={() => recoverUnavailableVideo(clip.id)}
-                            muted
-                            playsInline
-                            preload="metadata"
-                            style={getClipFrameStyle(clip, playheadFrame)}
-                          />
-                        )}
-                        <div className="timeline-clip-filmstrip" />
-                      </>
-                    ) : null}
-                    {clip.src && clip.track === "cutout" ? (
-                      clip.cutout?.mediaKind === "video" ? (
-                        // eslint-disable-next-line @remotion/warn-native-media-tag
-                        <video
-                          className="timeline-cutout-media"
-                          src={resolveMediaSource(clip.src)}
-                          muted
-                          playsInline
-                          preload="metadata"
-                          style={getCutoutChromaKeyStyle(clip.cutout)}
-                        />
-                      ) : (
-                        // eslint-disable-next-line @remotion/warn-native-media-tag
-                        <img
-                          className="timeline-cutout-media"
-                          src={resolveMediaSource(clip.src)}
-                          alt=""
-                        />
-                      )
-                    ) : null}
-                    {clip.src && clip.track === "sticker" ? (
-                      <>
-                        {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
-                        <img
-                          className="timeline-sticker-image"
-                          src={clip.src}
-                          alt=""
-                        />
-                      </>
-                    ) : null}
-                    {clip.track === "audio" ? (
-                      <div className="audio-waveform" aria-hidden="true">
-                        {createWaveformBars(
-                          clip.id,
-                          Math.max(12, Math.min(48, Math.round(clip.duration / 12))),
-                        ).map((bar, index) => (
-                          <span
-                            key={`${clip.id}-wave-${index}`}
-                            style={{height: `${Math.round(bar * 100)}%`}}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                    <button
-                      className={`clip-mute-button ${
-                        (clip.volume ?? 1) === 0 ? "muted-clip-button" : ""
+              return (
+                <Fragment key={track.key}>
+                  {insertVideoLayer !== null ? (
+                    <div
+                      className={`timeline-track new-video-layer-drop insert-video-layer-drop ${
+                        videoDropTarget?.kind === "insert-layer" &&
+                        videoDropTarget.videoLayer === insertVideoLayer
+                          ? "drop-target"
+                          : ""
                       }`}
-                      type="button"
+                      data-insert-video-layer={insertVideoLayer}
+                      role="group"
+                      aria-label="Insert video track here"
+                    >
+                      <div className="track-label" aria-hidden="true" />
+                      <div className="track-lane" />
+                    </div>
+                  ) : null}
+                  {track.id === "audio" ? (
+                    <div
+                      className={`timeline-track new-video-layer-drop ${
+                        videoDropTarget?.kind === "new-layer" &&
+                        videoDropTarget.direction === "below"
+                          ? "drop-target"
+                          : ""
+                      }`}
+                      data-new-video-layer="below"
+                      role="group"
+                      aria-label="Add video track below"
+                    >
+                      <div className="track-label" aria-hidden="true" />
+                      <div className="track-lane" />
+                    </div>
+                  ) : null}
+                  <div
+                    className={`timeline-track ${track.id === "upper" ? "overlay-timeline-track" : ""}`}
+                  >
+                    <div
+                      className={`track-label ${selectedTrack === track.id ? "selected-track-label" : ""}`}
+                      role={
+                        track.videoLayer !== undefined && track.videoLayer !== 0
+                          ? "group"
+                          : undefined
+                      }
                       aria-label={
-                        (clip.volume ?? 1) === 0 ? "Unmute clip" : "Mute clip"
+                        track.videoLayer !== undefined && track.videoLayer !== 0
+                          ? `Video layer ${track.videoLayer > 0 ? `+${track.videoLayer}` : track.videoLayer}`
+                          : undefined
                       }
-                      title={
-                        (clip.volume ?? 1) === 0 ? "Unmute clip" : "Mute clip"
-                      }
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleClipMute(clip.id);
-                      }}
-                      onPointerDown={(event) => {
-                        event.stopPropagation();
+                      onClick={() => {
+                        if (track.videoLayer !== undefined) {
+                          selectWholeVideoLayer(track.videoLayer);
+                          return;
+                        }
+                        selectTrackClipAtFrame(track.id, playheadFrame);
                       }}
                     >
-                      {(clip.volume ?? 1) === 0 ? "🔇" : "🔊"}
-                    </button>
-                    <span>{clip.label}</span>
-                    <small>
-                      {clip.track === "main" && clip.speed
-                        ? `${clip.speed.toFixed(2)}x`
-                        : `${clip.duration}f`}
-                    </small>
+                      {track.videoLayer !== undefined && track.videoLayer !== 0
+                        ? ""
+                        : track.label}
+                    </div>
+                    <div
+                      className={`track-lane ${
+                        (videoDropTarget?.kind === "layer" &&
+                          videoDropTarget.videoLayer === track.videoLayer) ||
+                        (videoDropTarget?.kind === "append-main" &&
+                          track.videoLayer === 0)
+                          ? "drop-target"
+                          : ""
+                      } ${
+                        track.videoLayer !== undefined &&
+                        selectedVideoLayer === track.videoLayer
+                          ? "selected-track-lane"
+                          : ""
+                      } ${track.id === "upper" ? "overlay-track-lane" : ""}`}
+                      data-track-id={track.id}
+                      data-video-layer={track.videoLayer}
+                      onPointerDown={(event) => {
+                        if (event.target === event.currentTarget) {
+                          const frame =
+                            getPointerTimelineFrame(event.clientX) ??
+                            playheadFrame;
+                          if (track.videoLayer !== undefined) {
+                            selectWholeVideoLayer(track.videoLayer);
+                            return;
+                          }
+                          selectTrackClipAtFrame(track.id, Math.max(0, frame));
+                        }
+                        startTimelineScrub(event);
+                      }}
+                    >
+                      {track.videoLayer === 0 && draggedMediaItem ? (
+                        <div
+                          className={`main-track-append-target ${
+                            videoDropTarget?.kind === "append-main"
+                              ? "is-active"
+                              : ""
+                          }`}
+                          data-append-main-track
+                          role="button"
+                          aria-label="Append media to main track"
+                          title="Append after the last main clip"
+                          style={{
+                            left: `${mainAppendTargetLeft}px`,
+                            width: `${mainAppendTargetWidth}px`,
+                          }}
+                        >
+                          +
+                        </div>
+                      ) : null}
+                      {track.videoLayer !== undefined
+                        ? (
+                            transitionBoundariesByLayer.get(track.videoLayer) ??
+                            []
+                          ).map((boundary) => {
+                            const transitionTrack =
+                              track.videoLayer === 0 ? "main" : "upper";
+                            const transitionLabel = `Open animations for ${boundary.incomingLabel}`;
+
+                            return (
+                              <div
+                                key={`${boundary.outgoingClipId}-${boundary.incomingClipId}`}
+                                className="transition-anchor"
+                                style={{
+                                  left: `${boundary.frame * timelineScale}px`,
+                                }}
+                                onPointerDown={(event) => {
+                                  event.stopPropagation();
+                                }}
+                              >
+                                <button
+                                  className="transition-node"
+                                  type="button"
+                                  aria-label={`Open animations for ${boundary.incomingLabel}`}
+                                  title={transitionLabel}
+                                  onClick={() => {
+                                    selectTransitionBoundary(
+                                      boundary.incomingClipId,
+                                      transitionTrack,
+                                    );
+                                  }}
+                                >
+                                  +
+                                </button>
+                              </div>
+                            );
+                          })
+                        : null}
+                      {clips
+                        .filter(
+                          (clip) =>
+                            (track.videoLayer !== undefined
+                              ? getVideoLayer(clip) === track.videoLayer
+                              : clip.track === track.id) &&
+                            (track.id !== "audio" ||
+                              activeTool === "audio" ||
+                              contextualAudioClipIds.has(clip.id)),
+                        )
+                        .map((clip) => (
+                          <div
+                            className={`timeline-clip ${
+                              clip.track === "main" ||
+                              clip.track === "upper" ||
+                              clip.track === "cutout" ||
+                              (clip.track === "text" && clip.text)
+                                ? "draggable-clip"
+                                : ""
+                            } ${clip.hidden ? "hidden-clip" : ""} ${
+                              selectedClipId === clip.id
+                                ? "selected-timeline-clip"
+                                : ""
+                            } ${replaceTargetClipId === clip.id ? "replace-target-clip" : ""}`}
+                            key={clip.id}
+                            data-replace-clip-id={
+                              clip.track === "main" ? clip.id : undefined
+                            }
+                            onPointerDown={(event) => {
+                              event.stopPropagation();
+                              const pointerFrame = getPointerTimelineFrame(
+                                event.clientX,
+                              );
+                              selectTimelineClip(clip, pointerFrame);
+                              if (
+                                clip.track === "main" ||
+                                clip.track === "upper"
+                              ) {
+                                startPointerDrag(event, clip);
+                              } else if (
+                                clip.track === "cutout" &&
+                                clip.cutout
+                              ) {
+                                startCutoutTimelineDrag(event, clip);
+                              } else if (clip.track === "text" && clip.text) {
+                                startTextTimelineDrag(event, clip);
+                              }
+                            }}
+                            style={{
+                              left: `${
+                                pointerDrag?.type === "timeline" &&
+                                pointerDrag.id === clip.id &&
+                                pointerDrag.pointerStartX !== undefined &&
+                                pointerDrag.originalStart !== undefined
+                                  ? getDraggedClipStart({
+                                      originalStart: pointerDrag.originalStart,
+                                      pointerStartX: pointerDrag.pointerStartX,
+                                      pointerX: pointerDrag.x,
+                                      pixelsPerFrame: timelineScale,
+                                    }) * timelineScale
+                                  : clip.start * timelineScale
+                              }px`,
+                              width: `${clip.duration * timelineScale}px`,
+                              background: clip.color,
+                            }}
+                          >
+                            {selectedClipId === clip.id ? (
+                              <>
+                                <button
+                                  className="trim-handle trim-handle-left"
+                                  type="button"
+                                  aria-label="Trim clip start"
+                                  title="Trim start"
+                                  onPointerDown={(event) => {
+                                    startTrimDrag(event, clip, "left");
+                                  }}
+                                />
+                                <button
+                                  className="trim-handle trim-handle-right"
+                                  type="button"
+                                  aria-label="Trim clip end"
+                                  title="Trim end"
+                                  onPointerDown={(event) => {
+                                    startTrimDrag(event, clip, "right");
+                                  }}
+                                />
+                              </>
+                            ) : null}
+                            {clip.src &&
+                            (clip.track === "main" ||
+                              clip.track === "upper") ? (
+                              <>
+                                {isImageClip(clip) ? (
+                                  <Img
+                                    className="timeline-clip-image"
+                                    src={resolveMediaSource(clip.src)}
+                                    style={getClipFrameStyle(
+                                      clip,
+                                      playheadFrame,
+                                    )}
+                                  />
+                                ) : (
+                                  // eslint-disable-next-line @remotion/warn-native-media-tag
+                                  <video
+                                    className="timeline-clip-video"
+                                    src={resolveMediaSource(clip.src)}
+                                    onError={() =>
+                                      recoverUnavailableVideo(clip.id)
+                                    }
+                                    muted
+                                    playsInline
+                                    preload="metadata"
+                                    style={getClipFrameStyle(
+                                      clip,
+                                      playheadFrame,
+                                    )}
+                                  />
+                                )}
+                                <div className="timeline-clip-filmstrip" />
+                              </>
+                            ) : null}
+                            {clip.src && clip.track === "cutout" ? (
+                              clip.cutout?.mediaKind === "video" ? (
+                                // eslint-disable-next-line @remotion/warn-native-media-tag
+                                <video
+                                  className="timeline-cutout-media"
+                                  src={resolveMediaSource(clip.src)}
+                                  muted
+                                  playsInline
+                                  preload="metadata"
+                                  style={getCutoutChromaKeyStyle(clip.cutout)}
+                                />
+                              ) : (
+                                // eslint-disable-next-line @remotion/warn-native-media-tag
+                                <img
+                                  className="timeline-cutout-media"
+                                  src={resolveMediaSource(clip.src)}
+                                  alt=""
+                                />
+                              )
+                            ) : null}
+                            {clip.src && clip.track === "sticker" ? (
+                              <>
+                                {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
+                                <img
+                                  className="timeline-sticker-image"
+                                  src={clip.src}
+                                  alt=""
+                                />
+                              </>
+                            ) : null}
+                            {clip.track === "audio" ? (
+                              <div
+                                className="audio-waveform"
+                                aria-hidden="true"
+                              >
+                                {createWaveformBars(
+                                  clip.id,
+                                  Math.max(
+                                    12,
+                                    Math.min(
+                                      48,
+                                      Math.round(clip.duration / 12),
+                                    ),
+                                  ),
+                                ).map((bar, index) => (
+                                  <span
+                                    key={`${clip.id}-wave-${index}`}
+                                    style={{
+                                      height: `${Math.round(bar * 100)}%`,
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            ) : null}
+                            <button
+                              className={`clip-mute-button ${(clip.volume ?? 1) === 0 ? "muted-clip-button" : ""}`}
+                              type="button"
+                              aria-label={
+                                (clip.volume ?? 1) === 0
+                                  ? "Unmute clip"
+                                  : "Mute clip"
+                              }
+                              title={
+                                (clip.volume ?? 1) === 0
+                                  ? "Unmute clip"
+                                  : "Mute clip"
+                              }
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleClipMute(clip.id);
+                              }}
+                              onPointerDown={(event) => {
+                                event.stopPropagation();
+                              }}
+                            >
+                              {(clip.volume ?? 1) === 0 ? "🔇" : "🔊"}
+                            </button>
+                            <span>{clip.label}</span>
+                            <small>
+                              {clip.track === "main" && clip.speed
+                                ? `${clip.speed.toFixed(2)}x`
+                                : `${clip.duration}f`}
+                            </small>
+                          </div>
+                        ))}
+                    </div>
                   </div>
-                ))}
-            </div>
-          </div>
-          </Fragment>
-          );
-        })}
-        {hasAudioTimelineRow ? null : (
-          <div
-            className={`timeline-track new-video-layer-drop ${
-              videoDropTarget?.kind === "new-layer" &&
-              videoDropTarget.direction === "below"
-                ? "drop-target"
-                : ""
-            }`}
-            data-new-video-layer="below"
-            role="group"
-            aria-label="Add video track below"
-          >
-            <div className="track-label" aria-hidden="true" />
-            <div className="track-lane" />
-          </div>
-        )}
+                </Fragment>
+              );
+            })}
+            {hasAudioTimelineRow ? null : (
+              <div
+                className={`timeline-track new-video-layer-drop ${
+                  videoDropTarget?.kind === "new-layer" &&
+                  videoDropTarget.direction === "below"
+                    ? "drop-target"
+                    : ""
+                }`}
+                data-new-video-layer="below"
+                role="group"
+                aria-label="Add video track below"
+              >
+                <div className="track-label" aria-hidden="true" />
+                <div className="track-lane" />
+              </div>
+            )}
           </div>
         </div>
       </section>

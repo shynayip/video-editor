@@ -1559,7 +1559,7 @@ button {
 }
 
 .selected-preview-cutout {
-  outline: 2px solid #2dd4bf;
+  outline: 2px solid #ffffff;
   outline-offset: 3px;
 }
 
@@ -1572,7 +1572,7 @@ button {
   height: 22px;
   padding: 0;
   border: 2px solid #071019;
-  background: #2dd4bf;
+  background: #ffffff;
   color: #071019;
   cursor: pointer;
 }
@@ -1586,7 +1586,7 @@ button {
 }
 
 .cutout-rotate-handle::after {
-  content: "↻";
+  content: "\21BB";
   display: grid;
   place-items: center;
   font-size: 17px;
@@ -1601,7 +1601,7 @@ button {
   height: 12px;
   border: 2px solid #071019;
   border-radius: 3px;
-  background: #2dd4bf;
+  background: #ffffff;
   touch-action: none;
 }
 
@@ -1655,7 +1655,7 @@ button {
 }
 
 .cutout-resize-handle:hover {
-  background: #ecfeff;
+  background: #dbeafe;
 }
 
 .cutout-delete-button {
@@ -2471,7 +2471,8 @@ button {
 }
 
 .track-lane.selected-track-lane {
-  border-bottom: 2px solid #facc15;
+  border-bottom-color: #29323d;
+  background: rgba(255, 255, 255, 0.025);
   box-shadow: none;
 }
 
@@ -2505,7 +2506,6 @@ button {
 }
 
 .track-lane.drop-target {
-  border-bottom: 2px solid #facc15;
   background: rgba(250, 204, 21, 0.06);
   box-shadow: none;
 }
@@ -2532,27 +2532,52 @@ button {
 }
 
 .new-video-layer-drop {
-  height: 10px;
-  min-height: 10px;
+  height: 0;
+  min-height: 0;
   color: #738398;
+  pointer-events: none;
 }
 
 .new-video-layer-drop .track-label {
-  height: 10px;
-  min-height: 10px;
+  height: 0;
+  min-height: 0;
 }
 
 .new-video-layer-drop .track-lane {
-  height: 10px;
-  min-height: 10px;
+  height: 0;
+  min-height: 0;
   border: 0;
   border-top: 1px solid transparent;
   background: transparent;
 }
 
 .new-video-layer-drop.drop-target .track-lane {
-  border-top: 2px solid #facc15;
   background: transparent;
+}
+
+.timeline-drop-guide {
+  position: absolute;
+  z-index: 19;
+  top: 24px;
+  bottom: 0;
+  width: 2px;
+  translate: -1px 0;
+  background: #facc15;
+  box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.18);
+  pointer-events: none;
+}
+
+.timeline-drop-guide::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  translate: -50% 0;
+  rotate: 45deg;
+  border-radius: 2px;
+  background: #facc15;
 }
 
 .timeline-clip {
@@ -2598,6 +2623,33 @@ button {
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
+}
+
+.timeline-clip.voiceover-timeline-clip {
+  border-color: rgba(255, 255, 255, 0.72);
+  background: #05070b;
+  color: #ffffff;
+}
+
+.timeline-clip.voiceover-timeline-clip .audio-waveform {
+  opacity: 0.92;
+}
+
+.timeline-clip.voiceover-timeline-clip .audio-waveform-line {
+  stroke: #ffffff;
+}
+
+.voiceover-recording-clip {
+  min-width: 2px;
+  pointer-events: none;
+}
+
+.voiceover-recording-clip span {
+  position: relative;
+  z-index: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .timeline-clip.has-timeline-waveform:not(.audio-timeline-clip) .audio-waveform {
@@ -2845,4 +2897,89 @@ button {
   color: white;
   font-size: 13px;
   font-weight: 900;
+}
+
+.import-choice-dialog {
+  width: min(460px, calc(100vw - 32px));
+  max-height: min(560px, calc(100vh - 32px));
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #111827;
+  color: #f8fafc;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.62);
+}
+
+.import-choice-dialog::backdrop {
+  background: rgba(2, 6, 23, 0.76);
+}
+
+.import-choice-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 24px 24px 18px;
+}
+
+.import-choice-icon {
+  display: grid;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(45, 212, 191, 0.14);
+  color: #5eead4;
+  font-size: 22px;
+}
+
+.import-choice-heading h2 {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.25;
+}
+
+.import-choice-heading p {
+  margin: 8px 0 0;
+  color: #a7b4c6;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.import-choice-actions {
+  display: grid;
+  gap: 9px;
+  padding: 0 24px 24px;
+}
+
+.import-choice-actions button {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.import-choice-primary {
+  background: #2dd4bf;
+  color: #06131a;
+}
+
+.import-choice-secondary {
+  border-color: #3b4a5f !important;
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+.import-choice-cancel {
+  background: transparent;
+  color: #a7b4c6;
+}
+
+.import-choice-actions button:hover,
+.import-choice-actions button:focus-visible {
+  filter: brightness(1.12);
 }

@@ -402,7 +402,7 @@ test("shows trim handles only for the selected clip", () => {
   );
 });
 
-test("keeps linked audio internal instead of rendering a separate audio row", () => {
+test("keeps linked audio internal and only reveals a row for recorded voiceover", () => {
   const compositionSource = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
@@ -415,6 +415,46 @@ test("keeps linked audio internal instead of rendering a separate audio row", ()
   assert.match(
     compositionSource,
     /getContextualAudioClips\(clips, contextualSelectionId\)\.length > 0/,
+  );
+  assert.match(
+    compositionSource,
+    /clips\.some\(isVoiceoverClip\)[\s\S]*?label: "Voiceover track"/,
+  );
+  assert.match(
+    compositionSource,
+    /track\.audioKind === "voiceover"[\s\S]*?isVoiceoverClip/,
+  );
+});
+
+test("plays the timeline while recording and renders a live voiceover range", () => {
+  const compositionSource = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const cssSource = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    compositionSource,
+    /setVoiceRecordingStartFrame\(recordingStartFrame\)[\s\S]*?setPreviewMode\("timeline"\)[\s\S]*?setIsPreviewPlaying\(true\)/,
+  );
+  assert.match(
+    compositionSource,
+    /start: voiceRecordingStartFrame \?\? playheadFrame/,
+  );
+  assert.match(
+    compositionSource,
+    /aria-label="Voice recording in progress"[\s\S]*?playheadFrame - voiceRecordingStartFrame/,
+  );
+  assert.match(
+    cssSource,
+    /\.timeline-clip\.voiceover-timeline-clip[\s\S]*?background: #05070b/,
+  );
+  assert.match(
+    cssSource,
+    /\.timeline-clip\.voiceover-timeline-clip \.audio-waveform-line[\s\S]*?stroke: #ffffff/,
   );
 });
 
@@ -736,7 +776,7 @@ test("keeps text animation labels inside responsive preset buttons", () => {
   );
 });
 
-test("moves the playhead to the clicked position on visual timeline clips", () => {
+test("moves the playhead only after double-clicking a visual timeline clip", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
@@ -756,8 +796,24 @@ test("moves the playhead to the clicked position on visual timeline clips", () =
   assert.match(handler, /Math\.round\(pointerFrame\)/);
   assert.match(
     source,
-    /const pointerFrame = getTimelineFrameFromPointer\([\s\S]*?selectTimelineClip\(clip, pointerFrame\)/,
+    /onPointerDown=\{\(event\) => \{[\s\S]*?selectTimelineClip\(clip\);[\s\S]*?onDoubleClick=\{\(event\) => \{[\s\S]*?const pointerFrame = getTimelineFrameFromPointer\([\s\S]*?selectTimelineClip\(clip, pointerFrame\)/,
   );
+});
+
+test("moves the playhead on a blank track lane only after a double-click", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const laneStart = source.indexOf("data-track-id={track.id}");
+  const laneEnd = source.indexOf("{track.videoLayer === 0", laneStart);
+  const lane = source.slice(laneStart, laneEnd);
+
+  assert.match(lane, /onPointerDown=\{\(event\) => \{/);
+  assert.doesNotMatch(lane, /startTimelineScrub\(event\)/);
+  assert.match(lane, /onDoubleClick=\{\(event\) => \{/);
+  assert.match(lane, /event\.target !== event\.currentTarget/);
+  assert.match(lane, /updatePlayheadFromPointer\(event\.clientX\)/);
 });
 
 test("selects visual clips while seeking and leaves audio selection independent", () => {
@@ -979,12 +1035,20 @@ test("keeps overlay preview playback synchronized with the editor", () => {
   assert.doesNotMatch(overlayPreview, /autoPlay/);
   assert.match(overlayPreview, /preload="auto"/);
   assert.match(
-    overlayPreview,
+    compositionSource,
     /getClipSourceTime\(\s*videoClip,\s*previewFrame,\s*fps,?\s*\)/,
   );
   assert.match(
-    overlayPreview,
-    /if \(isPreviewPlaying && isActiveVideoClip\)[\s\S]*?video\.play\(\)[\s\S]*?else[\s\S]*?video\.pause\(\)/,
+    compositionSource,
+    /previewLayerVideoRefs\.current\.set\([\s\S]*?videoClip\.id,[\s\S]*?video/,
+  );
+  assert.match(
+    compositionSource,
+    /const seekTolerance = isPreviewPlaying && isActive \? 0\.45 : 0\.04/,
+  );
+  assert.match(
+    compositionSource,
+    /if \(isPreviewPlaying && \(isActive \|\| participatesInTransition\)\)[\s\S]*?video\.play\(\)[\s\S]*?else[\s\S]*?video\.pause\(\)/,
   );
 });
 
@@ -1001,7 +1065,7 @@ test("holds transition preview layers at their adjacent source frames", () => {
   assert.match(source, /getClipTransitionPresentation,/);
   assert.match(
     overlayPreview,
-    /const transitionPresentation = getClipTransitionPresentation\(\s*clips,\s*videoClip\.id,\s*playheadFrame,\s*\)/,
+    /const transitionPresentation =\s*getClipTransitionPresentation\(\s*clips,\s*videoClip\.id,\s*playheadFrame,\s*\)/,
   );
   assert.match(
     overlayPreview,
@@ -1016,16 +1080,16 @@ test("holds transition preview layers at their adjacent source frames", () => {
     /getClipFrameStyle\(\s*videoClip,\s*playheadFrame,\s*transitionPresentation,?\s*\)/,
   );
   assert.match(
-    overlayPreview,
-    /const previewFrame = isActiveVideoClip\s*\? playheadFrame\s*:\s*playheadFrame < videoClip\.start\s*\? videoClip\.start\s*:\s*videoClip\.start \+ videoClip\.duration - 1/,
+    source,
+    /const previewFrame = isActive\s*\? playheadFrame\s*:\s*playheadFrame < videoClip\.start\s*\? videoClip\.start\s*:\s*videoClip\.start \+ videoClip\.duration - 1/,
   );
   assert.match(
-    overlayPreview,
+    source,
     /getClipSourceTime\(\s*videoClip,\s*previewFrame,\s*fps,?\s*\)/,
   );
   assert.match(
     overlayPreview,
-    /visibility: isVisibleVideoClip \? "visible" : "hidden"/,
+    /visibility: isVisibleVideoClip\s*\? "visible"\s*:\s*"hidden"/,
   );
 });
 
@@ -1704,10 +1768,10 @@ test("hides secondary video layer labels and compacts add-layer spacing", () => 
     source,
     /`Video layer \$\{\s*track\.videoLayer > 0 \? `\+\$\{track\.videoLayer\}` : track\.videoLayer\s*\}`/,
   );
-  assert.match(css, /\.new-video-layer-drop\s*\{[^}]*height:\s*10px/s);
+  assert.match(css, /\.new-video-layer-drop\s*\{[^}]*height:\s*0/s);
   assert.match(
     css,
-    /\.new-video-layer-drop \.track-lane\s*\{[^}]*height:\s*10px/s,
+    /\.new-video-layer-drop \.track-lane\s*\{[^}]*height:\s*0/s,
   );
 });
 
@@ -1914,13 +1978,18 @@ test("main voice action posts guarded analysis and commits once", () => {
   assert.doesNotMatch(source, /removeSilenceAutomatically/);
   assert.match(
     abortMainVoiceRequest,
-    /setCaptionStatus\(\{kind: "idle", message: ""\}\)/,
+    /setCaptionStatus\(\{\s*kind: "idle", message: ""\s*\}\)/,
   );
   assert.match(mainVoiceAction, /fetch\("\/api\/detect-dominant-voice", \{/);
+  assert.match(mainVoiceAction, /fetch\("\/api\/detect-silence", \{/);
   assert.match(mainVoiceAction, /message: "Extracting audio\.\.\."/);
   assert.match(mainVoiceAction, /message: "Detecting speakers\.\.\."/);
   assert.match(mainVoiceAction, /message: "Finding the main voice\.\.\."/);
-  assert.match(mainVoiceAction, /message: "Removing other sections\.\.\."/);
+  assert.match(mainVoiceAction, /message: "Detecting silent sections\.\.\."/);
+  assert.match(
+    mainVoiceAction,
+    /message: "Removing other voices and silence\.\.\."/,
+  );
   assert.match(mainVoiceAction, /isDominantVoiceRequestCurrent\(/);
   assert.equal(
     mainVoiceAction.match(/commitClipChange\(\(currentClips\) =>/g)?.length,
@@ -1928,7 +1997,7 @@ test("main voice action posts guarded analysis and commits once", () => {
   );
   assert.match(
     mainVoiceAction,
-    /keepDominantVoiceInLinkedVideo\(currentClips, sourceClipId, ranges, fps\)/,
+    /keepDominantVoiceInLinkedVideo\(\s*currentClips,\s*sourceClipId,\s*retainedRanges,\s*fps,?\s*\)/,
   );
   assert.match(
     mainVoiceAction,

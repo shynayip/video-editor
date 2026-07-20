@@ -47,7 +47,6 @@ import {
   deleteClipById,
   duplicateClipById,
   keepDominantVoiceInLinkedVideo,
-  getActiveClipAtFrame,
   getActiveClipsAtFrame,
   getActiveVideoLayersAtFrame,
   getClipSourceTime,
@@ -56,6 +55,8 @@ import {
   isPlayableMediaResponse,
   isStoredUploadSource,
   getDraggedClipStart,
+  getDragEdgeAutoScrollDelta,
+  getVideoClipDragPreviewStart,
   getContextualAudioClips,
   getCaptionPosition,
   getResizedCaptionFontSizeFromHandle,
@@ -80,6 +81,7 @@ import {
   getTextAnimationWordPresentation,
   getRotatedTextResizeDelta,
   moveTextClip,
+  moveIndependentTimelineClip,
   moveCaptionOverlay,
   moveTextOverlay,
   moveCutoutClip,
@@ -91,6 +93,8 @@ import {
   moveVideoClipToLayer,
   placeVideoPairInInsertedLayer,
   placeVideoPairOnLayer,
+  insertVideoPairOnLayerAtFrame,
+  preventSingleLaneClipOverlaps,
   parseSavedEditorProject,
   removeUnusedMediaItem,
   replaceGeneratedCaptionBatch,
@@ -123,6 +127,7 @@ import {
   shouldMuteVideoNativeAudio,
   splitClipByIdAtFrame,
   splitSceneMediaItemAtFrame,
+  subtractSourceRanges,
   ClipAnimationEasing,
   ClipAnimationPreset,
   ClipAnimationTiming,
@@ -183,6 +188,8 @@ export const isDetectedSceneMediaItem = (
 ) => Boolean(mediaItem?.sourceFileId);
 
 type AnalyzingMediaItem = { id: string; label: string };
+
+type ImportVideoMode = "whole" | "scenes";
 
 type UploadedMediaResponse = {
   src: string;
@@ -1172,6 +1179,59 @@ const uploadMediaFile = async (file: File): Promise<UploadedMediaResponse> => {
   return response.json() as Promise<UploadedMediaResponse>;
 };
 
+type BackgroundRemovalResult = {
+  src: string;
+  mimeType: string;
+};
+
+const removeBackgroundFromFile = async ({
+  file,
+  mediaKind,
+  sourceStartSeconds = 0,
+  durationSeconds,
+  signal,
+}: {
+  file: File;
+  mediaKind: "image" | "video";
+  sourceStartSeconds?: number;
+  durationSeconds: number;
+  signal?: AbortSignal;
+}): Promise<BackgroundRemovalResult> => {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("mediaKind", mediaKind);
+  formData.append("sourceStart", String(sourceStartSeconds));
+  formData.append("duration", String(durationSeconds));
+
+  const response = await fetch("/api/remove-background", {
+    method: "POST",
+    body: formData,
+    signal,
+  });
+  let payload: {
+    src?: string;
+    mimeType?: string;
+    error?: { message?: string };
+  };
+  try {
+    payload = (await response.json()) as typeof payload;
+  } catch {
+    throw new Error(
+      response.ok
+        ? "Background removal returned an invalid response."
+        : "Automatic cutout failed.",
+    );
+  }
+  if (!response.ok) {
+    throw new Error(payload.error?.message || "Automatic cutout failed.");
+  }
+  if (!payload.src || !payload.mimeType) {
+    throw new Error("Background removal returned an invalid response.");
+  }
+
+  return { src: payload.src, mimeType: payload.mimeType };
+};
+
 export async function mapWithConcurrency<Input, Output>(
   items: readonly Input[],
   concurrency: number,
@@ -1320,13 +1380,32 @@ type TimelineRow = {
   id: TrackName;
   label: string;
   videoLayer?: number;
+  audioKind?: "voiceover";
+};
+
+const isVoiceoverClip = (clip: TimelineClip) =>
+  clip.track === "audio" &&
+  (clip.audioKind === "voiceover" || clip.id.startsWith("voice-"));
+
+const timelineRowContainsClip = (row: TimelineRow, clip: TimelineClip) => {
+  if (row.audioKind === "voiceover") {
+    return isVoiceoverClip(clip);
+  }
+
+  return row.videoLayer !== undefined
+    ? getVideoLayer(clip) === row.videoLayer
+    : clip.track === row.id;
 };
 
 type VideoDropTarget =
   | { kind: "layer"; videoLayer: number }
   | { kind: "append-main" }
   | { kind: "new-layer"; direction: VideoLayerDirection }
-  | { kind: "insert-layer"; videoLayer: number };
+  | { kind: "insert-layer"; videoLayer: number }
+  | {
+      kind: "track";
+      track: "audio" | "cutout" | "sticker" | "caption" | "text";
+    };
 
 type PointerDrag = {
   type: "timeline" | "media";
@@ -1529,17 +1608,22 @@ export const MyComposition = () => {
 
 export const MyComponent: React.FC<Props> = ({ project }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importChoiceDialogRef = useRef<HTMLDialogElement>(null);
+  const pendingImportFilesRef = useRef<File[]>([]);
   const musicInputRef = useRef<HTMLInputElement>(null);
   const stickerInputRef = useRef<HTMLInputElement>(null);
   const cutoutInputRef = useRef<HTMLInputElement>(null);
   const captionFileInputRef = useRef<HTMLInputElement>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
+  const previewLayerVideoRefs = useRef(new Map<string, HTMLVideoElement>());
+  const previewAudioRefs = useRef(new Map<string, HTMLAudioElement>());
   const previewWindowRef = useRef<HTMLDivElement>(null);
   const videoLayerControlDragRef =
     useRef<VideoLayerControlHistoryGesture | null>(null);
   const mediaPreviewVolumeDragRef = useRef(false);
   const previewSourceRef = useRef<string | null>(null);
   const timelineContentRef = useRef<HTMLDivElement>(null);
+  const timelineScrollRef = useRef<HTMLDivElement>(null);
   const voiceRecorderRef = useRef<BrowserVoiceRecorder | null>(null);
   const [initialProject] = useState<SavedEditorProject | null>(
     () => project ?? readBrowserSavedProject(),
@@ -1564,6 +1648,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [analyzingMediaItems, setAnalyzingMediaItems] = useState<
     AnalyzingMediaItem[]
   >([]);
+  const [pendingImportVideoCount, setPendingImportVideoCount] = useState(0);
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(
     initialProject?.selectedMediaId ??
       initialProject?.mediaItems[0]?.id ??
@@ -1604,15 +1689,16 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [trimDrag, setTrimDrag] = useState<TrimDrag | null>(null);
   const [videoDropTarget, setVideoDropTarget] =
     useState<VideoDropTarget | null>(null);
-  const [replaceTargetClipId, setReplaceTargetClipId] = useState<string | null>(
-    null,
-  );
+  const [dropGuideFrame, setDropGuideFrame] = useState<number | null>(null);
   const [previewMode, setPreviewMode] = useState<"media" | "timeline">(
     "timeline",
   );
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubPointerId, setScrubPointerId] = useState<number | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [voiceRecordingStartFrame, setVoiceRecordingStartFrame] = useState<
+    number | null
+  >(null);
   const [recordingError, setRecordingError] = useState("");
   const [activeTool, setActiveTool] = useState<ActiveTool>("media");
   const activeToolRef = useRef(activeTool);
@@ -1674,6 +1760,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     pointerDrag?.type === "media"
       ? mediaItems.find((item) => item.id === pointerDrag.id)
       : null;
+  const draggedTimelineClip =
+    pointerDrag?.type === "timeline"
+      ? clips.find((clip) => clip.id === pointerDrag.id)
+      : null;
   const mainAppendTargetWidth = draggedMediaItem
     ? Math.max(
         96,
@@ -1685,9 +1775,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     0,
     mainVideoLayerEnd * timelineScale - mainAppendVisibleOverlap,
   );
+  const dragRunwayWidth = pointerDrag
+    ? Math.max(
+        960,
+        (draggedMediaItem?.durationInFrames ??
+          draggedTimelineClip?.duration ??
+          0) * timelineScale,
+      )
+    : 0;
   const timelineCanvasWidth = Math.max(
     projectDuration * timelineScale,
     mainAppendTargetLeft + mainAppendTargetWidth,
+    pointerDrag
+      ? projectDuration * timelineScale + dragRunwayWidth
+      : 0,
   );
 
   useEffect(() => {
@@ -2041,14 +2142,37 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     firstClip.start - secondClip.start ||
     firstClip.id.localeCompare(secondClip.id);
   const activeVideoLayers = getActiveVideoLayersAtFrame(clips, playheadFrame);
+  const activeVideoClipIds = new Set(activeVideoLayers.map((clip) => clip.id));
   const timelinePreviewVideoClips = clips
-    .filter(
-      (clip) =>
-        (clip.track === "main" || clip.track === "upper") &&
-        clip.src &&
-        !clip.hidden &&
-        !isImageClip(clip),
-    )
+    .filter((clip) => {
+      if (
+        (clip.track !== "main" && clip.track !== "upper") ||
+        !clip.src ||
+        clip.hidden ||
+        isImageClip(clip)
+      ) {
+        return false;
+      }
+
+      const transitionPresentation = getClipTransitionPresentation(
+        clips,
+        clip.id,
+        playheadFrame,
+      );
+      const participatesInTransition =
+        transitionPresentation.opacity !== 1 ||
+        transitionPresentation.translateX !== 0 ||
+        transitionPresentation.scale !== 1;
+      const isNearPlayhead =
+        clip.start <= playheadFrame + fps * 2 &&
+        clip.start + clip.duration >= playheadFrame - fps / 2;
+
+      return (
+        activeVideoClipIds.has(clip.id) ||
+        participatesInTransition ||
+        isNearPlayhead
+      );
+    })
     .sort(compareTimelinePreviewVideoClips);
   const previewVideoLayers = Array.from(
     new Set(
@@ -2164,8 +2288,18 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         label: "",
         videoLayer,
       })),
+      ...(clips.some(isVoiceoverClip) || isRecording
+        ? [
+            {
+              key: "voiceover",
+              id: "audio" as TrackName,
+              label: "Voiceover track",
+              audioKind: "voiceover" as const,
+            },
+          ]
+        : []),
     ];
-  }, [clips]);
+  }, [clips, isRecording]);
   const previewSource =
     previewMode === "timeline"
       ? topVisibleVideoClip
@@ -2232,12 +2366,46 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       setTimelineHistory((currentHistory) =>
         applyTimelineHistoryEdit(
           currentHistory,
-          updater(currentHistory.present),
+          preventSingleLaneClipOverlaps(updater(currentHistory.present)),
         ),
       );
     },
     [],
   );
+
+  useEffect(() => {
+    const handleDeleteShortcut = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Delete" ||
+        event.repeat ||
+        event.defaultPrevented ||
+        !selectedClipIdRef.current
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      const isEditing =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(
+            target.closest("input, textarea, select, [contenteditable='true']"),
+          ));
+      if (isEditing || document.querySelector("dialog[open]")) {
+        return;
+      }
+
+      event.preventDefault();
+      const clipId = selectedClipIdRef.current;
+      commitClipChange((currentClips) => deleteClipById(currentClips, clipId));
+      setSelectedClipId(null);
+      setSelectedVideoLayer(null);
+      setProjectStatus("Selected clip deleted");
+    };
+
+    window.addEventListener("keydown", handleDeleteShortcut);
+    return () => window.removeEventListener("keydown", handleDeleteShortcut);
+  }, [commitClipChange]);
 
   const undoLastClipChange = () => {
     setTimelineHistory(undoTimelineHistory);
@@ -2913,11 +3081,22 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     );
   };
 
-  const selectTrackClipAtFrame = (track: TrackName, frame: number) => {
+  const selectTrackClipAtFrame = (
+    track: TrackName,
+    frame: number,
+    clipFilter?: (clip: TimelineClip) => boolean,
+  ) => {
     setSelectedVideoLayer(null);
+    const trackClips = clips.filter(
+      (candidate) =>
+        candidate.track === track && (!clipFilter || clipFilter(candidate)),
+    );
     const clip =
-      getActiveClipAtFrame(clips, track, frame) ??
-      clips.find((candidate) => candidate.track === track);
+      trackClips.find(
+        (candidate) =>
+          frame >= candidate.start &&
+          frame < candidate.start + candidate.duration,
+      ) ?? trackClips[0];
 
     setSelectedTrack(track);
     setSelectedClipId(clip?.id ?? null);
@@ -3019,11 +3198,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
     if (selectedFiles.length === 0) return;
 
-    setProjectStatus("Importing cutout...");
+    setIsAutoCutoutLoading(true);
+    setProjectStatus("Importing cutout and removing background...");
     try {
       const timestamp = Date.now();
-      const importedGroups = await Promise.all(
-        selectedFiles.map(async (file, index): Promise<TimelineClip[]> => {
+      const importedGroups = await mapWithConcurrency(
+        selectedFiles,
+        1,
+        async (file, index): Promise<TimelineClip[]> => {
           const previewSrc = URL.createObjectURL(file);
           try {
             const isVideo = file.type.startsWith("video/");
@@ -3033,23 +3215,31 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 : Promise.resolve(90),
               uploadMediaFile(file),
             ]);
+            const processedMedia = await removeBackgroundFromFile({
+              file,
+              mediaKind: isVideo ? "video" : "image",
+              durationSeconds: durationInFrames / fps,
+            });
             const label = (uploadedMedia.label || file.name).replace(
               /\.[^.]+$/,
               "",
             );
 
             if (!isVideo) {
-              return [
-                createCutoutImageClip({
-                  id: `cutout-image-${timestamp}-${index}`,
-                  label,
-                  src: uploadedMedia.src,
-                  playheadFrame,
-                }),
-              ];
+              const clip = createCutoutImageClip({
+                id: `cutout-image-${timestamp}-${index}`,
+                label,
+                src: uploadedMedia.src,
+                playheadFrame,
+              });
+              return applyAutomaticCutoutById(
+                [clip],
+                clip.id,
+                processedMedia.src,
+              );
             }
 
-            return createCutoutVideoPair({
+            const pair = createCutoutVideoPair({
               videoId: `cutout-video-${timestamp}-${index}`,
               audioId: `cutout-audio-${timestamp}-${index}`,
               label,
@@ -3057,10 +3247,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               start: playheadFrame,
               duration: durationInFrames,
             });
+            return applyAutomaticCutoutById(
+              pair,
+              pair[0].id,
+              processedMedia.src,
+            );
           } finally {
             URL.revokeObjectURL(previewSrc);
           }
-        }),
+        },
       );
       const importedClips = importedGroups.flat();
       const firstCutout = importedClips.find((clip) => clip.track === "cutout");
@@ -3070,7 +3265,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       setSelectedTrack("cutout");
       setIsAudioTrackVisible(Boolean(firstCutout?.linkedClipId));
       setPreviewMode("timeline");
-      setProjectStatus("Cutout added");
+      setProjectStatus("Cutout added with background removed");
     } catch (error) {
       setProjectStatus(
         error instanceof Error
@@ -3078,6 +3273,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           : "Cutout import failed.",
       );
     } finally {
+      setIsAutoCutoutLoading(false);
       input.value = "";
     }
   };
@@ -3149,39 +3345,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             (mediaKind === "image" ? "image/png" : "video/mp4"),
         },
       );
-      const formData = new FormData();
-      formData.append("file", sourceFile);
-      formData.append("mediaKind", mediaKind);
-      formData.append("sourceStart", String(sourceStartSeconds));
-      formData.append("duration", String(durationSeconds));
-
-      const response = await fetch("/api/remove-background", {
-        method: "POST",
-        body: formData,
+      const payload = await removeBackgroundFromFile({
+        file: sourceFile,
+        mediaKind,
+        sourceStartSeconds,
+        durationSeconds,
         signal: abortController.signal,
       });
-      if (!requestIsActive()) return;
-
-      let payload: {
-        src?: string;
-        mimeType?: string;
-        error?: { message?: string };
-      };
-      try {
-        payload = (await response.json()) as typeof payload;
-      } catch {
-        throw new Error(
-          response.ok
-            ? "Background removal returned an invalid response."
-            : "Automatic cutout failed.",
-        );
-      }
-      if (!response.ok) {
-        throw new Error(payload.error?.message || "Automatic cutout failed.");
-      }
-      if (!payload.src || !payload.mimeType) {
-        throw new Error("Background removal returned an invalid response.");
-      }
       if (!requestIsActive()) return;
 
       commitClipChange((currentClips) => {
@@ -3189,9 +3359,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
         pendingAutoCutoutCommitRef.current = {
           clipId,
-          processedSrc: payload.src!,
+          processedSrc: payload.src,
         };
-        return applyAutomaticCutoutById(currentClips, clipId, payload.src!);
+        return applyAutomaticCutoutById(currentClips, clipId, payload.src);
       });
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
@@ -3756,9 +3926,103 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       if (!isCurrentRequest()) {
         return;
       }
+      const silenceFormData = new FormData();
+      silenceFormData.append("file", clipFile);
+      silenceFormData.append("sourceStart", String(sourceStartSeconds));
+      silenceFormData.append("duration", String(sourceDurationSeconds));
+
       setCaptionStatus({
         kind: "loading",
-        message: "Removing other sections...",
+        message: "Detecting silent sections...",
+      });
+      const silenceResponse = await fetch("/api/detect-silence", {
+        method: "POST",
+        body: silenceFormData,
+        signal: abortController.signal,
+      });
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      let silencePayload: unknown;
+      try {
+        silencePayload = await silenceResponse.json();
+      } catch {
+        if (!isCurrentRequest()) {
+          return;
+        }
+        throw new Error(
+          silenceResponse.ok
+            ? "Silence detection response did not include ranges."
+            : "Silence detection failed. Please try again.",
+        );
+      }
+      if (!isCurrentRequest()) {
+        return;
+      }
+      if (!silenceResponse.ok) {
+        const silenceServerMessage =
+          typeof silencePayload === "object" &&
+          silencePayload !== null &&
+          !Array.isArray(silencePayload) &&
+          "error" in silencePayload &&
+          typeof silencePayload.error === "object" &&
+          silencePayload.error !== null &&
+          "message" in silencePayload.error &&
+          typeof silencePayload.error.message === "string" &&
+          silencePayload.error.message.trim()
+            ? silencePayload.error.message.trim()
+            : null;
+        throw new Error(
+          silenceServerMessage ?? "Silence detection failed. Please try again.",
+        );
+      }
+      if (
+        typeof silencePayload !== "object" ||
+        silencePayload === null ||
+        Array.isArray(silencePayload) ||
+        !("ranges" in silencePayload) ||
+        !Array.isArray(silencePayload.ranges)
+      ) {
+        throw new Error("Silence detection response did not include ranges.");
+      }
+
+      const silenceRanges = silencePayload.ranges.map((range) => {
+        if (
+          typeof range !== "object" ||
+          range === null ||
+          Array.isArray(range) ||
+          !("startSeconds" in range) ||
+          typeof range.startSeconds !== "number" ||
+          !Number.isFinite(range.startSeconds) ||
+          !("endSeconds" in range) ||
+          typeof range.endSeconds !== "number" ||
+          !Number.isFinite(range.endSeconds)
+        ) {
+          throw new Error(
+            "Silence detection response included an invalid range.",
+          );
+        }
+
+        return {
+          startSeconds: range.startSeconds,
+          endSeconds: range.endSeconds,
+        };
+      });
+      const retainedRanges = subtractSourceRanges(
+        ranges,
+        silenceRanges,
+        sourceDurationSeconds,
+      );
+      if (retainedRanges.length === 0) {
+        throw new Error(
+          "No main voice remained after removing silent sections.",
+        );
+      }
+
+      setCaptionStatus({
+        kind: "loading",
+        message: "Removing other voices and silence...",
       });
       if (!isCurrentRequest()) {
         return;
@@ -3778,16 +4042,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         return keepDominantVoiceInLinkedVideo(
           currentClips,
           sourceClipId,
-          ranges,
+          retainedRanges,
           fps,
         );
       });
       setCaptionStatus({
         kind: "success",
-        message:
-          ranges.length === 1
-            ? "Kept 1 main voice section."
-            : `Kept ${ranges.length} main voice sections.`,
+        message: `Kept the main voice and removed ${silenceRanges.length} silent section${silenceRanges.length === 1 ? "" : "s"}.`,
       });
       setPreviewMode("timeline");
       setIsAudioTrackVisible(true);
@@ -4387,14 +4648,115 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       );
 
       commitClipChange((currentClips) =>
-        placeVideoPairOnLayer(currentClips, mediaClips, videoLayer, startFrame),
+        videoLayer === 0
+          ? insertVideoPairOnLayerAtFrame(
+              currentClips,
+              mediaClips,
+              videoLayer,
+              startFrame,
+            )
+          : placeVideoPairOnLayer(
+              currentClips,
+              mediaClips,
+              videoLayer,
+              startFrame,
+            ),
       );
       setSelectedClipId(videoId);
       setSelectedVideoLayer(null);
       setSelectedTrack(videoLayer === 0 ? "main" : "upper");
       setIsAudioTrackVisible(getMediaItemType(mediaItem) === "video");
+      setProjectStatus(
+        videoLayer === 0
+          ? "Video inserted on the Main track at the yellow marker"
+          : "Video added to the selected overlay track",
+      );
     },
     [commitClipChange, createMediaTimelineClips],
+  );
+
+  const placeMediaOnTimelineTrack = useCallback(
+    (
+      mediaItem: MediaItem,
+      track: "audio" | "cutout" | "sticker" | "caption" | "text",
+      startFrame: number,
+    ) => {
+      const mediaType = getMediaItemType(mediaItem);
+      const timestamp = Date.now();
+      const label = mediaItem.label.replace(/\.[^.]+$/, "");
+
+      if (track === "caption" || track === "text") {
+        setProjectStatus(
+          `Video files cannot be placed on the ${track} track. Use the ${track === "caption" ? "Captions" : "Text"} tool instead.`,
+        );
+        return;
+      }
+
+      if (track === "audio") {
+        if (mediaType !== "video") {
+          setProjectStatus("Images do not contain audio.");
+          return;
+        }
+        const audioClip = createBackgroundMusicClip({
+          id: `media-audio-${timestamp}`,
+          label: `${label} audio`,
+          src: mediaItem.src,
+          playheadFrame: startFrame,
+          durationInFrames: mediaItem.durationInFrames,
+        });
+        commitClipChange((currentClips) => [...currentClips, audioClip]);
+        setSelectedClipId(audioClip.id);
+        setSelectedTrack("audio");
+        setIsAudioTrackVisible(true);
+        setProjectStatus("Audio added at the yellow marker");
+        return;
+      }
+
+      if (track === "sticker") {
+        if (mediaType !== "image") {
+          setProjectStatus("Use the Cutout track for a video overlay.");
+          return;
+        }
+        const stickerClip = createStickerClip({
+          id: `media-sticker-${timestamp}`,
+          label,
+          src: mediaItem.src,
+          playheadFrame: startFrame,
+        });
+        commitClipChange((currentClips) =>
+          appendStickerClip(currentClips, stickerClip),
+        );
+        setSelectedClipId(stickerClip.id);
+        setSelectedTrack("sticker");
+        setProjectStatus("Sticker added at the yellow marker");
+        return;
+      }
+
+      const cutoutClips =
+        mediaType === "image"
+          ? [
+              createCutoutImageClip({
+                id: `media-cutout-image-${timestamp}`,
+                label,
+                src: mediaItem.src,
+                playheadFrame: startFrame,
+              }),
+            ]
+          : createCutoutVideoPair({
+              videoId: `media-cutout-video-${timestamp}`,
+              audioId: `media-cutout-audio-${timestamp}`,
+              label,
+              src: mediaItem.src,
+              start: startFrame,
+              duration: mediaItem.durationInFrames,
+            });
+      commitClipChange((currentClips) => [...currentClips, ...cutoutClips]);
+      setSelectedClipId(cutoutClips[0].id);
+      setSelectedTrack("cutout");
+      setIsAudioTrackVisible(mediaType === "video");
+      setProjectStatus("Cutout added at the yellow marker");
+    },
+    [commitClipChange],
   );
 
   const togglePreviewPlayback = () => {
@@ -4450,6 +4812,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       const recorder = voiceRecorderRef.current;
       if (!recorder) return;
 
+      setIsPreviewPlaying(false);
       try {
         const recording = await recorder.stop();
         const src = URL.createObjectURL(recording.blob);
@@ -4458,7 +4821,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           id,
           label: "Voice recording",
           src,
-          start: playheadFrame,
+          start: voiceRecordingStartFrame ?? playheadFrame,
           durationSeconds: recording.durationSeconds,
           fps,
         });
@@ -4479,6 +4842,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       } finally {
         voiceRecorderRef.current = null;
         setIsRecording(false);
+        setVoiceRecordingStartFrame(null);
       }
       return;
     }
@@ -4493,8 +4857,16 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     try {
       const recorder = new BrowserVoiceRecorder();
       await recorder.start();
+      const recordingStartFrame =
+        playheadFrame >= projectDuration ? 0 : playheadFrame;
       voiceRecorderRef.current = recorder;
+      setVoiceRecordingStartFrame(recordingStartFrame);
+      previewVideoRef.current?.pause();
+      setIsMediaPreviewPlaying(false);
+      setPreviewMode("timeline");
+      setPlayheadFrame(recordingStartFrame);
       setIsRecording(true);
+      setIsPreviewPlaying(true);
     } catch {
       setRecordingError("Allow microphone access to record your voice.");
     }
@@ -4612,18 +4984,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     closeMediaPreviewVolumeIfInactive();
   };
 
-  const importMediaFromGallery = async (
-    event: React.ChangeEvent<HTMLInputElement>,
+  const importSelectedMediaFiles = async (
+    selectedFiles: File[],
+    videoMode: ImportVideoMode,
   ) => {
-    const input = event.currentTarget;
-    const selectedFiles = Array.from(input.files ?? []).filter(
-      (file) => getMediaFileType(file) !== null,
-    );
-
-    if (selectedFiles.length === 0) {
-      return;
-    }
-
     const importTimestamp = Date.now();
     const firstSourceGroupIndex = nextSourceGroupIndexRef.current;
     nextSourceGroupIndexRef.current += selectedFiles.length;
@@ -4639,7 +5003,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       ({ sourceFileId }) => sourceFileId,
     );
     const newAnalyzingItems = imports
-      .filter(({ mediaType }) => mediaType === "video")
+      .filter(
+        ({ mediaType }) => mediaType === "video" && videoMode === "scenes",
+      )
       .map(({ file, analyzingId }) => ({ id: analyzingId, label: file.name }));
 
     if (newAnalyzingItems.length > 0) {
@@ -4663,7 +5029,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         }) => {
           const previewSrc = URL.createObjectURL(file);
           try {
-            if (mediaType === "video") {
+            if (mediaType === "video" && videoMode === "scenes") {
               const { sceneItems, usedFallback } = await analyzeImportedVideo({
                 file,
                 sourceFileId,
@@ -4684,6 +5050,37 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 outcome: usedFallback
                   ? ("fallback" as const)
                   : ("imported" as const),
+              };
+            }
+
+            if (mediaType === "video") {
+              const [durationInFrames, uploadedMedia] = await Promise.all([
+                readVideoDurationInFrames(previewSrc),
+                uploadMediaFile(file),
+              ]);
+              const videoItem: MediaItem = {
+                id: `media-${sourceFileId}`,
+                label: uploadedMedia.label || file.name,
+                src: uploadedMedia.src,
+                duration: formatMediaDuration(durationInFrames),
+                durationInFrames,
+                sourceDurationInFrames: durationInFrames,
+                kind: "public",
+                mediaType: "video",
+                sourceGroupIndex,
+              };
+              setMediaItems((currentItems) =>
+                mergeImportedMediaItemsInSelectionOrder({
+                  currentItems,
+                  newItems: [videoItem],
+                  sourceFileId,
+                  orderedSourceFileIds,
+                }),
+              );
+              return {
+                fileName: file.name,
+                mediaId: videoItem.id,
+                outcome: "imported" as const,
               };
             }
 
@@ -4723,7 +5120,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             };
           } finally {
             URL.revokeObjectURL(previewSrc);
-            if (mediaType === "video") {
+            if (mediaType === "video" && videoMode === "scenes") {
               setAnalyzingMediaItems((currentItems) =>
                 currentItems.filter((item) => item.id !== analyzingId),
               );
@@ -4764,8 +5161,52 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         setProjectStatus("Media imported and saved");
       }
     } finally {
-      input.value = "";
+      setAnalyzingMediaItems((currentItems) =>
+        currentItems.filter(
+          (item) => !newAnalyzingItems.some(({ id }) => id === item.id),
+        ),
+      );
     }
+  };
+
+  const closeImportChoiceDialog = () => {
+    importChoiceDialogRef.current?.close();
+    pendingImportFilesRef.current = [];
+    setPendingImportVideoCount(0);
+  };
+
+  const confirmMediaImport = (videoMode: ImportVideoMode) => {
+    const selectedFiles = pendingImportFilesRef.current;
+    closeImportChoiceDialog();
+    if (selectedFiles.length > 0) {
+      void importSelectedMediaFiles(selectedFiles, videoMode);
+    }
+  };
+
+  const importMediaFromGallery = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const input = event.currentTarget;
+    const selectedFiles = Array.from(input.files ?? []).filter(
+      (file) => getMediaFileType(file) !== null,
+    );
+    input.value = "";
+
+    if (selectedFiles.length === 0) {
+      return;
+    }
+
+    const videoCount = selectedFiles.filter(
+      (file) => getMediaFileType(file) === "video",
+    ).length;
+    if (videoCount === 0) {
+      void importSelectedMediaFiles(selectedFiles, "whole");
+      return;
+    }
+
+    pendingImportFilesRef.current = selectedFiles;
+    setPendingImportVideoCount(videoCount);
+    importChoiceDialogRef.current?.showModal();
   };
 
   const importBackgroundMusic = async (
@@ -4866,10 +5307,27 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       }
 
       const videoLayerElement = element?.closest("[data-video-layer]");
-      const videoLayer = Number(
-        videoLayerElement?.getAttribute("data-video-layer"),
-      );
-      return Number.isFinite(videoLayer) ? { kind: "layer", videoLayer } : null;
+      if (videoLayerElement) {
+        const videoLayerValue =
+          videoLayerElement.getAttribute("data-video-layer");
+        const videoLayer = Number(videoLayerValue);
+        if (videoLayerValue !== null && Number.isFinite(videoLayer)) {
+          return { kind: "layer", videoLayer };
+        }
+      }
+
+      const trackElement = element?.closest("[data-track-id]");
+      const track = trackElement?.getAttribute("data-track-id");
+      if (
+        track === "audio" ||
+        track === "cutout" ||
+        track === "sticker" ||
+        track === "caption" ||
+        track === "text"
+      ) {
+        return { kind: "track", track };
+      }
+      return null;
     },
     [],
   );
@@ -4916,15 +5374,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
     const updateDropTarget = (x: number, y: number) => {
       const element = document.elementFromPoint(x, y);
-      const replaceClip = element?.closest("[data-replace-clip-id]");
-      const replaceClipId = replaceClip?.getAttribute("data-replace-clip-id");
+      const isOverTimeline = Boolean(element?.closest(".timeline-content"));
+      const pointerFrame = isOverTimeline ? getPointerTimelineFrame(x) : null;
+      setDropGuideFrame(
+        pointerFrame === null ? null : Math.max(0, pointerFrame),
+      );
       const target = getVideoDropTargetFromElement(element);
-
-      if (pointerDrag.type === "media" && replaceClipId) {
-        setVideoDropTarget({ kind: "layer", videoLayer: 0 });
-        setReplaceTargetClipId(replaceClipId);
-        return;
-      }
 
       const draggedClip =
         pointerDrag.type === "timeline"
@@ -4936,12 +5391,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
       if (target && isVideoDrag) {
         setVideoDropTarget(target);
-        setReplaceTargetClipId(null);
         return;
       }
 
       setVideoDropTarget(null);
-      setReplaceTargetClipId(null);
     };
 
     const handlePointerMove = (event: globalThis.PointerEvent) => {
@@ -4956,6 +5409,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     const handlePointerUp = (event: globalThis.PointerEvent) => {
       const element = document.elementFromPoint(event.clientX, event.clientY);
       const target = getVideoDropTargetFromElement(element);
+      const pointerFrame = getPointerTimelineFrame(event.clientX) ?? 0;
       const targetVideoLayer = target
         ? target.kind === "new-layer"
           ? target.direction === "above"
@@ -4965,12 +5419,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             ? target.videoLayer
             : target.kind === "append-main"
               ? 0
-              : target.videoLayer
+              : target.kind === "layer"
+                ? target.videoLayer
+                : null
         : null;
 
-      if (targetVideoLayer !== null) {
-        const pointerFrame = getPointerTimelineFrame(event.clientX) ?? 0;
-
+      if (pointerDrag.type === "media" && target?.kind === "track") {
+        const mediaItem = mediaItems.find((item) => item.id === pointerDrag.id);
+        if (mediaItem) {
+          placeMediaOnTimelineTrack(mediaItem, target.track, pointerFrame);
+        }
+      } else if (targetVideoLayer !== null) {
         if (pointerDrag.type === "media") {
           const mediaItem = mediaItems.find(
             (item) => item.id === pointerDrag.id,
@@ -5049,7 +5508,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
       setPointerDrag(null);
       setVideoDropTarget(null);
-      setReplaceTargetClipId(null);
+      setDropGuideFrame(null);
     };
 
     window.addEventListener("pointermove", handlePointerMove);
@@ -5066,9 +5525,79 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     getPointerTimelineFrame,
     getVideoDropTargetFromElement,
     mediaItems,
+    placeMediaOnTimelineTrack,
     placeMediaOnVideoLayer,
     pointerDrag,
     projectDuration,
+  ]);
+
+  useEffect(() => {
+    if (!pointerDrag) return;
+
+    let animationFrame = 0;
+    const scrollWhileDragging = () => {
+      const scrollArea = timelineScrollRef.current;
+      if (!scrollArea) return;
+
+      const bounds = scrollArea.getBoundingClientRect();
+      const laneViewportLeft = Math.min(
+        bounds.right,
+        bounds.left + timelineOrigin,
+      );
+      const isNearTimelineHorizontally =
+        pointerDrag.x >= laneViewportLeft - 64 &&
+        pointerDrag.x <= bounds.right + 64;
+      const isNearTimelineVertically =
+        pointerDrag.y >= bounds.top - 64 && pointerDrag.y <= bounds.bottom + 64;
+      const horizontalDelta = isNearTimelineVertically
+        ? getDragEdgeAutoScrollDelta(
+            pointerDrag.x,
+            laneViewportLeft,
+            bounds.right,
+          )
+        : 0;
+      const verticalDelta = isNearTimelineHorizontally
+        ? getDragEdgeAutoScrollDelta(pointerDrag.y, bounds.top, bounds.bottom)
+        : 0;
+      const previousLeft = scrollArea.scrollLeft;
+      const previousTop = scrollArea.scrollTop;
+
+      scrollArea.scrollLeft += horizontalDelta;
+      scrollArea.scrollTop += verticalDelta;
+
+      if (
+        scrollArea.scrollLeft !== previousLeft ||
+        scrollArea.scrollTop !== previousTop
+      ) {
+        const element = document.elementFromPoint(pointerDrag.x, pointerDrag.y);
+        const pointerFrame = element?.closest(".timeline-content")
+          ? getPointerTimelineFrame(pointerDrag.x)
+          : null;
+        setDropGuideFrame(
+          pointerFrame === null ? null : Math.max(0, pointerFrame),
+        );
+
+        const target = getVideoDropTargetFromElement(element);
+        const draggedClip =
+          pointerDrag.type === "timeline"
+            ? clips.find((clip) => clip.id === pointerDrag.id)
+            : null;
+        const isVideoDrag =
+          pointerDrag.type === "media" ||
+          (draggedClip ? getVideoLayer(draggedClip) !== null : false);
+        setVideoDropTarget(target && isVideoDrag ? target : null);
+      }
+
+      animationFrame = requestAnimationFrame(scrollWhileDragging);
+    };
+
+    animationFrame = requestAnimationFrame(scrollWhileDragging);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [
+    clips,
+    getPointerTimelineFrame,
+    getVideoDropTargetFromElement,
+    pointerDrag,
   ]);
 
   useEffect(() => {
@@ -5087,11 +5616,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
       setTimelineHistory((currentHistory) => ({
         ...currentHistory,
-        present: trimClipById(
-          trimDrag.originalClips,
-          trimDrag.clipId,
-          trimDrag.edge,
-          frameDelta,
+        present: preventSingleLaneClipOverlaps(
+          trimClipById(
+            trimDrag.originalClips,
+            trimDrag.clipId,
+            trimDrag.edge,
+            frameDelta,
+          ),
         ),
       }));
     };
@@ -5235,17 +5766,22 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       const targetStart = originalClip.start + frameDelta;
       setTimelineHistory((currentHistory) => ({
         ...currentHistory,
-        present: moveTextClip(
-          textTimelineDrag.originalClips,
-          textTimelineDrag.clipId,
-          targetStart,
-          getExpandedTimelineBoundary(
-            projectDuration,
+        present: preventSingleLaneClipOverlaps(
+          (originalClip.track === "text"
+            ? moveTextClip
+            : moveIndependentTimelineClip)(
+            textTimelineDrag.originalClips,
+            textTimelineDrag.clipId,
             targetStart,
-            originalClip.duration,
+            getExpandedTimelineBoundary(
+              projectDuration,
+              targetStart,
+              originalClip.duration,
+            ),
           ),
         ),
       }));
+      setDropGuideFrame(Math.max(0, targetStart));
     };
 
     const finishDrag = () => {
@@ -5258,6 +5794,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               future: [],
             },
       );
+      setDropGuideFrame(null);
       setTextTimelineDrag(null);
     };
 
@@ -5288,16 +5825,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         timelineScale,
       );
       const targetStart = originalClip.start + frameDelta;
+      setDropGuideFrame(Math.max(0, targetStart));
       setTimelineHistory((currentHistory) => ({
         ...currentHistory,
-        present: moveCutoutClip(
-          cutoutTimelineDrag.originalClips,
-          cutoutTimelineDrag.clipId,
-          targetStart,
-          getExpandedTimelineBoundary(
-            projectDuration,
+        present: preventSingleLaneClipOverlaps(
+          moveCutoutClip(
+            cutoutTimelineDrag.originalClips,
+            cutoutTimelineDrag.clipId,
             targetStart,
-            originalClip.duration,
+            getExpandedTimelineBoundary(
+              projectDuration,
+              targetStart,
+              originalClip.duration,
+            ),
           ),
         ),
       }));
@@ -5313,6 +5853,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               future: [],
             },
       );
+      setDropGuideFrame(null);
       setCutoutTimelineDrag(null);
     };
 
@@ -5838,6 +6379,103 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   ]);
 
   useEffect(() => {
+    const activeIds = new Set(activeVideoLayers.map((clip) => clip.id));
+    const renderedClips = new Map<string, TimelineClip>();
+    for (const clip of timelinePreviewVideoClips) {
+      renderedClips.set(clip.id, clip);
+    }
+
+    for (const [clipId, video] of previewLayerVideoRefs.current) {
+      const videoClip = renderedClips.get(clipId);
+      if (!videoClip || !video.isConnected) {
+        video.pause();
+        previewLayerVideoRefs.current.delete(clipId);
+        continue;
+      }
+
+      const isActive = activeIds.has(clipId);
+      const transitionPresentation = getClipTransitionPresentation(
+        clips,
+        clipId,
+        playheadFrame,
+      );
+      const participatesInTransition =
+        transitionPresentation.opacity !== 1 ||
+        transitionPresentation.translateX !== 0 ||
+        transitionPresentation.scale !== 1;
+      const previewFrame = isActive
+        ? playheadFrame
+        : playheadFrame < videoClip.start
+          ? videoClip.start
+          : videoClip.start + videoClip.duration - 1;
+      const videoMuted =
+        !isActive ||
+        (videoClip.volume ?? 1) === 0 ||
+        shouldMuteVideoNativeAudio(clips, playheadFrame, clipId);
+      const desiredTime = Math.max(
+        0,
+        getClipSourceTime(videoClip, previewFrame, fps),
+      );
+      const seekTolerance = isPreviewPlaying && isActive ? 0.45 : 0.04;
+
+      video.playbackRate = videoClip.speed ?? 1;
+      video.volume = Math.min(videoClip.volume ?? 1, 1);
+      video.muted = videoMuted;
+      if (Math.abs(video.currentTime - desiredTime) > seekTolerance) {
+        video.currentTime = desiredTime;
+      }
+
+      if (isPreviewPlaying && (isActive || participatesInTransition)) {
+        if (video.paused) {
+          void video.play().catch(() => undefined);
+        }
+      } else if (!video.paused) {
+        video.pause();
+      }
+    }
+  }, [
+    activeVideoLayers,
+    clips,
+    isPreviewPlaying,
+    playheadFrame,
+    timelinePreviewVideoClips,
+  ]);
+
+  useEffect(() => {
+    const activeAudio = new Map(
+      playbackAudioClips.map((audioClip) => [audioClip.id, audioClip]),
+    );
+
+    for (const [clipId, audio] of previewAudioRefs.current) {
+      const audioClip = activeAudio.get(clipId);
+      if (!audioClip || !audio.isConnected) {
+        audio.pause();
+        previewAudioRefs.current.delete(clipId);
+        continue;
+      }
+
+      const desiredTime = Math.max(
+        0,
+        getClipSourceTime(audioClip, playheadFrame, fps),
+      );
+      const seekTolerance = isPreviewPlaying ? 0.45 : 0.04;
+      audio.playbackRate = audioClip.speed ?? 1;
+      audio.volume = Math.min(audioClip.volume ?? 1, 1);
+      if (Math.abs(audio.currentTime - desiredTime) > seekTolerance) {
+        audio.currentTime = desiredTime;
+      }
+
+      if (isPreviewPlaying) {
+        if (audio.paused) {
+          void audio.play().catch(() => undefined);
+        }
+      } else if (!audio.paused) {
+        audio.pause();
+      }
+    }
+  }, [isPreviewPlaying, playbackAudioClips, playheadFrame]);
+
+  useEffect(() => {
     if (previewMode === "timeline") {
       previewVideoRef.current?.pause();
       setIsMediaPreviewPlaying(false);
@@ -6186,8 +6824,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   className="import-button"
                   type="button"
                   onClick={() => cutoutInputRef.current?.click()}
+                  disabled={isAutoCutoutLoading}
                 >
-                  Import cutout
+                  {isAutoCutoutLoading
+                    ? "Removing background..."
+                    : "Import cutout"}
                 </button>
                 <input
                   ref={cutoutInputRef}
@@ -6197,12 +6838,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   multiple
                   onChange={(event) => void importCutoutFromGallery(event)}
                 />
-                <p>
-                  Choose an image or video. It will appear at the red playhead.
-                </p>
+                <p>Image and video backgrounds are removed automatically.</p>
                 <div className="cutout-format-hint">
-                  Transparent PNG and WebM files keep their transparent
-                  background.
+                  The original source stays available for restore and audio.
                 </div>
                 <div className="cutout-mask-controls">
                   <strong>Background</strong>
@@ -7055,11 +7693,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           transitionPresentation.scale !== 1;
                         const isVisibleVideoClip =
                           isActiveVideoClip || isTransitionPreviewClip;
-                        const previewFrame = isActiveVideoClip
-                          ? playheadFrame
-                          : playheadFrame < videoClip.start
-                            ? videoClip.start
-                            : videoClip.start + videoClip.duration - 1;
                         const videoMuted =
                           !isActiveVideoClip ||
                           (videoClip.volume ?? 1) === 0 ||
@@ -7101,24 +7734,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               zIndex: getPreviewVideoLayerZIndex(videoClip),
                             }}
                             ref={(video) => {
-                              if (!video) return;
-
-                              video.playbackRate = videoClip.speed ?? 1;
-                              video.volume = Math.min(videoClip.volume ?? 1, 1);
-                              video.muted = videoMuted;
-                              const desiredTime = Math.max(
-                                0,
-                                getClipSourceTime(videoClip, previewFrame, fps),
-                              );
-                              if (
-                                Math.abs(video.currentTime - desiredTime) > 0.12
-                              ) {
-                                video.currentTime = desiredTime;
-                              }
-                              if (isPreviewPlaying && isActiveVideoClip) {
-                                void video.play().catch(() => undefined);
+                              if (video) {
+                                previewLayerVideoRefs.current.set(
+                                  videoClip.id,
+                                  video,
+                                );
                               } else {
-                                video.pause();
+                                previewLayerVideoRefs.current.delete(
+                                  videoClip.id,
+                                );
                               }
                             }}
                           />
@@ -7160,22 +7784,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           key={audioClip.id}
                           src={resolveMediaSource(audioClip.src ?? "")}
                           ref={(audio) => {
-                            if (!audio) return;
-                            audio.playbackRate = audioClip.speed ?? 1;
-                            audio.volume = Math.min(audioClip.volume ?? 1, 1);
-                            const desiredTime = Math.max(
-                              0,
-                              getClipSourceTime(audioClip, playheadFrame, fps),
-                            );
-                            if (
-                              Math.abs(audio.currentTime - desiredTime) > 0.12
-                            ) {
-                              audio.currentTime = desiredTime;
-                            }
-                            if (isPreviewPlaying) {
-                              void audio.play().catch(() => undefined);
+                            if (audio) {
+                              previewAudioRefs.current.set(audioClip.id, audio);
                             } else {
-                              audio.pause();
+                              previewAudioRefs.current.delete(audioClip.id);
                             }
                           }}
                         />
@@ -7273,6 +7885,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 src={resolveMediaSource(cutoutClip.src ?? "")}
                                 muted
                                 playsInline
+                                disablePictureInPicture
+                                controlsList="nodownload noplaybackrate nopictureinpicture"
                                 draggable={false}
                                 style={{
                                   ...maskStyle,
@@ -8489,7 +9103,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             {formatTimelineTimecode(projectDuration, fps)}
           </strong>
         </div>
-        <div className="timeline-scroll">
+        <div className="timeline-scroll" ref={timelineScrollRef}>
           <div
             className="timeline-content"
             ref={timelineContentRef}
@@ -8513,6 +9127,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 left: `calc(${timelineOrigin}px + ${playheadFrame * timelineScale}px)`,
               }}
             />
+            {dropGuideFrame !== null ? (
+              <div
+                className="timeline-drop-guide"
+                aria-hidden="true"
+                style={{
+                  left: `calc(${timelineOrigin}px + ${dropGuideFrame * timelineScale}px)`,
+                }}
+              />
+            ) : null}
             <div className="timeline-ruler" onPointerDown={startTimelineScrub}>
               {timelineTicks.map((tick) => (
                 <span
@@ -8552,13 +9175,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     : track.videoLayer === 0
                       ? 1
                       : track.videoLayer;
-              const rowHasTimelineWaveform = clips.some(
-                (clip) =>
-                  (track.videoLayer !== undefined
-                    ? getVideoLayer(clip) === track.videoLayer
-                    : clip.track === track.id) &&
-                  shouldShowTimelineWaveform(clip),
-              );
+              const rowHasTimelineWaveform =
+                clips.some(
+                  (clip) =>
+                    timelineRowContainsClip(track, clip) &&
+                    shouldShowTimelineWaveform(clip),
+                ) ||
+                (track.audioKind === "voiceover" && isRecording);
 
               return (
                 <Fragment key={track.key}>
@@ -8578,7 +9201,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       <div className="track-lane" />
                     </div>
                   ) : null}
-                  {track.id === "audio" ? (
+                  {track.id === "audio" && draggedMediaItem ? (
                     <div
                       className={`timeline-track new-video-layer-drop ${
                         videoDropTarget?.kind === "new-layer" &&
@@ -8616,7 +9239,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           selectWholeVideoLayer(track.videoLayer);
                           return;
                         }
-                        selectTrackClipAtFrame(track.id, playheadFrame);
+                        selectTrackClipAtFrame(
+                          track.id,
+                          playheadFrame,
+                          track.audioKind === "voiceover"
+                            ? isVoiceoverClip
+                            : undefined,
+                        );
                       }}
                     >
                       {track.videoLayer !== undefined && track.videoLayer !== 0
@@ -8628,7 +9257,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                         (videoDropTarget?.kind === "layer" &&
                           videoDropTarget.videoLayer === track.videoLayer) ||
                         (videoDropTarget?.kind === "append-main" &&
-                          track.videoLayer === 0)
+                          track.videoLayer === 0) ||
+                        (videoDropTarget?.kind === "track" &&
+                          videoDropTarget.track === track.id)
                           ? "drop-target"
                           : ""
                       } ${
@@ -8650,11 +9281,62 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             selectWholeVideoLayer(track.videoLayer);
                             return;
                           }
-                          selectTrackClipAtFrame(track.id, Math.max(0, frame));
+                          selectTrackClipAtFrame(
+                            track.id,
+                            Math.max(0, frame),
+                            track.audioKind === "voiceover"
+                              ? isVoiceoverClip
+                              : undefined,
+                          );
                         }
-                        startTimelineScrub(event);
+                      }}
+                      onDoubleClick={(event) => {
+                        if (event.target !== event.currentTarget) {
+                          return;
+                        }
+                        event.preventDefault();
+                        event.stopPropagation();
+                        updatePlayheadFromPointer(event.clientX);
                       }}
                     >
+                      {track.audioKind === "voiceover" &&
+                      isRecording &&
+                      voiceRecordingStartFrame !== null ? (
+                        <div
+                          className="timeline-clip audio-timeline-clip has-timeline-waveform voiceover-timeline-clip voiceover-recording-clip"
+                          role="status"
+                          aria-label="Voice recording in progress"
+                          style={{
+                            left: `${voiceRecordingStartFrame * timelineScale}px`,
+                            width: `${
+                              Math.max(
+                                1,
+                                playheadFrame - voiceRecordingStartFrame,
+                              ) * timelineScale
+                            }px`,
+                          }}
+                        >
+                          <div className="audio-waveform" aria-hidden="true">
+                            <svg
+                              className="audio-waveform-svg"
+                              viewBox="0 0 100 20"
+                              preserveAspectRatio="none"
+                            >
+                              <polyline
+                                className="audio-waveform-line"
+                                points={createWaveformLinePoints(
+                                  "voice-recording-live",
+                                  Math.max(
+                                    1,
+                                    playheadFrame - voiceRecordingStartFrame,
+                                  ),
+                                )}
+                              />
+                            </svg>
+                          </div>
+                          <span>Recording...</span>
+                        </div>
+                      ) : null}
                       {track.videoLayer === 0 && draggedMediaItem ? (
                         <div
                           className={`main-track-append-target ${
@@ -8715,11 +9397,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       {clips
                         .filter(
                           (clip) =>
-                            (track.videoLayer !== undefined
-                              ? getVideoLayer(clip) === track.videoLayer
-                              : clip.track === track.id) &&
+                            timelineRowContainsClip(track, clip) &&
                             (track.id !== "audio" ||
                               activeTool === "audio" ||
+                              track.audioKind === "voiceover" ||
                               contextualAudioClipIds.has(clip.id)),
                         )
                         .map((clip) => (
@@ -8735,27 +9416,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               selectedClipId === clip.id
                                 ? "selected-timeline-clip"
                                 : ""
-                            } ${replaceTargetClipId === clip.id ? "replace-target-clip" : ""} ${
+                            } ${
                               shouldShowTimelineWaveform(clip)
                                 ? "has-timeline-waveform"
                                 : ""
-                            } ${clip.track === "audio" ? "audio-timeline-clip" : ""}`}
+                            } ${clip.track === "audio" ? "audio-timeline-clip" : ""} ${isVoiceoverClip(clip) ? "voiceover-timeline-clip" : ""}`}
                             key={clip.id}
-                            data-replace-clip-id={
-                              clip.track === "main" ? clip.id : undefined
-                            }
                             onPointerDown={(event) => {
                               event.stopPropagation();
-                              const contentLeft =
-                                timelineContentRef.current?.getBoundingClientRect()
-                                  .left ?? 0;
-                              const pointerFrame = getTimelineFrameFromPointer(
-                                event.clientX,
-                                contentLeft,
-                                timelineOrigin,
-                                timelineScale,
-                              );
-                              selectTimelineClip(clip, pointerFrame);
+                              selectTimelineClip(clip);
                               if (
                                 clip.track === "main" ||
                                 clip.track === "upper"
@@ -8766,9 +9435,33 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 clip.cutout
                               ) {
                                 startCutoutTimelineDrag(event, clip);
-                              } else if (clip.track === "text" && clip.text) {
+                              } else if (
+                                (clip.track === "text" && clip.text) ||
+                                clip.track === "sticker" ||
+                                clip.track === "caption" ||
+                                (clip.track === "audio" && !clip.linkedClipId)
+                              ) {
                                 startTextTimelineDrag(event, clip);
                               }
+                            }}
+                            onDoubleClick={(event) => {
+                              event.stopPropagation();
+                              if (
+                                event.target instanceof HTMLElement &&
+                                event.target.closest("button")
+                              ) {
+                                return;
+                              }
+                              const contentLeft =
+                                timelineContentRef.current?.getBoundingClientRect()
+                                  .left ?? 0;
+                              const pointerFrame = getTimelineFrameFromPointer(
+                                event.clientX,
+                                contentLeft,
+                                timelineOrigin,
+                                timelineScale,
+                              );
+                              selectTimelineClip(clip, pointerFrame);
                             }}
                             style={{
                               left: `${
@@ -8776,16 +9469,25 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 pointerDrag.id === clip.id &&
                                 pointerDrag.pointerStartX !== undefined &&
                                 pointerDrag.originalStart !== undefined
-                                  ? getDraggedClipStart({
-                                      originalStart: pointerDrag.originalStart,
-                                      pointerStartX: pointerDrag.pointerStartX,
-                                      pointerX: pointerDrag.x,
-                                      pixelsPerFrame: timelineScale,
-                                    }) * timelineScale
+                                  ? getVideoClipDragPreviewStart(
+                                      clips,
+                                      clip.id,
+                                      getDraggedClipStart({
+                                        originalStart:
+                                          pointerDrag.originalStart,
+                                        pointerStartX:
+                                          pointerDrag.pointerStartX,
+                                        pointerX: pointerDrag.x,
+                                        pixelsPerFrame: timelineScale,
+                                      }),
+                                      projectDuration,
+                                    ) * timelineScale
                                   : clip.start * timelineScale
                               }px`,
                               width: `${clip.duration * timelineScale}px`,
-                              background: clip.color,
+                              background: isVoiceoverClip(clip)
+                                ? "#05070b"
+                                : clip.color,
                             }}
                           >
                             {selectedClipId === clip.id ? (
@@ -8946,6 +9648,57 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           </div>
         </div>
       </section>
+
+      <dialog
+        ref={importChoiceDialogRef}
+        className="import-choice-dialog"
+        aria-labelledby="import-choice-title"
+        onCancel={(event) => {
+          event.preventDefault();
+          closeImportChoiceDialog();
+        }}
+        onClose={() => {
+          pendingImportFilesRef.current = [];
+          setPendingImportVideoCount(0);
+        }}
+      >
+        <div className="import-choice-heading">
+          <span className="import-choice-icon" aria-hidden="true">
+            ✂
+          </span>
+          <div>
+            <h2 id="import-choice-title">Separate into scenes?</h2>
+            <p>
+              {pendingImportVideoCount === 1
+                ? "Choose how this video should appear in your media library."
+                : `Choose how these ${pendingImportVideoCount} videos should appear in your media library.`}
+            </p>
+          </div>
+        </div>
+        <div className="import-choice-actions">
+          <button
+            className="import-choice-primary"
+            type="button"
+            onClick={() => confirmMediaImport("scenes")}
+          >
+            Separate into scenes
+          </button>
+          <button
+            className="import-choice-secondary"
+            type="button"
+            onClick={() => confirmMediaImport("whole")}
+          >
+            Keep full video
+          </button>
+          <button
+            className="import-choice-cancel"
+            type="button"
+            onClick={closeImportChoiceDialog}
+          >
+            Cancel
+          </button>
+        </div>
+      </dialog>
 
       {pointerDrag?.type === "media" ? (
         <div

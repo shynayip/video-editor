@@ -32,12 +32,12 @@
     "vite": "^8.1.4"
   },
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 5173",
+    "dev": "concurrently -k -n WEB,API \"npm run web:frontend\" \"npm run web:api\"",
     "studio": "remotion studio",
     "caption-server": "node server/transcriptionServer.mjs",
     "dev:caption": "concurrently -k -n WEB,API \"npm run web:frontend\" \"npm run web:api\"",
     "test:transcription": "node --test tests/transcriptionLogic.test.mjs",
-    "web:frontend": "vite",
+    "web:frontend": "vite --host 127.0.0.1 --port 5173",
     "web:api": "node server/transcriptionServer.mjs",
     "web": "concurrently -k -n WEB,API \"npm run web:frontend\" \"npm run web:api\"",
     "build": "remotion bundle",

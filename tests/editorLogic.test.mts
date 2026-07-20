@@ -31,6 +31,7 @@ import {
   getContextualAudioClips,
   getExpandedTimelineBoundary,
   getStableTimelineFrameDelta,
+  getDragEdgeAutoScrollDelta,
   getTimelineFrameFromPointer,
   getManualRotationAngle,
   getVisibleRotateHandleTop,
@@ -51,6 +52,8 @@ import {
   moveVideoClipToLayer,
   placeVideoPairInInsertedLayer,
   placeVideoPairOnLayer,
+  preventSingleLaneClipOverlaps,
+  insertVideoPairOnLayerAtFrame,
   hasClipsOnTrack,
   findAvailableOverlayLane,
   getTimelineTransitionBoundaries,
@@ -61,6 +64,7 @@ import {
   moveCutoutClip,
   moveOverlayClip,
   moveTextClip,
+  moveIndependentTimelineClip,
   moveTextOverlay,
   parseSavedEditorProject,
   appendStickerClip,
@@ -100,6 +104,7 @@ import {
   setTextRotationById,
   setCaptionStyleById,
   splitSceneMediaItemAtFrame,
+  subtractSourceRanges,
   appendCutoutMaskStroke,
   applyAutomaticCutoutById,
   createCutoutMaskDataUrl,
@@ -1085,6 +1090,14 @@ test("calculates drag deltas from a captured timeline content origin", () => {
     getStableTimelineFrameDelta(490, startFrame, -300, 148, 1.15),
     8,
   );
+});
+
+test("auto-scrolls toward timeline edges only while the pointer is nearby", () => {
+  assert.ok(getDragEdgeAutoScrollDelta(102, 100, 900) < 0);
+  assert.equal(getDragEdgeAutoScrollDelta(500, 100, 900), 0);
+  assert.ok(getDragEdgeAutoScrollDelta(898, 100, 900) > 0);
+  assert.equal(getDragEdgeAutoScrollDelta(0, 100, 900), 0);
+  assert.equal(getDragEdgeAutoScrollDelta(1000, 100, 900), 0);
 });
 
 test("calculates manual canvas rotation from the clip center", () => {
@@ -2589,6 +2602,7 @@ test("creates imported background music as independent audio", () => {
       color: "#2563eb",
       src: "song.mp3",
       volume: 0.7,
+      audioKind: "music",
     },
   );
 });
@@ -3317,6 +3331,28 @@ test("calculates preview source time from trim offset and playhead", () => {
   assert.equal(getClipSourceTime(clip, 60, 30), 2.5);
 });
 
+test("subtracts detected silence from retained main voice ranges", () => {
+  assert.deepEqual(
+    subtractSourceRanges(
+      [
+        { startSeconds: 0, endSeconds: 4 },
+        { startSeconds: 5, endSeconds: 10 },
+      ],
+      [
+        { startSeconds: 1, endSeconds: 2 },
+        { startSeconds: 3.5, endSeconds: 6 },
+        { startSeconds: 8, endSeconds: 12 },
+      ],
+      10,
+    ),
+    [
+      { startSeconds: 0, endSeconds: 1 },
+      { startSeconds: 2, endSeconds: 3.5 },
+      { startSeconds: 6, endSeconds: 8 },
+    ],
+  );
+});
+
 test("keeps dominant voice ranges in a main video and reciprocal audio only", () => {
   const video: TimelineClip = {
     id: "video",
@@ -3988,6 +4024,7 @@ test("creates recorded narration at the requested playhead", () => {
     color: "#2563eb",
     src: "blob:voice",
     volume: 1,
+    audioKind: "voiceover",
   });
 });
 
@@ -4025,6 +4062,7 @@ test("creates a main video with a separate matching audio clip", () => {
     src: "initialClips.mp4",
     volume: 1,
     linkedClipId: "main-1",
+    audioKind: "linked",
   });
 });
 
@@ -4061,6 +4099,7 @@ test("creates a linked main video and audio pair", () => {
     sourceStart: 0,
     color: "#2563eb",
     src: "main-camera.mp4",
+    audioKind: "linked",
     speed: 1,
     volume: 1,
     linkedClipId: "main-2",
@@ -4780,7 +4819,7 @@ test("snaps a moved clip after an occupied clip without deleting either clip", (
   assert.equal(moved.length, 3);
 });
 
-test("snaps a moved clip before an occupied clip when dropped near its start", () => {
+test("keeps a later clip behind the earlier clip when dragged across it", () => {
   const [oldClip] = createVideoMediaPair({
     videoId: "old",
     audioId: "old-audio",
@@ -4803,7 +4842,7 @@ test("snaps a moved clip before an occupied clip when dropped near its start", (
   const moved = moveVideoClipToLayer([oldClip, newClip], newClip.id, 0, 100);
 
   assert.equal(moved.find((clip) => clip.id === oldClip.id)?.start, 120);
-  assert.equal(moved.find((clip) => clip.id === newClip.id)?.start, 60);
+  assert.equal(moved.find((clip) => clip.id === newClip.id)?.start, 240);
   assert.equal(moved.length, 2);
 });
 
@@ -4903,6 +4942,47 @@ test("shows optional timeline tracks only while they contain clips", () => {
     hasClipsOnTrack(deleteClipById(clips, "sticker-1"), "sticker"),
     false,
   );
+});
+
+test("does not show optional tracks for empty leftover records", () => {
+  const emptyOptionalClips: TimelineClip[] = [
+    {
+      id: "empty-caption",
+      label: "",
+      track: "caption",
+      start: 0,
+      duration: 30,
+      color: "#fff",
+    },
+    {
+      id: "empty-text",
+      label: "",
+      track: "text",
+      start: 0,
+      duration: 30,
+      color: "#fff",
+    },
+    {
+      id: "empty-sticker",
+      label: "",
+      track: "sticker",
+      start: 0,
+      duration: 30,
+      color: "#fff",
+    },
+    {
+      id: "empty-cutout",
+      label: "",
+      track: "cutout",
+      start: 0,
+      duration: 30,
+      color: "#fff",
+    },
+  ];
+
+  for (const track of ["caption", "text", "sticker", "cutout"] as const) {
+    assert.equal(hasClipsOnTrack(emptyOptionalClips, track), false);
+  }
 });
 
 test("creates a three-second text clip at the playhead", () => {
@@ -6514,6 +6594,75 @@ test("clamps a manual caption to the timeline end", () => {
   assert.equal(caption?.duration, 10);
 });
 
+test("prevents captions, text, stickers, and cutouts from overlapping their own lanes", () => {
+  const tracks = ["caption", "text", "sticker", "cutout"] as const;
+  const clips = tracks.flatMap((track, trackIndex) => [
+    {
+      id: `${track}-first`,
+      label: "First",
+      track,
+      start: trackIndex * 100,
+      duration: 60,
+      color: "#fff",
+    },
+    {
+      id: `${track}-second`,
+      label: "Second",
+      track,
+      start: trackIndex * 100 + 36,
+      duration: 40,
+      color: "#fff",
+    },
+  ]);
+
+  const result = preventSingleLaneClipOverlaps(clips);
+
+  for (const track of tracks) {
+    const lane = result.filter((clip) => clip.track === track);
+    assert.equal(lane[0].start + lane[0].duration, lane[1].start);
+  }
+});
+
+test("separates clips added at the same frame and keeps cutout audio synchronized", () => {
+  const result = preventSingleLaneClipOverlaps([
+    {
+      id: "cutout-first",
+      label: "First",
+      track: "cutout",
+      start: 30,
+      duration: 90,
+      color: "#fff",
+    },
+    {
+      id: "cutout-second",
+      label: "Second",
+      track: "cutout",
+      start: 30,
+      duration: 45,
+      color: "#fff",
+      linkedClipId: "cutout-audio",
+    },
+    {
+      id: "cutout-audio",
+      label: "Second audio",
+      track: "audio",
+      start: 30,
+      duration: 45,
+      color: "#fff",
+      linkedClipId: "cutout-second",
+    },
+  ]);
+
+  assert.deepEqual(
+    result.map(({ id, start, duration }) => ({ id, start, duration })),
+    [
+      { id: "cutout-first", start: 30, duration: 1 },
+      { id: "cutout-second", start: 31, duration: 45 },
+      { id: "cutout-audio", start: 31, duration: 45 },
+    ],
+  );
+});
+
 test("creates generated captions from transcript segments on the selected source clip", () => {
   const sourceClip: TimelineClip = {
     id: "main-1",
@@ -6713,6 +6862,74 @@ test("does not move a transcript caption without text overlay metadata", () => {
   const clips = [transcriptCaption];
 
   assert.strictEqual(moveTextClip(clips, "caption-1", 120, 480), clips);
+});
+
+test("moves captions stickers and independent audio to a requested frame", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "caption-1",
+      label: "Caption",
+      track: "caption",
+      start: 20,
+      duration: 60,
+      color: "#ef4444",
+      caption: { ...defaultCaptionStyle, content: "Caption" },
+    },
+    createStickerClip({
+      id: "sticker-1",
+      label: "Sticker",
+      src: "sticker.png",
+      playheadFrame: 40,
+    }),
+    createBackgroundMusicClip({
+      id: "music-1",
+      label: "Music",
+      src: "music.mp3",
+      playheadFrame: 60,
+      durationInFrames: 120,
+    }),
+  ];
+
+  const captionMoved = moveIndependentTimelineClip(
+    clips,
+    "caption-1",
+    120,
+    600,
+  );
+  const stickerMoved = moveIndependentTimelineClip(
+    captionMoved,
+    "sticker-1",
+    180,
+    600,
+  );
+  const musicMoved = moveIndependentTimelineClip(
+    stickerMoved,
+    "music-1",
+    240,
+    600,
+  );
+
+  assert.equal(musicMoved.find((clip) => clip.id === "caption-1")?.start, 120);
+  assert.equal(musicMoved.find((clip) => clip.id === "sticker-1")?.start, 180);
+  assert.equal(musicMoved.find((clip) => clip.id === "music-1")?.start, 240);
+});
+
+test("keeps linked audio locked to its video during independent moves", () => {
+  const [, linkedAudio] = createVideoMediaPair({
+    videoId: "video-1",
+    audioId: "audio-1",
+    track: "main",
+    label: "Video",
+    src: "video.mp4",
+    start: 30,
+    duration: 180,
+  });
+  const clips = [linkedAudio];
+
+  assert.strictEqual(
+    moveIndependentTimelineClip(clips, linkedAudio.id, 200, 600),
+    clips,
+  );
 });
 
 test("moves text in the preview while preserving timing and appearance", () => {
@@ -7220,4 +7437,77 @@ test("does not replace text with empty wording", () => {
   });
 
   assert.equal(setTextContentById([clip], clip.id, "   ")[0], clip);
+});
+
+test("inserts media at the marker and ripples later main clips", () => {
+  const existing: TimelineClip[] = [
+    {
+      id: "main-1",
+      label: "First",
+      track: "main",
+      start: 0,
+      duration: 300,
+      color: "#0891b2",
+      src: "/media/first.mp4",
+      linkedClipId: "audio-1",
+    },
+    {
+      id: "audio-1",
+      label: "First audio",
+      track: "audio",
+      start: 0,
+      duration: 300,
+      color: "#2563eb",
+      src: "/media/first.mp4",
+      linkedClipId: "main-1",
+    },
+    {
+      id: "main-2",
+      label: "Second",
+      track: "main",
+      start: 300,
+      duration: 120,
+      color: "#0891b2",
+      src: "/media/second.mp4",
+    },
+  ];
+  const inserted: TimelineClip[] = [
+    {
+      id: "new-video",
+      label: "New",
+      track: "main",
+      start: 0,
+      duration: 90,
+      color: "#0891b2",
+      src: "/media/new.mp4",
+      linkedClipId: "new-audio",
+    },
+    {
+      id: "new-audio",
+      label: "New audio",
+      track: "audio",
+      start: 0,
+      duration: 90,
+      color: "#2563eb",
+      src: "/media/new.mp4",
+      linkedClipId: "new-video",
+    },
+  ];
+
+  const result = insertVideoPairOnLayerAtFrame(existing, inserted, 0, 150);
+  const mainClips = result
+    .filter((clip) => clip.track === "main")
+    .sort((left, right) => left.start - right.start);
+
+  assert.deepEqual(
+    mainClips.map(({ id, start, duration }) => ({ id, start, duration })),
+    [
+      { id: "main-1-a", start: 0, duration: 150 },
+      { id: "new-video", start: 150, duration: 90 },
+      { id: "main-1-b", start: 240, duration: 150 },
+      { id: "main-2", start: 390, duration: 120 },
+    ],
+  );
+  assert.equal(result.find((clip) => clip.id === "new-audio")?.start, 150);
+  assert.equal(result.find((clip) => clip.id === "audio-1-b")?.start, 240);
 });

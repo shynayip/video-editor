@@ -428,6 +428,7 @@ export type TimelineClip = {
   color: string;
   src?: string;
   mediaType?: "video" | "image";
+  audioKind?: "linked" | "voiceover" | "music";
   hidden?: boolean;
   speed?: number;
   volume?: number;
@@ -445,6 +446,78 @@ export type TimelineClip = {
   visual?: ClipVisualStyle;
   animation?: ClipAnimationStyle;
   adjustment?: ClipAdjustment;
+};
+
+const singleItemTimelineTracks = new Set<TrackName>([
+  "caption",
+  "text",
+  "sticker",
+  "cutout",
+]);
+
+export const preventSingleLaneClipOverlaps = (
+  clips: TimelineClip[],
+): TimelineClip[] => {
+  const updates = new Map<string, Pick<TimelineClip, "start" | "duration">>();
+
+  for (const track of singleItemTimelineTracks) {
+    const ordered = clips
+      .map((clip, index) => ({ clip, index }))
+      .filter(({ clip }) => clip.track === track)
+      .sort(
+        (left, right) =>
+          left.clip.start - right.clip.start || left.index - right.index,
+      )
+      .map(({ clip }) => ({
+        clip,
+        start: clip.start,
+        duration: clip.duration,
+      }));
+
+    for (let index = 1; index < ordered.length; index += 1) {
+      const previous = ordered[index - 1];
+      const current = ordered[index];
+
+      if (current.start <= previous.start) {
+        current.start = previous.start + 1;
+      }
+
+      const availableDuration = current.start - previous.start;
+      if (previous.duration > availableDuration) {
+        previous.duration = Math.max(1, availableDuration);
+      }
+    }
+
+    for (const item of ordered) {
+      if (
+        item.start !== item.clip.start ||
+        item.duration !== item.clip.duration
+      ) {
+        updates.set(item.clip.id, {
+          start: item.start,
+          duration: item.duration,
+        });
+      }
+    }
+  }
+
+  if (updates.size === 0) return clips;
+
+  const linkedAudioUpdates = new Map<
+    string,
+    Pick<TimelineClip, "start" | "duration">
+  >();
+  for (const clip of clips) {
+    const update = updates.get(clip.id);
+    if (update && clip.track === "cutout" && clip.linkedClipId) {
+      linkedAudioUpdates.set(clip.linkedClipId, update);
+    }
+  }
+
+  return clips.map((clip) => {
+    const update = updates.get(clip.id) ?? linkedAudioUpdates.get(clip.id);
+    return update ? { ...clip, ...update } : clip;
+  });
 };
 
 export const getTimelineDuration = (clips: TimelineClip[]): number =>
@@ -492,6 +565,49 @@ export const getStableTimelineFrameDelta = (
     timelineOrigin,
     scale,
   ) - (Number.isFinite(startFrame) ? Math.round(startFrame) : 0);
+
+export const getDragEdgeAutoScrollDelta = (
+  pointerPosition: number,
+  viewportStart: number,
+  viewportEnd: number,
+  edgeSize = 64,
+  maximumSpeed = 22,
+): number => {
+  if (
+    !Number.isFinite(pointerPosition) ||
+    !Number.isFinite(viewportStart) ||
+    !Number.isFinite(viewportEnd) ||
+    viewportEnd <= viewportStart ||
+    edgeSize <= 0 ||
+    maximumSpeed <= 0
+  ) {
+    return 0;
+  }
+
+  if (
+    pointerPosition >= viewportStart - edgeSize &&
+    pointerPosition < viewportStart + edgeSize
+  ) {
+    const intensity = Math.min(
+      1,
+      (viewportStart + edgeSize - pointerPosition) / (edgeSize * 2),
+    );
+    return -Math.max(1, Math.round(maximumSpeed * intensity));
+  }
+
+  if (
+    pointerPosition > viewportEnd - edgeSize &&
+    pointerPosition <= viewportEnd + edgeSize
+  ) {
+    const intensity = Math.min(
+      1,
+      (pointerPosition - (viewportEnd - edgeSize)) / (edgeSize * 2),
+    );
+    return Math.max(1, Math.round(maximumSpeed * intensity));
+  }
+
+  return 0;
+};
 
 export const getManualRotationAngle = (
   centerX: number,
@@ -729,7 +845,7 @@ export const createTimelineHistory = (
   present: TimelineClip[],
 ): TimelineHistoryState => ({
   past: [],
-  present,
+  present: preventSingleLaneClipOverlaps(present),
   future: [],
 });
 
@@ -844,6 +960,7 @@ export const createRecordedAudioClip = (
     duration,
     color: "#2563eb",
     src: options.src,
+    audioKind: "voiceover",
     volume: 1,
   };
 };
@@ -868,6 +985,7 @@ export const createBackgroundMusicClip = ({
   duration: Math.max(1, durationInFrames),
   color: "#2563eb",
   src,
+  audioKind: "music",
   volume: 0.7,
 });
 
@@ -918,6 +1036,7 @@ export const createVideoMediaPair = (
       : {}),
     color: "#2563eb",
     src: options.src,
+    audioKind: "linked",
     speed: 1,
     volume: 1,
     linkedClipId: options.videoId,
@@ -2018,6 +2137,33 @@ export const moveTextClip = (
   );
 };
 
+export const moveIndependentTimelineClip = (
+  clips: TimelineClip[],
+  clipId: string,
+  targetStart: number,
+  timelineDuration: number,
+): TimelineClip[] => {
+  const clip = clips.find((candidate) => candidate.id === clipId);
+  if (
+    !clip ||
+    !["sticker", "caption", "audio"].includes(clip.track) ||
+    (clip.track === "audio" && Boolean(clip.linkedClipId))
+  ) {
+    return clips;
+  }
+
+  const start = clampTimelineStart(
+    targetStart,
+    clip.duration,
+    timelineDuration,
+  );
+  if (start === clip.start) return clips;
+
+  return clips.map((candidate) =>
+    candidate.id === clipId ? { ...candidate, start } : candidate,
+  );
+};
+
 type TextPosition = { x: number; y: number };
 type TextPositionBounds = {
   halfWidthPercent: number;
@@ -2450,7 +2596,31 @@ export const getActiveClipAtFrame = (
 export const hasClipsOnTrack = (
   clips: TimelineClip[],
   track: TrackName,
-): boolean => clips.some((clip) => clip.track === track);
+): boolean =>
+  clips.some((clip) => {
+    if (clip.track !== track || clip.duration <= 0) return false;
+
+    if (track === "caption") {
+      return (
+        typeof clip.caption?.content === "string" &&
+        clip.caption.content.trim().length > 0
+      );
+    }
+    if (track === "text") {
+      return (
+        typeof clip.text?.content === "string" &&
+        clip.text.content.trim().length > 0
+      );
+    }
+    if (track === "sticker") {
+      return Boolean(clip.sticker && clip.src);
+    }
+    if (track === "cutout") {
+      return Boolean(clip.cutout && clip.src);
+    }
+
+    return true;
+  });
 
 export const getActiveClipsAtFrame = (
   clips: TimelineClip[],
@@ -3131,6 +3301,70 @@ const getSnappedVideoStart = (
   return start;
 };
 
+const getOrderPreservingVideoStart = (
+  clips: TimelineClip[],
+  target: TimelineClip,
+  videoLayer: number,
+  proposedStart: number,
+  timelineBoundary?: number,
+): number => {
+  const ordered = clips
+    .filter((clip) => getVideoLayer(clip) === videoLayer)
+    .sort(
+      (first, second) =>
+        first.start - second.start || first.id.localeCompare(second.id),
+    );
+  const targetIndex = ordered.findIndex((clip) => clip.id === target.id);
+  if (targetIndex < 0) {
+    return getSnappedVideoStart(
+      clips,
+      target.id,
+      videoLayer,
+      proposedStart,
+      target.duration,
+    );
+  }
+
+  const previous = ordered[targetIndex - 1];
+  const next = ordered[targetIndex + 1];
+  const minimumStart = previous ? previous.start + previous.duration : 0;
+  const boundaryMaximum =
+    timelineBoundary === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, timelineBoundary - target.duration);
+  const maximumStart = next
+    ? Math.min(boundaryMaximum, next.start - target.duration)
+    : boundaryMaximum;
+  const roundedStart = Math.max(0, Math.round(proposedStart));
+
+  if (maximumStart < minimumStart) {
+    return minimumStart;
+  }
+  return Math.max(minimumStart, Math.min(maximumStart, roundedStart));
+};
+
+export const getVideoClipDragPreviewStart = (
+  clips: TimelineClip[],
+  clipId: string,
+  proposedStart: number,
+  timelineBoundary?: number,
+): number => {
+  const target = clips.find(
+    (clip) => clip.id === clipId && getVideoLayer(clip) !== null,
+  );
+  if (!target) return Math.max(0, Math.round(proposedStart));
+
+  const videoLayer = getVideoLayer(target);
+  if (videoLayer === null) return Math.max(0, Math.round(proposedStart));
+  return getOrderPreservingVideoStart(
+    clips,
+    target,
+    videoLayer,
+    proposedStart,
+    timelineBoundary,
+  );
+};
+
 export const placeVideoPairOnLayer = (
   clips: TimelineClip[],
   pair: TimelineClip[],
@@ -3224,14 +3458,23 @@ export const moveVideoClipToLayer = (
     timelineBoundary === undefined
       ? Math.max(0, Math.round(targetStart))
       : clampTimelineStart(targetStart, target.duration, timelineBoundary);
-  const start = getSnappedVideoStart(
-    clips,
-    target.id,
-    videoLayer,
-    proposedStart,
-    target.duration,
-  );
   const currentLayer = getVideoLayer(target);
+  const start =
+    currentLayer === videoLayer
+      ? getOrderPreservingVideoStart(
+          clips,
+          target,
+          videoLayer,
+          proposedStart,
+          timelineBoundary,
+        )
+      : getSnappedVideoStart(
+          clips,
+          target.id,
+          videoLayer,
+          proposedStart,
+          target.duration,
+        );
   const linkedAudio = getReciprocalLinkedAudio(clips, target);
 
   if (start === target.start && videoLayer === currentLayer) {
@@ -3811,6 +4054,57 @@ export const splitClipByIdAtFrame = (
   return normalizeTimelineTransitions(splitClips);
 };
 
+export const insertVideoPairOnLayerAtFrame = (
+  clips: TimelineClip[],
+  pair: TimelineClip[],
+  videoLayer: number,
+  frame: number,
+): TimelineClip[] => {
+  const video = pair.find(
+    (clip) => clip.track === "main" || clip.track === "upper",
+  );
+  if (!video) return clips;
+
+  const insertFrame = Math.max(0, Math.round(frame));
+  const clipUnderMarker = clips.find(
+    (clip) =>
+      getVideoLayer(clip) === videoLayer &&
+      insertFrame > clip.start &&
+      insertFrame < clip.start + clip.duration,
+  );
+  const preparedClips = clipUnderMarker
+    ? splitClipByIdAtFrame(clips, clipUnderMarker.id, insertFrame)
+    : clips;
+  const shiftedIds = new Set<string>();
+
+  preparedClips.forEach((clip) => {
+    if (getVideoLayer(clip) !== videoLayer || clip.start < insertFrame) return;
+    shiftedIds.add(clip.id);
+    const linkedAudio = getReciprocalLinkedAudio(preparedClips, clip);
+    if (linkedAudio) shiftedIds.add(linkedAudio.id);
+  });
+
+  const track: "main" | "upper" = videoLayer === 0 ? "main" : "upper";
+  const shiftedClips = preparedClips.map((clip) =>
+    shiftedIds.has(clip.id)
+      ? { ...clip, start: clip.start + video.duration }
+      : clip,
+  );
+  const insertedPair = pair.map((clip) =>
+    clip.id === video.id
+      ? {
+          ...clip,
+          track,
+          start: insertFrame,
+          videoLayer: videoLayer === 0 ? undefined : videoLayer,
+          overlayLane: undefined,
+        }
+      : { ...clip, start: insertFrame },
+  );
+
+  return normalizeTimelineTransitions([...shiftedClips, ...insertedPair]);
+};
+
 type SilenceRange = {
   startSeconds: number;
   endSeconds: number;
@@ -3868,6 +4162,62 @@ const normalizeSourceRanges = (
     previous.endSeconds = Math.max(previous.endSeconds, range.endSeconds);
     return merged;
   }, []);
+};
+
+export const subtractSourceRanges = (
+  retainedRanges: SilenceRange[],
+  removedRanges: SilenceRange[],
+  sourceDurationSeconds: number,
+): SilenceRange[] => {
+  if (
+    !hasValidSourceRanges(retainedRanges) ||
+    !Array.isArray(removedRanges) ||
+    !Number.isFinite(sourceDurationSeconds) ||
+    sourceDurationSeconds <= 0
+  ) {
+    return [];
+  }
+
+  const retained = normalizeSourceRanges(retainedRanges, sourceDurationSeconds);
+  const removed = normalizeSourceRanges(removedRanges, sourceDurationSeconds);
+
+  return retained.flatMap((range) => {
+    let fragments = [{ ...range }];
+
+    for (const removedRange of removed) {
+      fragments = fragments.flatMap((fragment) => {
+        if (
+          removedRange.endSeconds <= fragment.startSeconds ||
+          removedRange.startSeconds >= fragment.endSeconds
+        ) {
+          return [fragment];
+        }
+
+        const nextFragments: SilenceRange[] = [];
+        if (removedRange.startSeconds > fragment.startSeconds) {
+          nextFragments.push({
+            startSeconds: fragment.startSeconds,
+            endSeconds: Math.min(
+              fragment.endSeconds,
+              removedRange.startSeconds,
+            ),
+          });
+        }
+        if (removedRange.endSeconds < fragment.endSeconds) {
+          nextFragments.push({
+            startSeconds: Math.max(
+              fragment.startSeconds,
+              removedRange.endSeconds,
+            ),
+            endSeconds: fragment.endSeconds,
+          });
+        }
+        return nextFragments;
+      });
+    }
+
+    return fragments;
+  });
 };
 
 type TimelineSourceSegment = {

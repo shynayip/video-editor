@@ -47,7 +47,7 @@ const createEngineHarness = ({pipelineFactory}) => {
   return {engine, loadedInputs};
 };
 
-test("routes a confident first video frame through the portrait model", async () => {
+test("routes the first video frame through the general foreground model", async () => {
   const calls = [];
   const {engine} = createEngineHarness({
     pipelineFactory: async (_task, modelId) => {
@@ -58,19 +58,17 @@ test("routes a confident first video frame through the portrait model", async ()
 
   const result = await engine.process("person.png", {mode: "video-first"});
 
-  assert.equal(result.route, "portrait");
-  assert.equal(result.subject.route, "portrait");
-  assert.deepEqual(calls, ["Xenova/modnet"]);
+  assert.equal(result.route, "general");
+  assert.equal(result.subject.route, "general");
+  assert.deepEqual(calls, ["onnx-community/BiRefNet_lite-ONNX"]);
 });
 
-test("falls back to the general model when the first portrait video matte is uncertain", async () => {
+test("does not use portrait-only segmentation for product videos", async () => {
   const calls = [];
   const {engine} = createEngineHarness({
     pipelineFactory: async (_task, modelId) => {
       calls.push(modelId);
-      return async () => createImage(
-        modelId === "Xenova/modnet" ? emptyMatte() : opaqueCentralSubject(),
-      );
+      return async () => createImage(opaqueCentralSubject());
     },
   });
 
@@ -78,10 +76,7 @@ test("falls back to the general model when the first portrait video matte is unc
 
   assert.equal(result.route, "general");
   assert.equal(result.subject.route, "general");
-  assert.deepEqual(calls, [
-    "Xenova/modnet",
-    "onnx-community/BiRefNet_lite-ONNX",
-  ]);
+  assert.deepEqual(calls, ["onnx-community/BiRefNet_lite-ONNX"]);
 });
 
 test("always routes still images through the general model", async () => {
@@ -121,38 +116,24 @@ test("shares one initialization promise for each route", async () => {
   await engine.process("person.png", {mode: "video-first"});
   await engine.process("person-two.png", {mode: "video-first"});
 
-  assert.deepEqual(calls, [
-    "onnx-community/BiRefNet_lite-ONNX",
-    "Xenova/modnet",
-  ]);
+  assert.deepEqual(calls, ["onnx-community/BiRefNet_lite-ONNX"]);
 });
 
-test("evicts only a rejected route cache and retains the loaded general pipeline", async () => {
+test("retains the loaded general pipeline across images and videos", async () => {
   const calls = [];
-  let portraitAttempts = 0;
   const {engine} = createEngineHarness({
     pipelineFactory: async (_task, modelId) => {
       calls.push(modelId);
-      if (modelId === "Xenova/modnet" && portraitAttempts++ === 0) {
-        throw new Error("portrait initialization failed");
-      }
       return async () => createImage(opaqueCentralSubject());
     },
   });
 
   await engine.process("photo-one.png", {mode: "image"});
-  await assert.rejects(
-    engine.process("person-one.png", {mode: "video-first"}),
-    /portrait initialization failed/,
-  );
+  await engine.process("person-one.png", {mode: "video-first"});
   await engine.process("person-two.png", {mode: "video-first"});
   await engine.process("photo-two.png", {mode: "image"});
 
-  assert.deepEqual(calls, [
-    "onnx-community/BiRefNet_lite-ONNX",
-    "Xenova/modnet",
-    "Xenova/modnet",
-  ]);
+  assert.deepEqual(calls, ["onnx-community/BiRefNet_lite-ONNX"]);
 });
 
 test("retries unsupported general fp16 initialization once without dtype", async () => {
@@ -214,15 +195,11 @@ test("does not retry a cancellation reported by general initialization", async (
   assert.deepEqual(calls, [{dtype: "fp16"}]);
 });
 
-test("reuses the prior portrait route for video frames and falls back when it becomes uncertain", async () => {
+test("reuses the general route for subsequent video frames", async () => {
   const calls = [];
-  const portraitMattes = [opaqueCentralSubject(), emptyMatte()];
   const {engine} = createEngineHarness({
     pipelineFactory: async (_task, modelId) => {
       calls.push(modelId);
-      if (modelId === "Xenova/modnet") {
-        return async () => createImage(portraitMattes.shift());
-      }
       return async () => createImage(opaqueCentralSubject());
     },
   });
@@ -233,11 +210,8 @@ test("reuses the prior portrait route for video frames and falls back when it be
     previousSubject: first.subject,
   });
 
-  assert.equal(first.route, "portrait");
+  assert.equal(first.route, "general");
   assert.equal(next.route, "general");
   assert.equal(next.subject.route, "general");
-  assert.deepEqual(calls, [
-    "Xenova/modnet",
-    "onnx-community/BiRefNet_lite-ONNX",
-  ]);
+  assert.deepEqual(calls, ["onnx-community/BiRefNet_lite-ONNX"]);
 });

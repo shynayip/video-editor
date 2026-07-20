@@ -180,9 +180,7 @@ export const createSubjectCutoutEngine = ({
         return result;
       }
 
-      const initialRoute = mode === "video-first"
-        ? "portrait"
-        : previousSubject?.route ?? "general";
+      const initialRoute = previousSubject?.route ?? "general";
       const result = await processRoute({
         inputPath,
         route: initialRoute,

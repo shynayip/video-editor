@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {readFileSync} from "node:fs";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 import {
@@ -13,7 +13,7 @@ import {
   startVideoLayerControlHistoryGesture,
   undoTimelineHistory,
 } from "../src/editorLogic.ts";
-import type {SavedMediaItem, TimelineClip} from "../src/editorLogic.ts";
+import type { SavedMediaItem, TimelineClip } from "../src/editorLogic.ts";
 
 type SilenceRemovalCommitSnapshot = {
   sourceClipId: string;
@@ -27,7 +27,7 @@ type SilenceRemovalCommitSnapshot = {
 type SilenceRemovalActionDecision = {
   outcome: "stale" | "no-removable-silence" | "committed";
   clips: TimelineClip[];
-  selection: {clipId: string; track: "main" | "upper"} | null;
+  selection: { clipId: string; track: "main" | "upper" } | null;
   status: {
     kind: "idle" | "success";
     message: string;
@@ -40,7 +40,7 @@ type DecideSilenceRemovalAction = (options: {
   selectionVersion: number;
   requestIsActive: boolean;
   snapshot: SilenceRemovalCommitSnapshot;
-  ranges: Array<{startSeconds: number; endSeconds: number}>;
+  ranges: Array<{ startSeconds: number; endSeconds: number }>;
   fps: number;
 }) => SilenceRemovalActionDecision;
 
@@ -100,7 +100,10 @@ const loadIsDetectedSceneMediaItem = (): IsDetectedSceneMediaItem => {
   const helperEnd = source.indexOf("type AnalyzingMediaItem", helperStart);
 
   assert.ok(helperStart >= 0, "expected executable detected-scene classifier");
-  assert.ok(helperEnd > helperStart, "expected detected-scene classifier boundary");
+  assert.ok(
+    helperEnd > helperStart,
+    "expected detected-scene classifier boundary",
+  );
 
   const extractedSource = source
     .slice(helperStart, helperEnd)
@@ -118,44 +121,63 @@ const loadIsDetectedSceneMediaItem = (): IsDetectedSceneMediaItem => {
   return loadHelper() as IsDetectedSceneMediaItem;
 };
 
-const loadMergeImportedMediaItemsInSelectionOrder = ():
-MergeImportedMediaItemsInSelectionOrder => {
-  const source = readFileSync(
-    new URL("../src/Composition.tsx", import.meta.url),
-    "utf8",
-  );
-  const helperStart = source.indexOf("type MergeImportedMediaItemsOptions = {");
-  const helperEnd = source.indexOf("type AnalyzeImportedVideoResult", helperStart);
+const loadMergeImportedMediaItemsInSelectionOrder =
+  (): MergeImportedMediaItemsInSelectionOrder => {
+    const source = readFileSync(
+      new URL("../src/Composition.tsx", import.meta.url),
+      "utf8",
+    );
+    const helperStart = source.indexOf(
+      "type MergeImportedMediaItemsOptions = {",
+    );
+    const helperEnd = source.indexOf(
+      "type AnalyzeImportedVideoResult",
+      helperStart,
+    );
 
-  assert.ok(helperStart >= 0, "expected executable ordered import merge helper");
-  assert.ok(helperEnd > helperStart, "expected ordered import merge helper boundary");
+    assert.ok(
+      helperStart >= 0,
+      "expected executable ordered import merge helper",
+    );
+    assert.ok(
+      helperEnd > helperStart,
+      "expected ordered import merge helper boundary",
+    );
 
-  const extractedSource = source
-    .slice(helperStart, helperEnd)
-    .replaceAll("export const", "const");
-  const javascript = ts.transpileModule(extractedSource, {
-    compilerOptions: {
-      module: ts.ModuleKind.None,
-      target: ts.ScriptTarget.ES2022,
-    },
-  }).outputText;
-  const loadHelper = Function(
-    `"use strict";\n${javascript}\nreturn mergeImportedMediaItemsInSelectionOrder;`,
-  );
+    const extractedSource = source
+      .slice(helperStart, helperEnd)
+      .replaceAll("export const", "const");
+    const javascript = ts.transpileModule(extractedSource, {
+      compilerOptions: {
+        module: ts.ModuleKind.None,
+        target: ts.ScriptTarget.ES2022,
+      },
+    }).outputText;
+    const loadHelper = Function(
+      `"use strict";\n${javascript}\nreturn mergeImportedMediaItemsInSelectionOrder;`,
+    );
 
-  return loadHelper() as MergeImportedMediaItemsInSelectionOrder;
-};
+    return loadHelper() as MergeImportedMediaItemsInSelectionOrder;
+  };
 
 const loadMapWithConcurrency = (): MapWithConcurrency => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const helperStart = source.indexOf("export async function mapWithConcurrency");
-  const helperEnd = source.indexOf("type MergeImportedMediaItemsOptions", helperStart);
+  const helperStart = source.indexOf(
+    "export async function mapWithConcurrency",
+  );
+  const helperEnd = source.indexOf(
+    "type MergeImportedMediaItemsOptions",
+    helperStart,
+  );
 
   assert.ok(helperStart >= 0, "expected executable bounded-concurrency helper");
-  assert.ok(helperEnd > helperStart, "expected bounded-concurrency helper boundary");
+  assert.ok(
+    helperEnd > helperStart,
+    "expected bounded-concurrency helper boundary",
+  );
 
   const extractedSource = source
     .slice(helperStart, helperEnd)
@@ -177,10 +199,12 @@ type AnalyzeImportedVideo = (options: {
   file: File;
   sourceFileId: string;
   previewSrc: string;
-  detectVideoScenes: (file: File) => Promise<Array<{
-    startSeconds: number;
-    endSeconds: number;
-  }>>;
+  detectVideoScenes: (file: File) => Promise<
+    Array<{
+      startSeconds: number;
+      endSeconds: number;
+    }>
+  >;
   createSceneMediaItems: typeof createSceneMediaItems;
   readDurationInFrames: (src: string) => Promise<number>;
   uploadMedia: (file: File) => Promise<{
@@ -198,8 +222,14 @@ const loadAnalyzeImportedVideo = (): AnalyzeImportedVideo => {
   const helperStart = source.indexOf("type AnalyzeImportedVideoResult = {");
   const helperEnd = source.indexOf("const isBrowserOnlySource", helperStart);
 
-  assert.ok(helperStart >= 0, "expected executable video-import analysis helper");
-  assert.ok(helperEnd > helperStart, "expected video-import analysis helper boundary");
+  assert.ok(
+    helperStart >= 0,
+    "expected executable video-import analysis helper",
+  );
+  assert.ok(
+    helperEnd > helperStart,
+    "expected video-import analysis helper boundary",
+  );
 
   const extractedSource = source
     .slice(helperStart, helperEnd)
@@ -227,7 +257,10 @@ const loadSilenceRemovalHelpers = (): SilenceRemovalHelpers => {
   const helperEnd = source.indexOf("const calculateMetadata", helperStart);
 
   assert.ok(helperStart >= 0, "expected silence-removal action decision types");
-  assert.ok(helperEnd > helperStart, "expected silence-removal decision helper boundary");
+  assert.ok(
+    helperEnd > helperStart,
+    "expected silence-removal decision helper boundary",
+  );
 
   const extractedSource = source.slice(helperStart, helperEnd);
   assert.match(
@@ -369,19 +402,15 @@ test("shows trim handles only for the selected clip", () => {
   );
 });
 
-test("keeps the audio row hidden until a video or linked audio is selected", () => {
+test("keeps linked audio internal instead of rendering a separate audio row", () => {
   const compositionSource = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     compositionSource,
-    /const \[isAudioTrackVisible, setIsAudioTrackVisible\] = useState\(false\)/,
-  );
-  assert.match(
-    compositionSource,
-    /isAudioTrackVisible && contextualAudioClips\.length > 0/,
+    /key: "audio", id: "audio" as TrackName, label: "Audio track"/,
   );
   assert.match(
     compositionSource,
@@ -399,10 +428,7 @@ test("routes the text track through text-specific timeline and selection logic",
     compositionSource,
     /hasClipsOnTrack\(clips, "text"\)[\s\S]*?label: "Text track"/,
   );
-  assert.match(
-    compositionSource,
-    /setSelectedTrack\("text"\)/,
-  );
+  assert.match(compositionSource, /setSelectedTrack\("text"\)/);
   assert.match(
     compositionSource,
     /clip\.track === "text"[\s\S]*?startTextTimelineDrag\(event, clip\)/,
@@ -455,7 +481,10 @@ test("provides an editable cutout workflow for images and videos", () => {
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(source, />Cutout<\/button>/);
   assert.match(source, /accept="image\/\*,video\/\*"/);
@@ -474,7 +503,10 @@ test("Auto cutout keeps manual cutout editing while replacing visible chroma cho
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
   const cutoutPanel = source.slice(
     source.indexOf('</> : activeTool === "cutout" ? ('),
     source.indexOf(') : activeTool === "stickers" ? <>'),
@@ -510,9 +542,18 @@ test("Auto cutout keeps manual cutout editing while replacing visible chroma cho
     /aria-label="Reset cutout mask"[\s\S]*?disabled=\{!canResetSelectedCutout \|\| isAutoCutoutLoading\}/,
   );
   assert.match(cutoutPanel, /processSelectedCutoutAutomatically/);
-  assert.match(cutoutPanel, /className="secondary-action-button auto-cutout-button"/);
-  assert.match(cutoutPanel, /isAutoCutoutLoading \? "Working\.\.\." : "Auto cutout"/);
-  assert.match(cutoutPanel, /disabled=\{!selectedCutoutClip \|\| isAutoCutoutLoading\}/);
+  assert.match(
+    cutoutPanel,
+    /className="secondary-action-button auto-cutout-button"/,
+  );
+  assert.match(
+    cutoutPanel,
+    /isAutoCutoutLoading \? "Working\.\.\." : "Auto cutout"/,
+  );
+  assert.match(
+    cutoutPanel,
+    /disabled=\{!selectedCutoutClip \|\| isAutoCutoutLoading\}/,
+  );
   assert.doesNotMatch(cutoutPanel, />Auto image<\/button>/);
   assert.doesNotMatch(cutoutPanel, />Off<\/button>/);
   assert.doesNotMatch(cutoutPanel, />Green<\/button>/);
@@ -542,7 +583,10 @@ test("Auto cutout keeps manual cutout editing while replacing visible chroma cho
   assert.match(css, /\.workspace\.cutout-workspace/);
   assert.match(css, /\.auto-cutout-button\s*\{[^}]*width:\s*100%/s);
   assert.doesNotMatch(css, /\.preview-cutout\s*\{[^}]*max-height:/s);
-  assert.doesNotMatch(css, /\.preview-cutout\.is-masking\s*\{[^}]*cursor:\s*crosshair/s);
+  assert.doesNotMatch(
+    css,
+    /\.preview-cutout\.is-masking\s*\{[^}]*cursor:\s*crosshair/s,
+  );
 });
 
 test("keeps cutout brush strokes active outside the image element", () => {
@@ -580,7 +624,10 @@ test("keeps the newly created right segment selected after a toolbar split", () 
     "utf8",
   );
   const handlerStart = source.indexOf("const splitSelectedTrackClip");
-  const handlerEnd = source.indexOf("const splitSelectedCutoutAtPlayhead", handlerStart);
+  const handlerEnd = source.indexOf(
+    "const splitSelectedCutoutAtPlayhead",
+    handlerStart,
+  );
   const handler = source.slice(handlerStart, handlerEnd);
 
   assert.match(handler, /const targetClip =/);
@@ -621,7 +668,10 @@ test("renders text entrance animation from the current timeline frame", () => {
     "utf8",
   );
 
-  assert.match(source, /getTextAnimationPresentation\(textClip, playheadFrame\)/);
+  assert.match(
+    source,
+    /getTextAnimationPresentation\(textClip, playheadFrame\)/,
+  );
   assert.match(source, /opacity: textAnimation\.opacity/);
   assert.match(source, /scale: textAnimation\.scale/);
   assert.match(
@@ -644,7 +694,10 @@ test("offers per-clip entrance animations in selected text controls", () => {
   assert.match(source, /aria-label="Text animation"/);
   assert.match(source, /updateSelectedTextStyle\(\{animation: option\.id\}\)/);
   assert.match(source, /selectedTextStyle\.animation === option\.id/);
-  assert.match(source, /aria-pressed=\{selectedTextStyle\.animation === option\.id\}/);
+  assert.match(
+    source,
+    /aria-pressed=\{selectedTextStyle\.animation === option\.id\}/,
+  );
   for (const label of [
     "None",
     "Pop",
@@ -683,48 +736,48 @@ test("keeps text animation labels inside responsive preset buttons", () => {
   );
 });
 
-test("moves the playhead to the last visible frame of selected text and captions", () => {
+test("moves the playhead to the clicked position on visual timeline clips", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
   const handlerStart = source.indexOf("const selectTimelineClip");
-  const handlerEnd = source.indexOf("const selectTrackClipAtFrame", handlerStart);
+  const handlerEnd = source.indexOf(
+    "const selectTrackClipAtFrame",
+    handlerStart,
+  );
   const handler = source.slice(handlerStart, handlerEnd);
 
-  assert.match(
-    handler,
-    /if \(clip\.track === "text" \|\| clip\.track === "caption"\)/,
-  );
-  assert.match(
-    handler,
-    /setPlayheadFrame\(Math\.max\(clip\.start, clip\.start \+ clip\.duration - 1\)\)/,
-  );
+  assert.match(handler, /setSelectedClipId\(clip\.id\)/);
   assert.match(handler, /setPreviewMode\("timeline"\)/);
+  assert.match(handler, /pointerFrame\?: number/);
+  assert.match(handler, /clip\.track !== "audio"/);
+  assert.match(handler, /setPlayheadFrame/);
+  assert.match(handler, /Math\.round\(pointerFrame\)/);
+  assert.match(
+    source,
+    /const pointerFrame = getTimelineFrameFromPointer\([\s\S]*?selectTimelineClip\(clip, pointerFrame\)/,
+  );
 });
 
-test("seeks video clips to the exact clicked frame", () => {
+test("selects visual clips while seeking and leaves audio selection independent", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
 
-  assert.match(
-    source,
-    /const selectTimelineClip = \(clip: TimelineClip, pointerFrame\?: number \| null\)/,
+  const handlerStart = source.indexOf("const selectTimelineClip");
+  const handlerEnd = source.indexOf(
+    "const selectTrackClipAtFrame",
+    handlerStart,
   );
-  assert.match(
-    source,
-    /const isVideoClip = clip\.track === "main" \|\| clip\.track === "upper" \|\| clip\.track === "cutout"/,
-  );
-  assert.match(
-    source,
-    /isVideoClip && pointerFrame !== null && pointerFrame !== undefined[\s\S]*?setPlayheadFrame\([\s\S]*?Math\.min\(clip\.start \+ clip\.duration - 1, pointerFrame\)/,
-  );
-  assert.match(
-    source,
-    /const pointerFrame = getPointerTimelineFrame\(event\.clientX\);[\s\S]*?selectTimelineClip\(clip, pointerFrame\)/,
-  );
+  const handler = source.slice(handlerStart, handlerEnd);
+
+  assert.match(source, /selectTimelineClip\(clip\)/);
+  assert.match(handler, /setSelectedClipId\(clip\.id\)/);
+  assert.match(handler, /setPreviewMode\("timeline"\)/);
+  assert.match(handler, /clip\.track !== "audio"/);
+  assert.match(handler, /setPlayheadFrame/);
 });
 
 test("wires contextual linked audio into overlay import, selection, and timeline rendering", () => {
@@ -747,10 +800,7 @@ test("wires contextual linked audio into overlay import, selection, and timeline
     compositionSource,
     /selectedClip\?\.track === "audio"\s*\? selectedClip\.linkedClipId \?\? null/,
   );
-  assert.match(
-    compositionSource,
-    /contextualAudioClipIds\.has\(clip\.id\)/,
-  );
+  assert.match(compositionSource, /contextualAudioClipIds\.has\(clip\.id\)/);
 });
 
 test("routes scene ranges through shared main and signed-layer placement", () => {
@@ -779,7 +829,10 @@ test("routes scene ranges through shared main and signed-layer placement", () =>
   );
 
   assert.ok(factoryStart >= 0, "expected shared media timeline factory");
-  assert.ok(factoryEnd > factoryStart, "expected media timeline factory boundary");
+  assert.ok(
+    factoryEnd > factoryStart,
+    "expected media timeline factory boundary",
+  );
   assert.match(
     compositionSource.slice(factoryStart, factoryEnd),
     /createVideoMediaPair\(\{[\s\S]*sourceStart: mediaItem\.sourceStart \?\? 0/,
@@ -816,9 +869,15 @@ test("allows selected audio clips to use the selected clip speed control", () =>
 });
 
 test("routes speed and volume to a selected video layer or one selected clip", () => {
-  const source = readFileSync(new URL("../src/Composition.tsx", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
 
-  assert.match(source, /const \[selectedVideoLayer, setSelectedVideoLayer\] = useState<number \| null>\(null\)/);
+  assert.match(
+    source,
+    /const \[selectedVideoLayer, setSelectedVideoLayer\] = useState<number \| null>\(null\)/,
+  );
   assert.match(
     source,
     /const selectWholeVideoLayer = \(videoLayer: number\) => \{[\s\S]*?setSelectedVideoLayer\(videoLayer\);[\s\S]*?setSelectedClipId\(null\);/,
@@ -827,33 +886,78 @@ test("routes speed and volume to a selected video layer or one selected clip", (
     source,
     /event\.target === event\.currentTarget[\s\S]*?selectWholeVideoLayer\(track\.videoLayer\)/,
   );
-  assert.match(source, /setVideoLayerSpeed\(currentClips, selectedVideoLayer, speed\)/);
-  assert.match(source, /setVideoLayerVolume\(currentClips, selectedVideoLayer, volume\)/);
-  assert.match(source, /getVideoLayerControlState\(\s*clips,\s*selectedVideoLayer,\s*\)/);
+  assert.match(
+    source,
+    /setVideoLayerSpeed\(currentClips, selectedVideoLayer, speed\)/,
+  );
+  assert.match(
+    source,
+    /setVideoLayerVolume\(currentClips, selectedVideoLayer, volume\)/,
+  );
+  assert.match(
+    source,
+    /getVideoLayerControlState\(\s*clips,\s*selectedVideoLayer,\s*\)/,
+  );
   assert.match(source, /clipControlTarget \|\| selectedVideoLayer !== null/);
-  assert.match(source, /const canEditSelectedSpeed = hasSelectedVideoLayer \|\|/);
-  assert.match(source, /const canEditSelectedVolume = hasSelectedVideoLayer \|\|/);
+  assert.match(
+    source,
+    /const canEditSelectedSpeed = hasSelectedVideoLayer \|\|/,
+  );
+  assert.match(
+    source,
+    /const canEditSelectedVolume = hasSelectedVideoLayer \|\|/,
+  );
   assert.match(source, /selectedVideoLayer === track\.videoLayer/);
   assert.match(source, /Track controls/);
 });
 
 test("uses executable layer-control state and history helpers and clears layer selection on direct drops", () => {
-  const source = readFileSync(new URL("../src/Composition.tsx", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
 
-  assert.match(source, /getVideoLayerControlState\(\s*clips,\s*selectedVideoLayer,\s*\)/);
-  assert.match(source, /startVideoLayerControlHistoryGesture\(\s*clipsRef\.current,\s*selectedVideoLayer,\s*property,\s*\)/);
+  assert.match(
+    source,
+    /getVideoLayerControlState\(\s*clips,\s*selectedVideoLayer,\s*\)/,
+  );
+  assert.match(
+    source,
+    /startVideoLayerControlHistoryGesture\(\s*clipsRef\.current,\s*selectedVideoLayer,\s*property,\s*\)/,
+  );
   assert.match(source, /previewVideoLayerControlHistoryGesture\(drag, value\)/);
-  assert.match(source, /finishVideoLayerControlHistoryGesture\(currentHistory, drag\)/);
-  assert.match(source, /onPointerDown=\{\(\) => startVideoLayerControlDrag\("speed"\)\}/);
+  assert.match(
+    source,
+    /finishVideoLayerControlHistoryGesture\(currentHistory, drag\)/,
+  );
+  assert.match(
+    source,
+    /onPointerDown=\{\(\) => startVideoLayerControlDrag\("speed"\)\}/,
+  );
   assert.match(source, /onPointerUp=\{finishVideoLayerControlDrag\}/);
-  assert.match(source, /onPointerDown=\{\(\) => startVideoLayerControlDrag\("volume"\)\}/);
+  assert.match(
+    source,
+    /onPointerDown=\{\(\) => startVideoLayerControlDrag\("volume"\)\}/,
+  );
 
   const appendStart = source.indexOf('if (target?.kind === "append-main")');
-  const insertStart = source.indexOf('} else if (target?.kind === "insert-layer")');
-  const directDropEnd = source.indexOf('} else {', insertStart);
-  assert.ok(appendStart >= 0 && insertStart > appendStart && directDropEnd > insertStart);
-  assert.match(source.slice(appendStart, insertStart), /setSelectedClipId\(videoId\);\s*setSelectedVideoLayer\(null\);/);
-  assert.match(source.slice(insertStart, directDropEnd), /setSelectedClipId\(videoId\);\s*setSelectedVideoLayer\(null\);/);
+  const insertStart = source.indexOf(
+    '} else if (target?.kind === "insert-layer")',
+  );
+  const directDropEnd = source.indexOf("} else {", insertStart);
+  assert.ok(
+    appendStart >= 0 &&
+      insertStart > appendStart &&
+      directDropEnd > insertStart,
+  );
+  assert.match(
+    source.slice(appendStart, insertStart),
+    /setSelectedClipId\(videoId\);\s*setSelectedVideoLayer\(null\);/,
+  );
+  assert.match(
+    source.slice(insertStart, directDropEnd),
+    /setSelectedClipId\(videoId\);\s*setSelectedVideoLayer\(null\);/,
+  );
 });
 
 test("keeps overlay preview playback synchronized with the editor", () => {
@@ -861,7 +965,9 @@ test("keeps overlay preview playback synchronized with the editor", () => {
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const overlayStart = compositionSource.indexOf("timelinePreviewVideoClips.map");
+  const overlayStart = compositionSource.indexOf(
+    "timelinePreviewVideoClips.map",
+  );
   const overlayEnd = compositionSource.indexOf(
     "playbackAudioClips.map",
     overlayStart,
@@ -917,7 +1023,10 @@ test("holds transition preview layers at their adjacent source frames", () => {
     overlayPreview,
     /getClipSourceTime\(\s*videoClip,\s*previewFrame,\s*fps,?\s*\)/,
   );
-  assert.match(overlayPreview, /visibility: isVisibleVideoClip \? "visible" : "hidden"/);
+  assert.match(
+    overlayPreview,
+    /visibility: isVisibleVideoClip \? "visible" : "hidden"/,
+  );
 });
 
 test("keeps a layer-zero transition preview below an active layer one", () => {
@@ -927,7 +1036,10 @@ test("keeps a layer-zero transition preview below an active layer one", () => {
   );
   const previewStart = source.indexOf("const activeVideoLayers");
   const previewEnd = source.indexOf("const activeStickerClips", previewStart);
-  const renderStart = source.indexOf("activeVideoLayers", source.indexOf("<Fragment>"));
+  const renderStart = source.indexOf(
+    "activeVideoLayers",
+    source.indexOf("<Fragment>"),
+  );
   const renderEnd = source.indexOf("playbackAudioClips.map", renderStart);
   assert.ok(previewStart >= 0 && previewEnd > previewStart);
   assert.ok(renderStart >= 0 && renderEnd > renderStart);
@@ -989,8 +1101,16 @@ test("uses each media item's real duration when adding an overlay", () => {
     overlayStart,
   );
 
-  assert.notEqual(overlayStart, -1, "video layer placement function should exist");
-  assert.notEqual(overlayEnd, -1, "video layer placement function should have an end");
+  assert.notEqual(
+    overlayStart,
+    -1,
+    "video layer placement function should exist",
+  );
+  assert.notEqual(
+    overlayEnd,
+    -1,
+    "video layer placement function should have an end",
+  );
   const overlayAppend = compositionSource.slice(overlayStart, overlayEnd);
 
   assert.match(overlayAppend, /duration:\s*mediaItem\.durationInFrames/);
@@ -1012,7 +1132,10 @@ test("wires effects and filters tabs to selected clip visual controls", () => {
   assert.match(compositionSource, /activeTool === "filters"/);
   assert.match(compositionSource, /updateSelectedClipEffect\(option\.id\)/);
   assert.match(compositionSource, /updateSelectedClipFilter\(option\.id\)/);
-  assert.match(compositionSource, /getClipFrameStyle\(videoClip, playheadFrame\)/);
+  assert.match(
+    compositionSource,
+    /getClipFrameStyle\(videoClip, playheadFrame\)/,
+  );
   assert.match(compositionSource, /getClipAdjustmentStyle\(videoClip\)/);
   assert.match(stylesheetSource, /\.visual-option-grid/);
 });
@@ -1032,7 +1155,10 @@ test("offers an on-canvas rotation handle in manual adjustment mode", () => {
   assert.match(compositionSource, /rotateDrag/);
   assert.match(compositionSource, /startManualRotate/);
   assert.match(compositionSource, /className="preview-shell"/);
-  assert.match(compositionSource, /className="rotate-handle canvas-rotate-handle"/);
+  assert.match(
+    compositionSource,
+    /className="rotate-handle canvas-rotate-handle"/,
+  );
   assert.match(compositionSource, /aria-label="Rotate selected clip"/);
   assert.match(
     stylesheetSource,
@@ -1095,7 +1221,10 @@ test("expands clip move boundaries and shares scroll-aware pointer coordinates",
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(component, /const timelineOrigin = 148/);
   assert.match(
@@ -1132,10 +1261,7 @@ test("advances timeline playback at a constant rate without clip speed", () => {
   assert.doesNotMatch(playbackTimer, /currentClip\?\.speed/);
   assert.doesNotMatch(playbackTimer, /previewSource/);
   assert.match(source, /const isTimelinePreview = previewMode === "timeline"/);
-  assert.match(
-    source,
-    /\{previewSource\?\.src \|\| isTimelinePreview \? \(/,
-  );
+  assert.match(source, /\{previewSource\?\.src \|\| isTimelinePreview \? \(/);
   assert.match(source, /isTimelinePreview\s*\? playbackAudioClips\.map/);
   assert.match(source, /timelinePreviewVideoClips\.map\(\(videoClip\)\s*=>/);
   assert.match(source, /isTimelinePreview\s*\? activeStickerClips\.map/);
@@ -1193,10 +1319,16 @@ test("keeps ordinary media preview unrestricted while scenes use range preview",
   const toggleEnd = source.indexOf("const toggleTimelinePlayback", toggleStart);
   const togglePlayback = source.slice(toggleStart, toggleEnd);
   const mediaToggleStart = source.indexOf("const toggleMediaPreviewPlayback");
-  const mediaToggleEnd = source.indexOf("const toggleVoiceRecording", mediaToggleStart);
+  const mediaToggleEnd = source.indexOf(
+    "const toggleVoiceRecording",
+    mediaToggleStart,
+  );
   const mediaTogglePlayback = source.slice(mediaToggleStart, mediaToggleEnd);
   const timeUpdateStart = source.indexOf("const handleMediaPreviewTimeUpdate");
-  const timeUpdateEnd = source.indexOf("const splitSelectedMediaScene", timeUpdateStart);
+  const timeUpdateEnd = source.indexOf(
+    "const splitSelectedMediaScene",
+    timeUpdateStart,
+  );
   const timeUpdateHandler = source.slice(timeUpdateStart, timeUpdateEnd);
 
   assert.match(
@@ -1269,7 +1401,10 @@ test("splits only the selected video scene at the relative preview frame", () =>
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
   const splitStart = source.indexOf("const splitSelectedMediaScene");
   const splitEnd = source.indexOf("const deleteMediaItem", splitStart);
   const splitAction = source.slice(splitStart, splitEnd);
@@ -1279,9 +1414,18 @@ test("splits only the selected video scene at the relative preview frame", () =>
     source,
     /setMediaPreviewFrame\(getMediaPreviewFrame\(video\.currentTime\)\)/,
   );
-  assert.match(source, /const mediaPreviewSeekMinSeconds = isSelectedMediaScene/);
-  assert.match(source, /const mediaPreviewSeekMaxSeconds = isSelectedMediaScene/);
-  assert.match(source, /Math\.min\(\s*selectedMedia\?\.durationInFrames \?\? 0/);
+  assert.match(
+    source,
+    /const mediaPreviewSeekMinSeconds = isSelectedMediaScene/,
+  );
+  assert.match(
+    source,
+    /const mediaPreviewSeekMaxSeconds = isSelectedMediaScene/,
+  );
+  assert.match(
+    source,
+    /Math\.min\(\s*selectedMedia\?\.durationInFrames \?\? 0/,
+  );
   assert.match(splitAction, /splitSceneMediaItemAtFrame\(\{/);
   assert.match(splitAction, /mediaItems,/);
   assert.match(splitAction, /mediaId: mediaItem\.id/);
@@ -1300,7 +1444,10 @@ test("splits only the selected video scene at the relative preview frame", () =>
     source,
     /disabled=\{mediaPreviewFrame <= 0 \|\|\s*mediaPreviewFrame >= mediaItem\.durationInFrames\}/,
   );
-  assert.match(css, /\.media-split-button\s*\{[^}]*width:\s*22px[^}]*height:\s*22px/s);
+  assert.match(
+    css,
+    /\.media-split-button\s*\{[^}]*width:\s*22px[^}]*height:\s*22px/s,
+  );
 });
 
 test("keeps new video layer drop rows aligned to the same timeline lane origin", () => {
@@ -1308,16 +1455,16 @@ test("keeps new video layer drop rows aligned to the same timeline lane origin",
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
   const newLayerRule = css.slice(
     css.indexOf(".new-video-layer-drop"),
     css.indexOf(".new-video-layer-drop .track-lane"),
   );
 
-  assert.match(
-    component,
-    /className=\{`timeline-track new-video-layer-drop/,
-  );
+  assert.match(component, /className=\{`timeline-track new-video-layer-drop/);
   assert.match(
     css,
     /\.timeline-track\s*\{[^}]*grid-template-columns:\s*calc\(var\(--timeline-origin\) - 10px\) 1fr[^}]*gap:\s*10px/s,
@@ -1355,7 +1502,10 @@ test("keeps trim and text drag deltas anchored while the canvas resizes", () => 
 });
 
 test("constrains timeline rows to a two-axis scrolling area", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     css,
@@ -1372,9 +1522,15 @@ test("keeps long timelines readable in a horizontal scrolling canvas", () => {
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
-  assert.match(component, /const timelineContentRef = useRef<HTMLDivElement>\(null\)/);
+  assert.match(
+    component,
+    /const timelineContentRef = useRef<HTMLDivElement>\(null\)/,
+  );
   assert.match(component, /className="timeline-scroll"/);
   assert.match(component, /className="timeline-content"/);
   assert.match(
@@ -1388,10 +1544,7 @@ test("keeps long timelines readable in a horizontal scrolling canvas", () => {
   assert.doesNotMatch(component, /timelinePanelRef/);
   assert.match(css, /\.timeline-scroll\s*\{[^}]*overflow-x:\s*auto/s);
   assert.match(css, /\.track-label\s*\{[^}]*position:\s*sticky[^}]*left:\s*0/s);
-  assert.match(
-    css,
-    /\.timeline-ruler span\s*\{[^}]*position:\s*absolute/s,
-  );
+  assert.match(css, /\.timeline-ruler span\s*\{[^}]*position:\s*absolute/s);
 });
 
 test("Task 2 playback uses the executable step in the timeline interval", () => {
@@ -1428,7 +1581,10 @@ test("Task 2 playback uses the executable step in the timeline interval", () => 
 });
 
 test("keeps sticky track labels above clips while the timeline scrolls", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     css,
@@ -1487,14 +1643,20 @@ test("provides a direct append target after the last main-track clip", () => {
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(source, /kind: "append-main"/);
   assert.match(source, /data-append-main-track/);
   assert.match(source, /getVideoLayerEnd\(currentClips, 0\)/);
   assert.match(source, /aria-label="Append media to main track"/);
   assert.match(source, /const mainAppendVisibleOverlap = 48/);
-  assert.match(source, /mainVideoLayerEnd \* timelineScale - mainAppendVisibleOverlap/);
+  assert.match(
+    source,
+    /mainVideoLayerEnd \* timelineScale - mainAppendVisibleOverlap/,
+  );
   assert.match(css, /\.main-track-append-target/);
 });
 
@@ -1503,7 +1665,10 @@ test("hides secondary video layer labels and compacts add-layer spacing", () => 
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.doesNotMatch(source, /label: `Video layer \+\$\{videoLayer\}`/);
   assert.doesNotMatch(source, /label: `Video layer \$\{videoLayer\}`/);
@@ -1531,17 +1696,26 @@ test("hides secondary video layer labels and compacts add-layer spacing", () => 
     source,
     /key: "main", id: "main" as TrackName, label: "Main track", videoLayer: 0/,
   );
-  assert.match(source, /key: "audio", id: "audio" as TrackName, label: "Audio track"/);
+  assert.doesNotMatch(
+    source,
+    /key: "audio", id: "audio" as TrackName, label: "Audio track"/,
+  );
   assert.match(
     source,
     /`Video layer \$\{\s*track\.videoLayer > 0 \? `\+\$\{track\.videoLayer\}` : track\.videoLayer\s*\}`/,
   );
   assert.match(css, /\.new-video-layer-drop\s*\{[^}]*height:\s*10px/s);
-  assert.match(css, /\.new-video-layer-drop \.track-lane\s*\{[^}]*height:\s*10px/s);
+  assert.match(
+    css,
+    /\.new-video-layer-drop \.track-lane\s*\{[^}]*height:\s*10px/s,
+  );
 });
 
 test("keeps the timeline compact so the preview workspace stays centered", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     css,
@@ -1559,19 +1733,16 @@ test("rejects stale silence-removal results without adding history", () => {
     selectionVersion: 5,
     requestIsActive: true,
     snapshot: silenceRemovalSnapshot,
-    ranges: [{startSeconds: 2, endSeconds: 3}],
+    ranges: [{ startSeconds: 2, endSeconds: 3 }],
     fps: 30,
   });
   const staleTiming = decideAction({
-    currentClips: [
-      {...original[0], sourceStart: 60},
-      original[1],
-    ],
+    currentClips: [{ ...original[0], sourceStart: 60 }, original[1]],
     selectedClipId: "video",
     selectionVersion: 4,
     requestIsActive: true,
     snapshot: silenceRemovalSnapshot,
-    ranges: [{startSeconds: 2, endSeconds: 3}],
+    ranges: [{ startSeconds: 2, endSeconds: 3 }],
     fps: 30,
   });
   const inactiveRequest = decideAction({
@@ -1580,7 +1751,7 @@ test("rejects stale silence-removal results without adding history", () => {
     selectionVersion: 4,
     requestIsActive: false,
     snapshot: silenceRemovalSnapshot,
-    ranges: [{startSeconds: 2, endSeconds: 3}],
+    ranges: [{ startSeconds: 2, endSeconds: 3 }],
     fps: 30,
   });
   const historyAfterStaleResult = applyTimelineHistoryEdit(
@@ -1592,18 +1763,18 @@ test("rejects stale silence-removal results without adding history", () => {
   assert.equal(staleTiming.outcome, "stale");
   assert.equal(inactiveRequest.outcome, "stale");
   assert.equal(staleSelection.selection, null);
-  assert.deepEqual(staleSelection.status, {kind: "idle", message: ""});
-  assert.deepEqual(inactiveRequest.status, {kind: "idle", message: ""});
+  assert.deepEqual(staleSelection.status, { kind: "idle", message: "" });
+  assert.deepEqual(inactiveRequest.status, { kind: "idle", message: "" });
   assert.strictEqual(historyAfterStaleResult, initialHistory);
   assert.equal(historyAfterStaleResult.past.length, 0);
 });
 
 test("rejects silence removal before analysis when reciprocal audio is missing", () => {
-  const {decideSilenceRemovalPreflight} = loadSilenceRemovalHelpers();
+  const { decideSilenceRemovalPreflight } = loadSilenceRemovalHelpers();
   const original = createSilenceRemovalPair();
   const clipsWithoutReciprocalAudio = [
     original[0],
-    {...original[1], linkedClipId: "different-video"},
+    { ...original[1], linkedClipId: "different-video" },
   ];
   const initialHistory = createTimelineHistory(clipsWithoutReciprocalAudio);
   const decision = decideSilenceRemovalPreflight(
@@ -1639,7 +1810,7 @@ test("does not add history when silence removal is unchanged or leaves no segmen
     selectionVersion: 4,
     requestIsActive: true,
     snapshot: silenceRemovalSnapshot,
-    ranges: [{startSeconds: 12, endSeconds: 13}],
+    ranges: [{ startSeconds: 12, endSeconds: 13 }],
     fps: 30,
   });
   const fullSilence = decideAction({
@@ -1648,7 +1819,7 @@ test("does not add history when silence removal is unchanged or leaves no segmen
     selectionVersion: 4,
     requestIsActive: true,
     snapshot: silenceRemovalSnapshot,
-    ranges: [{startSeconds: 0, endSeconds: 10}],
+    ranges: [{ startSeconds: 0, endSeconds: 10 }],
     fps: 30,
   });
   const emptyRanges = decideAction({
@@ -1688,14 +1859,17 @@ test("adds one history entry, selects the first actual segment, and undoes once"
     requestIsActive: true,
     snapshot: silenceRemovalSnapshot,
     ranges: [
-      {startSeconds: 2, endSeconds: 3},
-      {startSeconds: 6, endSeconds: 7},
+      { startSeconds: 2, endSeconds: 3 },
+      { startSeconds: 6, endSeconds: 7 },
     ],
     fps: 30,
   });
 
   assert.equal(decision.outcome, "committed");
-  const committedHistory = applyTimelineHistoryEdit(initialHistory, decision.clips);
+  const committedHistory = applyTimelineHistoryEdit(
+    initialHistory,
+    decision.clips,
+  );
   const actualVideoSegments = committedHistory.present
     .filter((clip) => clip.id.startsWith("video-speech-"))
     .sort((left, right) => left.start - right.start);
@@ -1722,12 +1896,17 @@ test("main voice action posts guarded analysis and commits once", () => {
     "utf8",
   );
   const mainVoiceAction = source.slice(
-    source.indexOf("const keepMainVoiceAutomatically = useCallback(async () => {"),
+    source.indexOf(
+      "const keepMainVoiceAutomatically = useCallback(async () => {",
+    ),
     source.indexOf("const duplicateSelectedSticker"),
   );
   const abortMainVoiceRequest = source.slice(
     source.indexOf("const abortKeepMainVoiceRequest = useCallback(() => {"),
-    source.indexOf("useEffect(() => {", source.indexOf("const abortKeepMainVoiceRequest")),
+    source.indexOf(
+      "useEffect(() => {",
+      source.indexOf("const abortKeepMainVoiceRequest"),
+    ),
   );
 
   assert.match(source, /"Keep main voice"/);
@@ -1755,13 +1934,25 @@ test("main voice action posts guarded analysis and commits once", () => {
     mainVoiceAction,
     /keepMainVoiceRequestRef\.current !== requestToken \|\|\s*!isDominantVoiceRequestCurrent\(/,
   );
-  assert.match(mainVoiceAction, /sourceStartSeconds = sourceClipSourceStart \/ fps/);
-  assert.match(mainVoiceAction, /sourceDurationSeconds = \(sourceClipDuration \* sourceClipSpeed\) \/ fps/);
-  assert.match(source, /disabled=\{isKeepMainVoiceLoading \|\| !canKeepMainVoice\}/);
+  assert.match(
+    mainVoiceAction,
+    /sourceStartSeconds = sourceClipSourceStart \/ fps/,
+  );
+  assert.match(
+    mainVoiceAction,
+    /sourceDurationSeconds = \(sourceClipDuration \* sourceClipSpeed\) \/ fps/,
+  );
+  assert.match(
+    source,
+    /disabled=\{isKeepMainVoiceLoading \|\| !canKeepMainVoice\}/,
+  );
 });
 
 test("keeps tall tool panels scrollable above the timeline", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(css, /\.media-panel\s*\{[^}]*min-height:\s*0/s);
   assert.match(css, /\.media-library\s*\{[^}]*min-height:\s*0/s);
@@ -1769,7 +1960,10 @@ test("keeps tall tool panels scrollable above the timeline", () => {
 });
 
 test("keeps tall details controls scrollable", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(css, /\.details-panel\s*\{[^}]*min-height:\s*0/s);
   assert.match(css, /\.details-panel\s*\{[^}]*padding:\s*12px 12px 42px/s);
@@ -1777,32 +1971,50 @@ test("keeps tall details controls scrollable", () => {
 });
 
 test("keeps controls and timeline left of a full-height right preview", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(css, /\.editor-shell\s*\{[^}]*grid-template-columns:/s);
   assert.match(css, /\.topbar\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
   assert.match(css, /\.workspace\s*\{[^}]*display:\s*contents/s);
-  assert.match(css, /\.media-panel\s*\{[^}]*grid-column:\s*1[^}]*grid-row:\s*2/s);
-  assert.match(css, /\.details-panel\s*\{[^}]*grid-column:\s*1[^}]*grid-row:\s*2/s);
-  assert.match(css, /\.preview-panel\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*2\s*\/\s*4/s);
-  assert.match(css, /\.timeline-panel\s*\{[^}]*grid-column:\s*1[^}]*grid-row:\s*3/s);
+  assert.match(
+    css,
+    /\.media-panel\s*\{[^}]*grid-column:\s*1[^}]*grid-row:\s*2/s,
+  );
+  assert.match(
+    css,
+    /\.details-panel\s*\{[^}]*grid-column:\s*1[^}]*grid-row:\s*2/s,
+  );
+  assert.match(
+    css,
+    /\.preview-panel\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*2\s*\/\s*4/s,
+  );
+  assert.match(
+    css,
+    /\.timeline-panel\s*\{[^}]*grid-column:\s*1[^}]*grid-row:\s*3/s,
+  );
 });
 
 test("lets the left workspace take the remaining width beside a height-driven preview column", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     css,
     /\.editor-shell\s*\{[^}]*grid-template-columns:\s*minmax\(620px,\s*1fr\)\s+calc\(\(100vh\s*-\s*48px\)\s*\*\s*9\s*\/\s*16\)/s,
   );
-  assert.match(
-    css,
-    /\.editor-shell\s*\{[^}]*min-width:\s*1260px/s,
-  );
+  assert.match(css, /\.editor-shell\s*\{[^}]*min-width:\s*1260px/s);
 });
 
 test("gives the standalone preview most of the editor height", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     css,
@@ -1810,7 +2022,10 @@ test("gives the standalone preview most of the editor height", () => {
   );
   assert.match(css, /\.preview-panel\s*\{[^}]*min-height:\s*0/s);
   assert.match(css, /\.preview-panel\s*\{[^}]*grid-row:\s*2\s*\/\s*4/s);
-  assert.match(css, /\.preview-panel\s*\{[^}]*place-items:\s*stretch\s+stretch/s);
+  assert.match(
+    css,
+    /\.preview-panel\s*\{[^}]*place-items:\s*stretch\s+stretch/s,
+  );
   assert.match(css, /\.preview-panel\s*\{[^}]*padding:\s*0/s);
   assert.match(css, /\.preview-shell\s*\{[^}]*width:\s*100%/s);
   assert.match(css, /\.preview-shell\s*\{[^}]*height:\s*100%/s);
@@ -1818,14 +2033,20 @@ test("gives the standalone preview most of the editor height", () => {
 });
 
 test("keeps compact timeline controls aligned to the left", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     css,
     /\.timeline-toolbar\s*\{[^}]*justify-content:\s*flex-start[^}]*gap:\s*16px/s,
   );
   assert.match(css, /\.timeline-panel\s*\{[^}]*padding:\s*6px\s+0\s+8px/s);
-  assert.match(css, /\.timeline-scroll\s*\{[^}]*overflow-x:\s*auto[^}]*overflow-y:\s*auto/s);
+  assert.match(
+    css,
+    /\.timeline-scroll\s*\{[^}]*overflow-x:\s*auto[^}]*overflow-y:\s*auto/s,
+  );
 });
 
 test("wires save export text resizing and audio waveform UI", () => {
@@ -1833,7 +2054,10 @@ test("wires save export text resizing and audio waveform UI", () => {
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(source, /onClick=\{saveProjectToStorage\}/);
   assert.match(source, /onClick=\{\(\) => void exportProjectVideo\(\)\}/);
@@ -1841,12 +2065,61 @@ test("wires save export text resizing and audio waveform UI", () => {
   assert.match(source, /downloadBrowserFile\(/);
   assert.match(source, /video-editor-project-/);
   assert.match(source, /disabled=\{isExporting\}/);
-  assert.match(source, /className="text-resize-handle text-resize-handle-bottom-right"/);
-  assert.match(source, /startTextResizeDrag\(event, textClip, "bottom-right"\)/);
+  assert.match(
+    source,
+    /className="text-resize-handle text-resize-handle-bottom-right"/,
+  );
+  assert.match(
+    source,
+    /startTextResizeDrag\(event, textClip, "bottom-right"\)/,
+  );
   assert.match(source, /className="audio-waveform"/);
   assert.match(css, /\.project-actions\s*\{/);
   assert.match(css, /\.text-resize-handle\s*\{/);
   assert.match(css, /\.timeline-clip \.audio-waveform\s*\{/);
+});
+
+test("shows compact audio waveforms inside video timeline clips", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /shouldShowTimelineWaveform\(clip\)/);
+  assert.match(source, /has-timeline-waveform/);
+  assert.match(source, /audio-timeline-clip/);
+  assert.match(source, /rowHasTimelineWaveform/);
+  assert.match(source, /waveform-timeline-track/);
+  assert.match(source, /waveform-track-lane/);
+  assert.match(source, /className="audio-waveform-svg"/);
+  assert.match(source, /className="audio-waveform-line"/);
+  assert.doesNotMatch(source, /className="audio-waveform-center-line"/);
+  assert.equal(
+    (source.match(/className="audio-waveform-line"/g) ?? []).length,
+    1,
+  );
+  assert.match(source, /createWaveformLinePoints/);
+  assert.match(
+    css,
+    /\.timeline-clip\.has-timeline-waveform:not\(\.audio-timeline-clip\) \.audio-waveform\s*\{/,
+  );
+  assert.match(
+    css,
+    /\.timeline-track\.waveform-timeline-track\s*\{[^}]*height:\s*62px/s,
+  );
+  assert.match(
+    css,
+    /\.track-lane\.waveform-track-lane\s*\{[^}]*height:\s*53px/s,
+  );
+  assert.match(
+    css,
+    /\.timeline-clip\.has-timeline-waveform:not\(\.audio-timeline-clip\)[\s\S]*?\.timeline-clip-video,[\s\S]*?bottom:\s*20px/s,
+  );
+  assert.match(css, /\.audio-waveform-line\s*\{[^}]*fill:\s*none[^}]*stroke:/s);
 });
 
 test("analyzes imported videos concurrently and creates only scene cards", async () => {
@@ -1858,11 +2131,13 @@ test("analyzes imported videos concurrently and creates only scene cards", async
     label: string;
     mimeType: string;
   }) => void;
-  let resolveDetection!: (ranges: Array<{
-    startSeconds: number;
-    endSeconds: number;
-  }>) => void;
-  const file = new File(["video"], "interview.mp4", {type: "video/mp4"});
+  let resolveDetection!: (
+    ranges: Array<{
+      startSeconds: number;
+      endSeconds: number;
+    }>,
+  ) => void;
+  const file = new File(["video"], "interview.mp4", { type: "video/mp4" });
 
   const pendingAnalysis = analyzeImportedVideo({
     file,
@@ -1897,8 +2172,8 @@ test("analyzes imported videos concurrently and creates only scene cards", async
     mimeType: "video/mp4",
   });
   resolveDetection([
-    {startSeconds: 0, endSeconds: 2},
-    {startSeconds: 2, endSeconds: 5},
+    { startSeconds: 0, endSeconds: 2 },
+    { startSeconds: 2, endSeconds: 5 },
   ]);
 
   const result = await pendingAnalysis;
@@ -1911,15 +2186,15 @@ test("analyzes imported videos concurrently and creates only scene cards", async
       sourceStart: item.sourceStart,
     })),
     [
-      {label: "Interview - Scene 1", durationInFrames: 60, sourceStart: 0},
-      {label: "Interview - Scene 2", durationInFrames: 90, sourceStart: 60},
+      { label: "Interview - Scene 1", durationInFrames: 60, sourceStart: 0 },
+      { label: "Interview - Scene 2", durationInFrames: 90, sourceStart: 60 },
     ],
   );
 });
 
 test("creates one full-duration fallback scene when detection fails", async () => {
   const analyzeImportedVideo = loadAnalyzeImportedVideo();
-  const file = new File(["video"], "single-take.mp4", {type: "video/mp4"});
+  const file = new File(["video"], "single-take.mp4", { type: "video/mp4" });
 
   const result = await analyzeImportedVideo({
     file,
@@ -1956,13 +2231,15 @@ test("creates one full-duration fallback scene when detection fails", async () =
 
 test("treats a successful one-scene detection as a valid no-cut result", async () => {
   const analyzeImportedVideo = loadAnalyzeImportedVideo();
-  const file = new File(["video"], "continuous-shot.mp4", {type: "video/mp4"});
+  const file = new File(["video"], "continuous-shot.mp4", {
+    type: "video/mp4",
+  });
 
   const result = await analyzeImportedVideo({
     file,
     sourceFileId: "source-no-cuts",
     previewSrc: "blob:no-cuts",
-    detectVideoScenes: async () => [{startSeconds: 0, endSeconds: 5}],
+    detectVideoScenes: async () => [{ startSeconds: 0, endSeconds: 5 }],
     createSceneMediaItems,
     readDurationInFrames: async () => 150,
     uploadMedia: async () => ({
@@ -1980,10 +2257,11 @@ test("treats a successful one-scene detection as a valid no-cut result", async (
 test("limits concurrent imports to two while preserving result order", async () => {
   const mapWithConcurrency = loadMapWithConcurrency();
   const releases: Array<() => void> = [];
-  const gates = [0, 1, 2, 3].map((index) =>
-    new Promise<void>((resolve) => {
-      releases[index] = resolve;
-    }),
+  const gates = [0, 1, 2, 3].map(
+    (index) =>
+      new Promise<void>((resolve) => {
+        releases[index] = resolve;
+      }),
   );
   const starts: number[] = [];
   let active = 0;
@@ -2008,7 +2286,12 @@ test("limits concurrent imports to two while preserving result order", async () 
   assert.deepEqual(starts, [0, 1, 2, 3]);
   releases[3]();
 
-  assert.deepEqual(await pending, ["result-0", "result-1", "result-2", "result-3"]);
+  assert.deepEqual(await pending, [
+    "result-0",
+    "result-1",
+    "result-2",
+    "result-3",
+  ]);
   assert.equal(peakActive, 2);
 });
 
@@ -2020,8 +2303,8 @@ test("keeps scene cards in file selection order when analyses finish out of orde
     label: "First.mp4",
     src: "uploads/first.mp4",
     ranges: [
-      {startSeconds: 0, endSeconds: 1},
-      {startSeconds: 1, endSeconds: 2},
+      { startSeconds: 0, endSeconds: 1 },
+      { startSeconds: 1, endSeconds: 2 },
     ],
     fps: 30,
   });
@@ -2029,7 +2312,7 @@ test("keeps scene cards in file selection order when analyses finish out of orde
     sourceFileId: "source-second",
     label: "Second.mp4",
     src: "uploads/second.mp4",
-    ranges: [{startSeconds: 0, endSeconds: 2}],
+    ranges: [{ startSeconds: 0, endSeconds: 2 }],
     fps: 30,
   });
   const existingItem: SavedMediaItem = {
@@ -2067,7 +2350,10 @@ test("renders non-draggable analyzing cards before replacing videos with scene c
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(source, /detectVideoScenes\(file\)/);
   assert.match(source, /createSceneMediaItems\(/);
@@ -2092,8 +2378,14 @@ test("keeps detected scene duration when its gallery thumbnail loads", () => {
     "utf8",
   );
   const metadataHandler = source.slice(
-    source.indexOf("onLoadedMetadata={(event) => {", source.indexOf("mediaItems.map")),
-    source.indexOf("const durationInFrames = durationToFrames", source.indexOf("mediaItems.map")),
+    source.indexOf(
+      "onLoadedMetadata={(event) => {",
+      source.indexOf("mediaItems.map"),
+    ),
+    source.indexOf(
+      "const durationInFrames = durationToFrames",
+      source.indexOf("mediaItems.map"),
+    ),
   );
 
   assert.match(metadataHandler, /if \(mediaItem\.sourceFileId\)/);
@@ -2110,10 +2402,7 @@ test("wires the trailing autosave scheduler while preserving explicit Save", () 
   );
 
   assert.match(source, /const persistProjectToStorage = /);
-  assert.match(
-    source,
-    /createTrailingAutosaveScheduler\(/,
-  );
+  assert.match(source, /createTrailingAutosaveScheduler\(/);
   assert.match(source, /autosave\.schedule\(\)/);
   assert.match(source, /return autosave\.cancel/);
   assert.match(source, /onClick=\{saveProjectToStorage\}/);
@@ -2125,7 +2414,10 @@ test("renders eight directional text box resize handles and contains animated wo
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
   const directions = [
     "top-left",
     "top",
@@ -2147,8 +2439,14 @@ test("renders eight directional text box resize handles and contains animated wo
       new RegExp(`startTextResizeDrag\\(event, textClip, "${direction}"\\)`),
     );
   }
-  assert.match(source, /width: text\.boxWidth \? `\$\{text\.boxWidth\}%` : undefined/);
-  assert.match(source, /height: text\.boxHeight \? `\$\{text\.boxHeight\}%` : undefined/);
+  assert.match(
+    source,
+    /width: text\.boxWidth \? `\$\{text\.boxWidth\}%` : undefined/,
+  );
+  assert.match(
+    source,
+    /height: text\.boxHeight \? `\$\{text\.boxHeight\}%` : undefined/,
+  );
   assert.match(
     source,
     /const startTextResizeDrag = \([\s\S]*?setIsPreviewPlaying\(false\)[\s\S]*?setTextResizeDrag\(/,
@@ -2162,8 +2460,14 @@ test("renders eight directional text box resize handles and contains animated wo
     css,
     /\.preview-text-overlay\.text-animation-star-jump\s*\{[^}]*padding:\s*42px 28px 22px/s,
   );
-  assert.match(css, /\.text-resize-handle-top\s*,\s*\.text-resize-handle-bottom\s*\{[^}]*cursor:\s*ns-resize/s);
-  assert.match(css, /\.text-resize-handle-left\s*,\s*\.text-resize-handle-right\s*\{[^}]*cursor:\s*ew-resize/s);
+  assert.match(
+    css,
+    /\.text-resize-handle-top\s*,\s*\.text-resize-handle-bottom\s*\{[^}]*cursor:\s*ns-resize/s,
+  );
+  assert.match(
+    css,
+    /\.text-resize-handle-left\s*,\s*\.text-resize-handle-right\s*\{[^}]*cursor:\s*ew-resize/s,
+  );
 });
 
 test("shows readable media import errors instead of raw API JSON", () => {
@@ -2178,7 +2482,10 @@ test("shows readable media import errors instead of raw API JSON", () => {
 });
 
 test("keeps save and export actions fully visible in the top bar", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     css,
@@ -2189,7 +2496,10 @@ test("keeps save and export actions fully visible in the top bar", () => {
 });
 
 test("makes timeline clips fill their track lane height", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(css, /\.timeline-clip\s*\{[^}]*top:\s*0/s);
   assert.match(css, /\.timeline-clip\s*\{[^}]*bottom:\s*0/s);
@@ -2197,7 +2507,10 @@ test("makes timeline clips fill their track lane height", () => {
 });
 
 test("keeps long timeline clip labels inside the clip body", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(css, /\.timeline-clip\s*\{[^}]*justify-content:\s*flex-start/s);
   assert.match(css, /\.timeline-clip\s*\{[^}]*padding:\s*0 44px 0 8px/s);
@@ -2219,21 +2532,30 @@ test("shows a floating drag preview only for gallery media", () => {
 });
 
 test("fills the middle preview frame with imported videos", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(css, /\.preview-video\s*\{[^}]*object-fit:\s*contain/s);
   assert.match(css, /\.preview-overlay-video\s*\{[^}]*object-fit:\s*contain/s);
 });
 
 test("sizes the right preview column from available height without side padding", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     css,
     /\.editor-shell\s*\{[^}]*grid-template-columns:\s*minmax\(620px,\s*1fr\)\s+calc\(\(100vh\s*-\s*48px\)\s*\*\s*9\s*\/\s*16\)/s,
   );
   assert.match(css, /\.preview-panel\s*\{[^}]*padding:\s*0/s);
-  assert.doesNotMatch(css, /\.preview-shell\s*\{[^}]*100cqh\s*\*\s*9\s*\/\s*16/s);
+  assert.doesNotMatch(
+    css,
+    /\.preview-shell\s*\{[^}]*100cqh\s*\*\s*9\s*\/\s*16/s,
+  );
   assert.doesNotMatch(
     css,
     /\.preview-shell:has\(\.canvas-rotate-handle\)\s*\{[^}]*100cqh\s*-\s*30px/s,
@@ -2249,7 +2571,10 @@ test("reveals a protected delete control for each imported media item", () => {
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
   const deleteButton = source.slice(
     source.indexOf('className="media-delete-button"') - 300,
     source.indexOf('className="media-delete-button"') + 500,
@@ -2277,7 +2602,10 @@ test("lets the main Import button accept images and videos", () => {
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(source, /accept="image\/\*,video\/\*"/);
   assert.match(source, /getMediaFileType\(file\)/);
@@ -2291,16 +2619,13 @@ test("lets the main Import button accept images and videos", () => {
 });
 
 test("widens every tool library and auto-fits asset grids", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
-  assert.match(
-    css,
-    /\.media-panel\s*\{[^}]*width:\s*62%/s,
-  );
-  assert.match(
-    css,
-    /\.details-panel\s*\{[^}]*width:\s*38%/s,
-  );
+  assert.match(css, /\.media-panel\s*\{[^}]*width:\s*62%/s);
+  assert.match(css, /\.details-panel\s*\{[^}]*width:\s*38%/s);
   assert.match(
     css,
     /\.media-grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(112px,\s*1fr\)\)/s,
@@ -2313,7 +2638,10 @@ test("widens every tool library and auto-fits asset grids", () => {
 });
 
 test("places editing controls before the import library", () => {
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(css, /\.details-panel\s*\{[^}]*justify-self:\s*start/s);
   assert.match(css, /\.media-panel\s*\{[^}]*justify-self:\s*end/s);
@@ -2324,7 +2652,10 @@ test("keeps text and sticker tool libraries on the left", () => {
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     source,
@@ -2346,20 +2677,14 @@ test("loads and commits wording for a selected text clip", () => {
     "utf8",
   );
 
-  assert.match(
-    source,
-    /setTextDraft\(selectedTextContent\)/,
-  );
+  assert.match(source, /setTextDraft\(selectedTextContent\)/);
   assert.match(source, /const commitSelectedTextContent/);
   assert.match(source, /setTextContentById/);
   assert.match(
     source,
     /selectedTextClip \? "Commit changes" : "Add text at playhead"/,
   );
-  assert.match(
-    source,
-    /clip\.track === "text"[\s\S]*?setActiveTool\("text"\)/,
-  );
+  assert.match(source, /clip\.track === "text"[\s\S]*?setActiveTool\("text"\)/);
 });
 
 test("opens every selected caption type for wording edits", () => {
@@ -2374,4 +2699,25 @@ test("opens every selected caption type for wording edits", () => {
   );
   assert.match(source, />Commit changes<\/button>/);
   assert.match(source, /applySelectedCaption/);
+});
+
+test("adds a track visibility eye beside the delete action", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const toolbar = source.slice(
+    source.indexOf('className="timeline-toolbar"'),
+    source.indexOf('className="timeline-scroll"'),
+  );
+
+  assert.match(toolbar, /className={`icon-tool-button visibility-icon-tool/);
+  assert.match(toolbar, /onClick={toggleSelectedTrackVisibility}/);
+  assert.match(toolbar, /aria-pressed={isSelectedTrackHidden}/);
+  assert.match(toolbar, /Hide \${selectedTrack} track/);
+  assert.match(toolbar, /Show \${selectedTrack} track/);
+  assert.ok(
+    toolbar.indexOf("visibility-icon-tool") <
+      toolbar.indexOf("danger-icon-tool"),
+  );
 });

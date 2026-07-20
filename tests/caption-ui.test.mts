@@ -242,11 +242,34 @@ test("keeps caption styling in one compact selected-caption inspector", () => {
   assert.match(selectedCaptionControls, /min="1"/);
   assert.match(selectedCaptionControls, /step="1"/);
   assert.doesNotMatch(captionPanel, /caption-style-grid/);
-  assert.doesNotMatch(captionPanel, />Commit changes</);
+  assert.match(captionPanel, /"Commit changes"/);
   assert.match(source, /className="caption-control-section"/);
   assert.match(source, /className="caption-compact-grid"/);
   assert.match(selectedTextControls, /min="1"/);
   assert.match(selectedTextControls, /step="1"/);
+});
+
+test("edits manual, auto, lyric, and uploaded caption clips from the shared left panel", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const selectionHandler = source.slice(
+    source.indexOf("const selectTimelineClip"),
+    source.indexOf("const selectTimelineTrack"),
+  );
+  const captionPanel = source.slice(
+    source.indexOf('activeTool === "captions" ? ('),
+    source.indexOf(') : activeTool === "animations" ? ('),
+  );
+
+  assert.match(selectionHandler, /clip\.track === "caption"/);
+  assert.match(selectionHandler, /setCaptionMode\("manual"\)/);
+  assert.match(selectionHandler, /setActiveTool\("captions"\)/);
+  assert.match(source, /setCaptionDraft\(selectedCaptionClip\.caption\.content\)/);
+  assert.match(captionPanel, /value=\{captionDraft\}/);
+  assert.match(captionPanel, /commitSelectedCaptionContent/);
+  assert.match(captionPanel, /"Commit changes"/);
 });
 
 test("starts the captions tool on a four-action launcher and supports returning with Back", () => {

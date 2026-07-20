@@ -42,6 +42,7 @@ import {
   getVisualToolTargetClipId,
   getVideoLayer,
   getVideoLayerEnd,
+  getIndependentPlaybackAudioClips,
   getPlaybackAudioClips,
   formatTimelineClock,
   formatTimelineTimecode,
@@ -84,6 +85,8 @@ import {
   finishVideoLayerControlHistoryGesture,
   startVideoLayerControlHistoryGesture,
   toggleClipMuteById,
+  isTrackHidden,
+  toggleTrackVisibility,
   setClipEffectById,
   setClipFilterById,
   setClipAnimationById,
@@ -126,7 +129,7 @@ import {
   synchronizeOriginalAudio,
   undoTimelineHistory,
 } from "../src/editorLogic.ts";
-import type {TimelineClip} from "../src/editorLogic.ts";
+import type { TimelineClip } from "../src/editorLogic.ts";
 
 const historyClip = (id: string): TimelineClip => ({
   id,
@@ -144,8 +147,8 @@ test("creates deterministic virtual scene cards that share their source URL", ()
     label: "Interview.mp4",
     src: "uploads/interview.mp4",
     ranges: [
-      {startSeconds: 0, endSeconds: 2},
-      {startSeconds: 2, endSeconds: 5},
+      { startSeconds: 0, endSeconds: 2 },
+      { startSeconds: 2, endSeconds: 5 },
     ],
     fps: 30,
   });
@@ -189,15 +192,15 @@ test("creates grouped scene labels and preserves the original source name", () =
     label: "Interview.mp4",
     src: "/uploads/interview.mp4",
     ranges: [
-      {startSeconds: 0, endSeconds: 2},
-      {startSeconds: 2, endSeconds: 5},
+      { startSeconds: 0, endSeconds: 2 },
+      { startSeconds: 2, endSeconds: 5 },
     ],
     fps: 30,
     sourceDurationInFrames: 150,
   });
 
   assert.deepEqual(
-    items.map(({label, sourceGroupIndex, sourceLabel, sceneIndex}) => ({
+    items.map(({ label, sourceGroupIndex, sourceLabel, sceneIndex }) => ({
       label,
       sourceGroupIndex,
       sourceLabel,
@@ -244,8 +247,8 @@ test("splits one scene and renumbers only its source cards", () => {
     label: "Interview.mp4",
     src: "uploads/interview.mp4",
     ranges: [
-      {startSeconds: 0, endSeconds: 2},
-      {startSeconds: 2, endSeconds: 4},
+      { startSeconds: 0, endSeconds: 2 },
+      { startSeconds: 2, endSeconds: 4 },
     ],
     fps: 30,
   });
@@ -309,7 +312,7 @@ test("rejects manual scene splits at invalid boundaries", () => {
     sourceGroupIndex: 1,
     label: "Interview.mp4",
     src: "uploads/interview.mp4",
-    ranges: [{startSeconds: 0, endSeconds: 2}],
+    ranges: [{ startSeconds: 0, endSeconds: 2 }],
     fps: 30,
   });
 
@@ -455,14 +458,20 @@ test("derives transitions only between adjacent clips on one video layer", () =>
     src: "upper.mp4",
   };
 
-  assert.deepEqual(getTimelineTransitionBoundaries([gap, upper, second, first], 0), [
-    {
-      outgoingClipId: "first",
-      incomingClipId: "second",
-      frame: 30,
-    },
-  ]);
-  assert.deepEqual(getTimelineTransitionBoundaries([gap, upper, second, first], 1), []);
+  assert.deepEqual(
+    getTimelineTransitionBoundaries([gap, upper, second, first], 0),
+    [
+      {
+        outgoingClipId: "first",
+        incomingClipId: "second",
+        frame: 30,
+      },
+    ],
+  );
+  assert.deepEqual(
+    getTimelineTransitionBoundaries([gap, upper, second, first], 1),
+    [],
+  );
 });
 
 test("clamps and removes an incoming clip transition", () => {
@@ -488,7 +497,7 @@ test("clamps and removes an incoming clip transition", () => {
   };
 
   const applied = setClipTransitionById([first, second], "second", "fade", 40);
-  assert.deepEqual(applied[1].transition, {preset: "fade", duration: 12});
+  assert.deepEqual(applied[1].transition, { preset: "fade", duration: 12 });
 
   const removed = setClipTransitionById(applied, "second", "none", 12);
   assert.equal(removed[1].transition, undefined);
@@ -565,26 +574,37 @@ test("presents dissolve, slide, and zoom deterministically for both transition s
   const cases = [
     {
       preset: "dissolve" as const,
-      outgoing: {opacity: 0.5, translateX: 0, scale: 1},
-      incoming: {opacity: 0.5, translateX: 0, scale: 1},
+      outgoing: { opacity: 0.5, translateX: 0, scale: 1 },
+      incoming: { opacity: 0.5, translateX: 0, scale: 1 },
     },
     {
       preset: "slide" as const,
-      outgoing: {opacity: 1, translateX: -6, scale: 1},
-      incoming: {opacity: 1, translateX: 6, scale: 1},
+      outgoing: { opacity: 1, translateX: -6, scale: 1 },
+      incoming: { opacity: 1, translateX: 6, scale: 1 },
     },
     {
       preset: "zoom" as const,
-      outgoing: {opacity: 0.5, translateX: 0, scale: 1.03},
-      incoming: {opacity: 0.5, translateX: 0, scale: 0.97},
+      outgoing: { opacity: 0.5, translateX: 0, scale: 1.03 },
+      incoming: { opacity: 0.5, translateX: 0, scale: 0.97 },
     },
   ];
 
   for (const transitionCase of cases) {
-    const clips = setClipTransitionById([first, second], "second", transitionCase.preset, 10);
+    const clips = setClipTransitionById(
+      [first, second],
+      "second",
+      transitionCase.preset,
+      10,
+    );
 
-    assert.deepEqual(getClipTransitionPresentation(clips, "first", 30), transitionCase.outgoing);
-    assert.deepEqual(getClipTransitionPresentation(clips, "second", 30), transitionCase.incoming);
+    assert.deepEqual(
+      getClipTransitionPresentation(clips, "first", 30),
+      transitionCase.outgoing,
+    );
+    assert.deepEqual(
+      getClipTransitionPresentation(clips, "second", 30),
+      transitionCase.incoming,
+    );
   }
 });
 
@@ -612,26 +632,37 @@ test("presents both sides at the midpoint of a one-frame transition", () => {
   const cases = [
     {
       preset: "fade" as const,
-      outgoing: {opacity: 0.5, translateX: 0, scale: 1},
-      incoming: {opacity: 0.5, translateX: 0, scale: 1},
+      outgoing: { opacity: 0.5, translateX: 0, scale: 1 },
+      incoming: { opacity: 0.5, translateX: 0, scale: 1 },
     },
     {
       preset: "dissolve" as const,
-      outgoing: {opacity: 0.5, translateX: 0, scale: 1},
-      incoming: {opacity: 0.5, translateX: 0, scale: 1},
+      outgoing: { opacity: 0.5, translateX: 0, scale: 1 },
+      incoming: { opacity: 0.5, translateX: 0, scale: 1 },
     },
     {
       preset: "zoom" as const,
-      outgoing: {opacity: 0.5, translateX: 0, scale: 1.03},
-      incoming: {opacity: 0.5, translateX: 0, scale: 0.97},
+      outgoing: { opacity: 0.5, translateX: 0, scale: 1.03 },
+      incoming: { opacity: 0.5, translateX: 0, scale: 0.97 },
     },
   ];
 
   for (const transitionCase of cases) {
-    const clips = setClipTransitionById([first, second], "second", transitionCase.preset, 1);
+    const clips = setClipTransitionById(
+      [first, second],
+      "second",
+      transitionCase.preset,
+      1,
+    );
 
-    assert.deepEqual(getClipTransitionPresentation(clips, "first", 30), transitionCase.outgoing);
-    assert.deepEqual(getClipTransitionPresentation(clips, "second", 30), transitionCase.incoming);
+    assert.deepEqual(
+      getClipTransitionPresentation(clips, "first", 30),
+      transitionCase.outgoing,
+    );
+    assert.deepEqual(
+      getClipTransitionPresentation(clips, "second", 30),
+      transitionCase.incoming,
+    );
   }
 
   const fadeClips = setClipTransitionById([first, second], "second", "fade", 1);
@@ -678,7 +709,12 @@ test("selects the active transition when a clip belongs to two adjacent edges", 
     videoLayer: 0,
     src: "third.mp4",
   };
-  const withFade = setClipTransitionById([first, second, third], "second", "fade", 10);
+  const withFade = setClipTransitionById(
+    [first, second, third],
+    "second",
+    "fade",
+    10,
+  );
   const clips = setClipTransitionById(withFade, "third", "slide", 10);
 
   assert.deepEqual(getClipTransitionPresentation(clips, "second", 60), {
@@ -708,12 +744,26 @@ test("returns neutral transition presentation when either adjacent clip is hidde
     color: "#0891b2",
     videoLayer: 0,
     src: "second.mp4",
-    transition: {preset: "fade", duration: 10},
+    transition: { preset: "fade", duration: 10 },
   };
-  const neutral = {opacity: 1, translateX: 0, scale: 1};
+  const neutral = { opacity: 1, translateX: 0, scale: 1 };
 
-  assert.deepEqual(getClipTransitionPresentation([{...first, hidden: true}, second], "second", 30), neutral);
-  assert.deepEqual(getClipTransitionPresentation([first, {...second, hidden: true}], "first", 30), neutral);
+  assert.deepEqual(
+    getClipTransitionPresentation(
+      [{ ...first, hidden: true }, second],
+      "second",
+      30,
+    ),
+    neutral,
+  );
+  assert.deepEqual(
+    getClipTransitionPresentation(
+      [first, { ...second, hidden: true }],
+      "first",
+      30,
+    ),
+    neutral,
+  );
 });
 
 test("removes an incoming transition when deleting its predecessor", () => {
@@ -734,7 +784,7 @@ test("removes an incoming transition when deleting its predecessor", () => {
     duration: 30,
     color: "#0891b2",
     src: "second.mp4",
-    transition: {preset: "fade", duration: 12},
+    transition: { preset: "fade", duration: 12 },
   };
 
   const result = deleteClipById([first, second], "first");
@@ -765,7 +815,7 @@ test("does not copy a transition onto a non-adjacent duplicate", () => {
     duration: 30,
     color: "#0891b2",
     src: "second.mp4",
-    transition: {preset: "fade", duration: 12},
+    transition: { preset: "fade", duration: 12 },
   };
 
   const result = duplicateClipById([first, second], "second", "copy");
@@ -796,13 +846,13 @@ test("reclamps an incoming transition after speed shrinks its clip", () => {
     color: "#0891b2",
     src: "second.mp4",
     speed: 1,
-    transition: {preset: "fade", duration: 20},
+    transition: { preset: "fade", duration: 20 },
   };
 
   const result = setClipSpeedById([first, second], "second", 3);
 
   assert.equal(result[1].duration, 10);
-  assert.deepEqual(result[1].transition, {preset: "fade", duration: 10});
+  assert.deepEqual(result[1].transition, { preset: "fade", duration: 10 });
 });
 
 test("removes an incoming transition when trimming creates a gap", () => {
@@ -823,7 +873,7 @@ test("removes an incoming transition when trimming creates a gap", () => {
     duration: 30,
     color: "#0891b2",
     src: "second.mp4",
-    transition: {preset: "fade", duration: 12},
+    transition: { preset: "fade", duration: 12 },
   };
 
   const result = trimClipById([first, second], "first", "right", -10, 1);
@@ -850,7 +900,7 @@ test("does not copy an incoming transition onto the right side of a split", () =
     duration: 30,
     color: "#0891b2",
     src: "second.mp4",
-    transition: {preset: "fade", duration: 20},
+    transition: { preset: "fade", duration: 20 },
   };
 
   const result = splitClipByIdAtFrame([first, second], "second", 40);
@@ -859,7 +909,10 @@ test("does not copy an incoming transition onto the right side of a split", () =
     preset: "fade",
     duration: 10,
   });
-  assert.equal(result.find((clip) => clip.id === "second-b")?.transition, undefined);
+  assert.equal(
+    result.find((clip) => clip.id === "second-b")?.transition,
+    undefined,
+  );
 });
 
 test("removes an incoming transition when moving its clip across a gap", () => {
@@ -880,13 +933,16 @@ test("removes an incoming transition when moving its clip across a gap", () => {
     duration: 30,
     color: "#0891b2",
     src: "second.mp4",
-    transition: {preset: "fade", duration: 12},
+    transition: { preset: "fade", duration: 12 },
   };
 
   const result = moveVideoClipToLayer([first, second], "second", 0, 60);
 
   assert.equal(result.find((clip) => clip.id === "second")?.start, 60);
-  assert.equal(result.find((clip) => clip.id === "second")?.transition, undefined);
+  assert.equal(
+    result.find((clip) => clip.id === "second")?.transition,
+    undefined,
+  );
 });
 
 test("formats timeline clocks beyond one hour", () => {
@@ -949,11 +1005,11 @@ test("returns the reset frame for invalid or empty playback durations", () => {
 
 test("Task 2 playback advances across clip boundaries then stops and resets at project end", () => {
   const expectedSteps = [
-    {nextFrame: 31, continues: true},
-    {nextFrame: 34, continues: true},
-    {nextFrame: 37, continues: true},
-    {nextFrame: 39, continues: true},
-    {nextFrame: 0, continues: false},
+    { nextFrame: 31, continues: true },
+    { nextFrame: 34, continues: true },
+    { nextFrame: 37, continues: true },
+    { nextFrame: 39, continues: true },
+    { nextFrame: 0, continues: false },
   ];
   let frame = 28;
 
@@ -1025,7 +1081,10 @@ test("cancels pending trailing autosave work during cleanup", () => {
 
 test("calculates drag deltas from a captured timeline content origin", () => {
   const startFrame = getTimelineFrameFromPointer(480, -300, 148, 1.15);
-  assert.equal(getStableTimelineFrameDelta(490, startFrame, -300, 148, 1.15), 8);
+  assert.equal(
+    getStableTimelineFrameDelta(490, startFrame, -300, 148, 1.15),
+    8,
+  );
 });
 
 test("calculates manual canvas rotation from the clip center", () => {
@@ -1052,13 +1111,19 @@ test("converts pointer positions from scroll-shifted timeline content bounds", (
 test("expands move boundaries while retaining zero and invalid clamps", () => {
   assert.equal(getExpandedTimelineBoundary(480, 450, 120), 570);
   assert.equal(getExpandedTimelineBoundary(480, -40, 120), 480);
-  assert.equal(getExpandedTimelineBoundary(Number.NaN, Number.NaN, Number.NaN), 1);
+  assert.equal(
+    getExpandedTimelineBoundary(Number.NaN, Number.NaN, Number.NaN),
+    1,
+  );
 });
 
 test("undoes and redoes the latest timeline edit", () => {
   const original = [historyClip("original")];
   const edited = [historyClip("edited")];
-  const afterEdit = applyTimelineHistoryEdit(createTimelineHistory(original), edited);
+  const afterEdit = applyTimelineHistoryEdit(
+    createTimelineHistory(original),
+    edited,
+  );
 
   const afterUndo = undoTimelineHistory(afterEdit);
   assert.deepEqual(afterUndo.present, original);
@@ -1075,7 +1140,9 @@ test("a new edit after undo clears redo history", () => {
   const original = [historyClip("original")];
   const firstEdit = [historyClip("first-edit")];
   const replacementEdit = [historyClip("replacement-edit")];
-  const afterUndo = undoTimelineHistory(applyTimelineHistoryEdit(createTimelineHistory(original), firstEdit));
+  const afterUndo = undoTimelineHistory(
+    applyTimelineHistoryEdit(createTimelineHistory(original), firstEdit),
+  );
 
   const result = applyTimelineHistoryEdit(afterUndo, replacementEdit);
 
@@ -1572,7 +1639,10 @@ test("clamps overlays at zero and allows an expanded project boundary", () => {
 
   assert.equal(moveOverlayClip(clips, "overlay", -40, 0, 480)[0].start, 0);
   assert.equal(moveOverlayClip(clips, "overlay", 450, 0, 570)[0].start, 450);
-  assert.equal(moveOverlayClip(clips, "overlay", Number.NaN, 0, 570)[0].start, 0);
+  assert.equal(
+    moveOverlayClip(clips, "overlay", Number.NaN, 0, 570)[0].start,
+    0,
+  );
 });
 
 test("moves an overlapping overlay into the next available lane", () => {
@@ -2160,16 +2230,16 @@ test("left trim advances linked video and audio source timing without trimming n
   const result = trimClipById(clips, "main", "left", 30);
 
   assert.deepEqual(
-    result.map(({id, start, duration, sourceStart}) => ({
+    result.map(({ id, start, duration, sourceStart }) => ({
       id,
       start,
       duration,
       sourceStart,
     })),
     [
-      {id: "main", start: 30, duration: 90, sourceStart: 30},
-      {id: "audio", start: 30, duration: 90, sourceStart: 30},
-      {id: "voice", start: 0, duration: 120, sourceStart: undefined},
+      { id: "main", start: 30, duration: 90, sourceStart: 30 },
+      { id: "audio", start: 30, duration: 90, sourceStart: 30 },
+      { id: "voice", start: 0, duration: 120, sourceStart: undefined },
     ],
   );
 });
@@ -2205,7 +2275,12 @@ test("left trim synchronizes an upper video only with its reciprocal audio", () 
     color: "#2563eb",
   };
 
-  const result = trimClipById([overlay, overlayAudio, narration], overlay.id, "left", 20);
+  const result = trimClipById(
+    [overlay, overlayAudio, narration],
+    overlay.id,
+    "left",
+    20,
+  );
 
   assert.deepEqual(result[0], {
     ...overlay,
@@ -2378,15 +2453,19 @@ test("duplicates a selected main video onto a new upper video layer", () => {
 
   assert.equal(result.length, 4);
   assert.deepEqual(
-    result.slice(2).map(({id, label, track, start, duration, linkedClipId, videoLayer}) => ({
-      id,
-      label,
-      track,
-      start,
-      duration,
-      linkedClipId,
-      videoLayer,
-    })),
+    result
+      .slice(2)
+      .map(
+        ({ id, label, track, start, duration, linkedClipId, videoLayer }) => ({
+          id,
+          label,
+          track,
+          start,
+          duration,
+          linkedClipId,
+          videoLayer,
+        }),
+      ),
     [
       {
         id: "copy-video",
@@ -2461,14 +2540,16 @@ test("duplicates an overlay video onto the next upper video layer", () => {
   const result = duplicateClipById(clips, "upper", "copy");
 
   assert.deepEqual(
-    result.slice(2).map(({id, track, start, overlayLane, videoLayer, linkedClipId}) => ({
-      id,
-      track,
-      start,
-      overlayLane,
-      videoLayer,
-      linkedClipId,
-    })),
+    result
+      .slice(2)
+      .map(({ id, track, start, overlayLane, videoLayer, linkedClipId }) => ({
+        id,
+        track,
+        start,
+        overlayLane,
+        videoLayer,
+        linkedClipId,
+      })),
     [
       {
         id: "copy-video",
@@ -2586,8 +2667,10 @@ test("splitting a selected main video keeps its linked audio as one continuous c
     [30, 90],
   );
   assert.deepEqual(
-    result.filter((clip) => clip.track === "audio").map(({id, start, duration}) => ({id, start, duration})),
-    [{id: "audio", start: 0, duration: 120}],
+    result
+      .filter((clip) => clip.track === "audio")
+      .map(({ id, start, duration }) => ({ id, start, duration })),
+    [{ id: "audio", start: 0, duration: 120 }],
   );
 });
 
@@ -2621,8 +2704,8 @@ test("removes silence from a video and reciprocal audio and closes the gap", () 
     clips,
     "video",
     [
-      {startSeconds: 2, endSeconds: 3},
-      {startSeconds: 6, endSeconds: 7},
+      { startSeconds: 2, endSeconds: 3 },
+      { startSeconds: 6, endSeconds: 7 },
     ],
     30,
   );
@@ -2630,29 +2713,29 @@ test("removes silence from a video and reciprocal audio and closes the gap", () 
   assert.deepEqual(
     result
       .filter((clip) => clip.track === "main")
-      .map(({start, duration, sourceStart}) => ({
+      .map(({ start, duration, sourceStart }) => ({
         start,
         duration,
         sourceStart,
       })),
     [
-      {start: 0, duration: 60, sourceStart: 30},
-      {start: 60, duration: 90, sourceStart: 120},
-      {start: 150, duration: 90, sourceStart: 240},
+      { start: 0, duration: 60, sourceStart: 30 },
+      { start: 60, duration: 90, sourceStart: 120 },
+      { start: 150, duration: 90, sourceStart: 240 },
     ],
   );
   assert.deepEqual(
     result
       .filter((clip) => clip.track === "audio")
-      .map(({start, duration, sourceStart}) => ({
+      .map(({ start, duration, sourceStart }) => ({
         start,
         duration,
         sourceStart,
       })),
     [
-      {start: 0, duration: 60, sourceStart: 30},
-      {start: 60, duration: 90, sourceStart: 120},
-      {start: 150, duration: 90, sourceStart: 240},
+      { start: 0, duration: 60, sourceStart: 30 },
+      { start: 60, duration: 90, sourceStart: 120 },
+      { start: 150, duration: 90, sourceStart: 240 },
     ],
   );
 });
@@ -2760,7 +2843,12 @@ test("ripples only later reciprocal pairs on the same signed video layer", () =>
     sticker,
   ];
 
-  const result = removeSilenceFromLinkedVideo(clips, selectedVideo.id, [{startSeconds: 1, endSeconds: 2}], 30);
+  const result = removeSilenceFromLinkedVideo(
+    clips,
+    selectedVideo.id,
+    [{ startSeconds: 1, endSeconds: 2 }],
+    30,
+  );
 
   assert.equal(result.find((clip) => clip.id === laterVideo.id)?.start, 120);
   assert.equal(result.find((clip) => clip.id === laterAudio.id)?.start, 120);
@@ -2856,13 +2944,20 @@ test("removes only stale transcript captions generated for the selected source",
     start: 60,
     duration: 30,
     color: "#ef4444",
-    caption: {...defaultCaptionStyle, content: "Manual"},
+    caption: { ...defaultCaptionStyle, content: "Manual" },
   };
 
   const result = removeSilenceFromLinkedVideo(
-    [video, audio, selectedTranscript, selectedNonTranscript, otherTranscript, manualCaption],
+    [
+      video,
+      audio,
+      selectedTranscript,
+      selectedNonTranscript,
+      otherTranscript,
+      manualCaption,
+    ],
     video.id,
-    [{startSeconds: 1, endSeconds: 2}],
+    [{ startSeconds: 1, endSeconds: 2 }],
     30,
   );
 
@@ -2899,9 +2994,9 @@ test("normalizes silence ranges and preserves reciprocal segment properties at c
     hidden: true,
     overlayLane: 4,
     videoLayer: -3,
-    visual: {effect: "glow", filter: "warm"},
-    animation: {preset: "fade-in", timing: "start", duration: 12},
-    adjustment: {...defaultClipAdjustment, scale: 1.2},
+    visual: { effect: "glow", filter: "warm" },
+    animation: { preset: "fade-in", timing: "start", duration: 12 },
+    adjustment: { ...defaultClipAdjustment, scale: 1.2 },
     volume: 0.75,
   };
   const audio: TimelineClip = {
@@ -2923,11 +3018,11 @@ test("normalizes silence ranges and preserves reciprocal segment properties at c
     [video, audio],
     video.id,
     [
-      {startSeconds: 4, endSeconds: 6},
-      {startSeconds: -1, endSeconds: 1},
-      {startSeconds: 1.5, endSeconds: 2.5},
-      {startSeconds: 0.5, endSeconds: 2},
-      {startSeconds: 9, endSeconds: 12},
+      { startSeconds: 4, endSeconds: 6 },
+      { startSeconds: -1, endSeconds: 1 },
+      { startSeconds: 1.5, endSeconds: 2.5 },
+      { startSeconds: 0.5, endSeconds: 2 },
+      { startSeconds: 9, endSeconds: 12 },
     ],
     30,
   );
@@ -2935,14 +3030,16 @@ test("normalizes silence ranges and preserves reciprocal segment properties at c
   const audioSegments = result.filter((clip) => clip.track === "audio");
 
   assert.deepEqual(
-    videoSegments.map(({id, linkedClipId, start, duration, sourceStart, speed}) => ({
-      id,
-      linkedClipId,
-      start,
-      duration,
-      sourceStart,
-      speed,
-    })),
+    videoSegments.map(
+      ({ id, linkedClipId, start, duration, sourceStart, speed }) => ({
+        id,
+        linkedClipId,
+        start,
+        duration,
+        sourceStart,
+        speed,
+      }),
+    ),
     [
       {
         id: "video-speech-0",
@@ -2963,14 +3060,16 @@ test("normalizes silence ranges and preserves reciprocal segment properties at c
     ],
   );
   assert.deepEqual(
-    audioSegments.map(({id, linkedClipId, start, duration, sourceStart, speed}) => ({
-      id,
-      linkedClipId,
-      start,
-      duration,
-      sourceStart,
-      speed,
-    })),
+    audioSegments.map(
+      ({ id, linkedClipId, start, duration, sourceStart, speed }) => ({
+        id,
+        linkedClipId,
+        start,
+        duration,
+        sourceStart,
+        speed,
+      }),
+    ),
     [
       {
         id: "audio-speech-0",
@@ -2991,15 +3090,25 @@ test("normalizes silence ranges and preserves reciprocal segment properties at c
     ],
   );
   assert.deepEqual(
-    videoSegments.map(({hidden, overlayLane, videoLayer, visual, animation, adjustment, volume}) => ({
-      hidden,
-      overlayLane,
-      videoLayer,
-      visual,
-      animation,
-      adjustment,
-      volume,
-    })),
+    videoSegments.map(
+      ({
+        hidden,
+        overlayLane,
+        videoLayer,
+        visual,
+        animation,
+        adjustment,
+        volume,
+      }) => ({
+        hidden,
+        overlayLane,
+        videoLayer,
+        visual,
+        animation,
+        adjustment,
+        volume,
+      }),
+    ),
     [
       {
         hidden: true,
@@ -3022,10 +3131,10 @@ test("normalizes silence ranges and preserves reciprocal segment properties at c
     ],
   );
   assert.deepEqual(
-    audioSegments.map(({hidden, volume}) => ({hidden, volume})),
+    audioSegments.map(({ hidden, volume }) => ({ hidden, volume })),
     [
-      {hidden: true, volume: 0.65},
-      {hidden: true, volume: 0.65},
+      { hidden: true, volume: 0.65 },
+      { hidden: true, volume: 0.65 },
     ],
   );
 });
@@ -3053,18 +3162,63 @@ test("returns the original array for invalid or no-op silence removal ranges", (
   };
   const clips = [video, audio];
 
-  assert.strictEqual(removeSilenceFromLinkedVideo(clips, video.id, [], 30), clips);
   assert.strictEqual(
-    removeSilenceFromLinkedVideo(clips, video.id, [{startSeconds: Number.NaN, endSeconds: 1}], 30),
+    removeSilenceFromLinkedVideo(clips, video.id, [], 30),
     clips,
   );
-  assert.strictEqual(removeSilenceFromLinkedVideo(clips, video.id, [{startSeconds: 4, endSeconds: 5}], 30), clips);
-  assert.strictEqual(removeSilenceFromLinkedVideo(clips, video.id, [{startSeconds: 2, endSeconds: 1}], 30), clips);
-  assert.strictEqual(removeSilenceFromLinkedVideo(clips, video.id, [{startSeconds: 1, endSeconds: 2}], 0), clips);
-  assert.strictEqual(removeSilenceFromLinkedVideo(clips, "missing", [{startSeconds: 1, endSeconds: 2}], 30), clips);
-  const noSourceClips: TimelineClip[] = [{...video, src: undefined}, audio];
   assert.strictEqual(
-    removeSilenceFromLinkedVideo(noSourceClips, video.id, [{startSeconds: 1, endSeconds: 2}], 30),
+    removeSilenceFromLinkedVideo(
+      clips,
+      video.id,
+      [{ startSeconds: Number.NaN, endSeconds: 1 }],
+      30,
+    ),
+    clips,
+  );
+  assert.strictEqual(
+    removeSilenceFromLinkedVideo(
+      clips,
+      video.id,
+      [{ startSeconds: 4, endSeconds: 5 }],
+      30,
+    ),
+    clips,
+  );
+  assert.strictEqual(
+    removeSilenceFromLinkedVideo(
+      clips,
+      video.id,
+      [{ startSeconds: 2, endSeconds: 1 }],
+      30,
+    ),
+    clips,
+  );
+  assert.strictEqual(
+    removeSilenceFromLinkedVideo(
+      clips,
+      video.id,
+      [{ startSeconds: 1, endSeconds: 2 }],
+      0,
+    ),
+    clips,
+  );
+  assert.strictEqual(
+    removeSilenceFromLinkedVideo(
+      clips,
+      "missing",
+      [{ startSeconds: 1, endSeconds: 2 }],
+      30,
+    ),
+    clips,
+  );
+  const noSourceClips: TimelineClip[] = [{ ...video, src: undefined }, audio];
+  assert.strictEqual(
+    removeSilenceFromLinkedVideo(
+      noSourceClips,
+      video.id,
+      [{ startSeconds: 1, endSeconds: 2 }],
+      30,
+    ),
     noSourceClips,
   );
 });
@@ -3081,7 +3235,15 @@ test("returns the original array when the selected video has no linked audio", (
   };
   const clips = [video];
 
-  assert.strictEqual(removeSilenceFromLinkedVideo(clips, video.id, [{startSeconds: 1, endSeconds: 2}], 30), clips);
+  assert.strictEqual(
+    removeSilenceFromLinkedVideo(
+      clips,
+      video.id,
+      [{ startSeconds: 1, endSeconds: 2 }],
+      30,
+    ),
+    clips,
+  );
 });
 
 test("returns the original array when the selected video has a stale linked audio id", () => {
@@ -3097,7 +3259,15 @@ test("returns the original array when the selected video has a stale linked audi
   };
   const clips = [video];
 
-  assert.strictEqual(removeSilenceFromLinkedVideo(clips, video.id, [{startSeconds: 1, endSeconds: 2}], 30), clips);
+  assert.strictEqual(
+    removeSilenceFromLinkedVideo(
+      clips,
+      video.id,
+      [{ startSeconds: 1, endSeconds: 2 }],
+      30,
+    ),
+    clips,
+  );
 });
 
 test("returns the original array when linked audio is not reciprocal", () => {
@@ -3123,7 +3293,15 @@ test("returns the original array when linked audio is not reciprocal", () => {
   };
   const clips = [video, audio];
 
-  assert.strictEqual(removeSilenceFromLinkedVideo(clips, video.id, [{startSeconds: 1, endSeconds: 2}], 30), clips);
+  assert.strictEqual(
+    removeSilenceFromLinkedVideo(
+      clips,
+      video.id,
+      [{ startSeconds: 1, endSeconds: 2 }],
+      30,
+    ),
+    clips,
+  );
 });
 
 test("calculates preview source time from trim offset and playhead", () => {
@@ -3207,7 +3385,7 @@ test("keeps dominant voice ranges in a main video and reciprocal audio only", ()
     start: 0,
     duration: 300,
     color: "#ef4444",
-    caption: {...defaultCaptionStyle, content: "Keep me"},
+    caption: { ...defaultCaptionStyle, content: "Keep me" },
   };
   const staleTranscript: TimelineClip = {
     id: "stale-transcript",
@@ -3291,8 +3469,8 @@ test("keeps dominant voice ranges in a main video and reciprocal audio only", ()
     clips,
     video.id,
     [
-      {startSeconds: 1, endSeconds: 3},
-      {startSeconds: 5, endSeconds: 6},
+      { startSeconds: 1, endSeconds: 3 },
+      { startSeconds: 5, endSeconds: 6 },
     ],
     30,
   );
@@ -3300,7 +3478,7 @@ test("keeps dominant voice ranges in a main video and reciprocal audio only", ()
   assert.deepEqual(
     result
       .filter((clip) => clip.id.startsWith("video-dominant-"))
-      .map(({start, duration, sourceStart, linkedClipId}) => ({
+      .map(({ start, duration, sourceStart, linkedClipId }) => ({
         start,
         duration,
         sourceStart,
@@ -3324,7 +3502,7 @@ test("keeps dominant voice ranges in a main video and reciprocal audio only", ()
   assert.deepEqual(
     result
       .filter((clip) => clip.id.startsWith("audio-dominant-"))
-      .map(({start, duration, sourceStart, linkedClipId}) => ({
+      .map(({ start, duration, sourceStart, linkedClipId }) => ({
         start,
         duration,
         sourceStart,
@@ -3354,7 +3532,16 @@ test("keeps dominant voice ranges in a main video and reciprocal audio only", ()
     result.some((clip) => clip.id === staleTranscript.id),
     false,
   );
-  [overlay, overlayAudio, caption, importedCaption, narration, text, sticker, cutout].forEach((clip) => {
+  [
+    overlay,
+    overlayAudio,
+    caption,
+    importedCaption,
+    narration,
+    text,
+    sticker,
+    cutout,
+  ].forEach((clip) => {
     assert.strictEqual(
       result.find((candidate) => candidate.id === clip.id),
       clip,
@@ -3418,8 +3605,8 @@ test("keeps dominant voice ranges with speed-aware source offsets", () => {
     [fastVideo, fastAudio],
     fastVideo.id,
     [
-      {startSeconds: 1, endSeconds: 3},
-      {startSeconds: 5, endSeconds: 7},
+      { startSeconds: 1, endSeconds: 3 },
+      { startSeconds: 5, endSeconds: 7 },
     ],
     30,
   );
@@ -3427,8 +3614,8 @@ test("keeps dominant voice ranges with speed-aware source offsets", () => {
     [slowVideo, slowAudio],
     slowVideo.id,
     [
-      {startSeconds: 1, endSeconds: 2},
-      {startSeconds: 3, endSeconds: 4},
+      { startSeconds: 1, endSeconds: 2 },
+      { startSeconds: 3, endSeconds: 4 },
     ],
     30,
   );
@@ -3436,27 +3623,27 @@ test("keeps dominant voice ranges with speed-aware source offsets", () => {
   assert.deepEqual(
     fastResult
       .filter((clip) => clip.id.startsWith("fast-video-dominant-"))
-      .map(({start, duration, sourceStart}) => ({
+      .map(({ start, duration, sourceStart }) => ({
         start,
         duration,
         sourceStart,
       })),
     [
-      {start: 20, duration: 30, sourceStart: 120},
-      {start: 50, duration: 30, sourceStart: 240},
+      { start: 20, duration: 30, sourceStart: 120 },
+      { start: 50, duration: 30, sourceStart: 240 },
     ],
   );
   assert.deepEqual(
     slowResult
       .filter((clip) => clip.id.startsWith("slow-video-dominant-"))
-      .map(({start, duration, sourceStart}) => ({
+      .map(({ start, duration, sourceStart }) => ({
         start,
         duration,
         sourceStart,
       })),
     [
-      {start: 10, duration: 60, sourceStart: 90},
-      {start: 70, duration: 60, sourceStart: 150},
+      { start: 10, duration: 60, sourceStart: 90 },
+      { start: 70, duration: 60, sourceStart: 150 },
     ],
   );
 });
@@ -3484,21 +3671,55 @@ test("returns the original clips for invalid dominant voice keep ranges or links
   };
   const clips = [video, audio];
 
-  assert.strictEqual(keepDominantVoiceInLinkedVideo(clips, video.id, [], 30), clips);
   assert.strictEqual(
-    keepDominantVoiceInLinkedVideo(clips, video.id, [{startSeconds: Number.NaN, endSeconds: 1}], 30),
+    keepDominantVoiceInLinkedVideo(clips, video.id, [], 30),
     clips,
   );
-  assert.strictEqual(keepDominantVoiceInLinkedVideo(clips, video.id, [{startSeconds: 2, endSeconds: 1}], 30), clips);
-  assert.strictEqual(keepDominantVoiceInLinkedVideo(clips, video.id, [{startSeconds: 1, endSeconds: 2}], 30), clips);
-
-  const reciprocal = [{...video}, {...audio, linkedClipId: video.id}];
   assert.strictEqual(
-    keepDominantVoiceInLinkedVideo(reciprocal, video.id, [{startSeconds: 0, endSeconds: 3}], 30),
+    keepDominantVoiceInLinkedVideo(
+      clips,
+      video.id,
+      [{ startSeconds: Number.NaN, endSeconds: 1 }],
+      30,
+    ),
+    clips,
+  );
+  assert.strictEqual(
+    keepDominantVoiceInLinkedVideo(
+      clips,
+      video.id,
+      [{ startSeconds: 2, endSeconds: 1 }],
+      30,
+    ),
+    clips,
+  );
+  assert.strictEqual(
+    keepDominantVoiceInLinkedVideo(
+      clips,
+      video.id,
+      [{ startSeconds: 1, endSeconds: 2 }],
+      30,
+    ),
+    clips,
+  );
+
+  const reciprocal = [{ ...video }, { ...audio, linkedClipId: video.id }];
+  assert.strictEqual(
+    keepDominantVoiceInLinkedVideo(
+      reciprocal,
+      video.id,
+      [{ startSeconds: 0, endSeconds: 3 }],
+      30,
+    ),
     reciprocal,
   );
   assert.strictEqual(
-    keepDominantVoiceInLinkedVideo(reciprocal, video.id, [{startSeconds: 1, endSeconds: 2}], 0),
+    keepDominantVoiceInLinkedVideo(
+      reciprocal,
+      video.id,
+      [{ startSeconds: 1, endSeconds: 2 }],
+      0,
+    ),
     reciprocal,
   );
 });
@@ -3527,7 +3748,15 @@ test("does not clean a main-track image for dominant voice", () => {
   };
   const clips = [image, audio];
 
-  assert.strictEqual(keepDominantVoiceInLinkedVideo(clips, image.id, [{startSeconds: 1, endSeconds: 2}], 30), clips);
+  assert.strictEqual(
+    keepDominantVoiceInLinkedVideo(
+      clips,
+      image.id,
+      [{ startSeconds: 1, endSeconds: 2 }],
+      30,
+    ),
+    clips,
+  );
 });
 
 test("keeps metadata-light dominant voice videos while excluding explicit images", () => {
@@ -3574,7 +3803,7 @@ test("keeps metadata-light dominant voice videos while excluding explicit images
   const result = keepDominantVoiceInLinkedVideo(
     [video, audio, laterVideo, laterImage],
     video.id,
-    [{startSeconds: 0, endSeconds: 1}],
+    [{ startSeconds: 0, endSeconds: 1 }],
     30,
   );
 
@@ -3640,13 +3869,13 @@ test("keeps main-track images and unrelated overlay transitions unchanged", () =
     src: "overlay.mp4",
     mediaType: "video",
     color: "#7c3aed",
-    transition: {preset: "fade", duration: 12},
+    transition: { preset: "fade", duration: 12 },
   };
 
   const result = keepDominantVoiceInLinkedVideo(
     [video, audio, laterVideo, laterImage, overlay],
     video.id,
-    [{startSeconds: 0, endSeconds: 1}],
+    [{ startSeconds: 0, endSeconds: 1 }],
     30,
   );
 
@@ -3689,7 +3918,7 @@ test("returns the original clips for malformed dominant voice ranges", () => {
     keepDominantVoiceInLinkedVideo(
       clips,
       video.id,
-      [null, {startSeconds: 1, endSeconds: 2}] as unknown as Array<{
+      [null, { startSeconds: 1, endSeconds: 2 }] as unknown as Array<{
         startSeconds: number;
         endSeconds: number;
       }>,
@@ -3728,14 +3957,14 @@ test("left trim consumes source frames at the selected clip speed", () => {
   const result = trimClipById(clips, "main-fast", "left", 30);
 
   assert.deepEqual(
-    result.map(({start, duration, sourceStart}) => ({
+    result.map(({ start, duration, sourceStart }) => ({
       start,
       duration,
       sourceStart,
     })),
     [
-      {start: 30, duration: 90, sourceStart: 100},
-      {start: 30, duration: 90, sourceStart: 100},
+      { start: 30, duration: 90, sourceStart: 100 },
+      { start: 30, duration: 90, sourceStart: 100 },
     ],
   );
 });
@@ -3884,18 +4113,21 @@ test("preserves a linked scene range through main placement and undo redo", () =
     sourceStart: 60,
   });
   const placed = placeVideoPairOnLayer(original, scenePair, 0, 120);
-  const committed = applyTimelineHistoryEdit(createTimelineHistory(original), placed);
+  const committed = applyTimelineHistoryEdit(
+    createTimelineHistory(original),
+    placed,
+  );
 
   assert.deepEqual(
-    placed.map(({id, duration, sourceStart}) => ({
+    placed.map(({ id, duration, sourceStart }) => ({
       id,
       duration,
       sourceStart,
     })),
     [
-      {id: "original-main", duration: 30, sourceStart: undefined},
-      {id: "scene-video", duration: 90, sourceStart: 60},
-      {id: "scene-audio", duration: 90, sourceStart: 60},
+      { id: "original-main", duration: 30, sourceStart: undefined },
+      { id: "scene-video", duration: 90, sourceStart: 60 },
+      { id: "scene-audio", duration: 90, sourceStart: 60 },
     ],
   );
 
@@ -3925,9 +4157,14 @@ test("preserves a linked scene range in an inserted signed layer", () => {
     sourceStart: 150,
   });
 
-  const placed = placeVideoPairInInsertedLayer([main, mainAudio], scenePair, -1, 45);
-  const overlay = placed.find(({id}) => id === "scene-overlay");
-  const audio = placed.find(({id}) => id === "scene-overlay-audio");
+  const placed = placeVideoPairInInsertedLayer(
+    [main, mainAudio],
+    scenePair,
+    -1,
+    45,
+  );
+  const overlay = placed.find(({ id }) => id === "scene-overlay");
+  const audio = placed.find(({ id }) => id === "scene-overlay-audio");
 
   assert.equal(getVideoLayer(overlay!), -1);
   assert.equal(overlay?.sourceStart, 150);
@@ -3990,9 +4227,13 @@ test("returns only the selected video's linked audio for contextual playback", (
     src: "narration.wav",
   };
 
-  assert.deepEqual(getContextualAudioClips([main, mainAudio, overlay, overlayAudio, narration], overlay.id), [
-    overlayAudio,
-  ]);
+  assert.deepEqual(
+    getContextualAudioClips(
+      [main, mainAudio, overlay, overlayAudio, narration],
+      overlay.id,
+    ),
+    [overlayAudio],
+  );
 });
 
 test("returns the complete reciprocal audio speech sequence in timeline order", () => {
@@ -4016,7 +4257,12 @@ test("returns the complete reciprocal audio speech sequence in timeline order", 
     color: "#2563eb",
     linkedClipId: "lesson-video",
   };
-  const segments = removeSilenceFromLinkedVideo([video, audio], video.id, [{startSeconds: 1, endSeconds: 2}], 30);
+  const segments = removeSilenceFromLinkedVideo(
+    [video, audio],
+    video.id,
+    [{ startSeconds: 1, endSeconds: 2 }],
+    30,
+  );
   const videoSegments = segments.filter((clip) => clip.track === "main");
   const audioSegments = segments.filter((clip) => clip.track === "audio");
   const unrelatedNarration: TimelineClip = {
@@ -4112,7 +4358,15 @@ test("prioritizes the active topmost overlay audio during playback", () => {
     color: "#2563eb",
     src: "narration.wav",
   };
-  const clips = [main, mainAudio, firstOverlay, firstOverlayAudio, topOverlay, topOverlayAudio, narration];
+  const clips = [
+    main,
+    mainAudio,
+    firstOverlay,
+    firstOverlayAudio,
+    topOverlay,
+    topOverlayAudio,
+    narration,
+  ];
 
   assert.deepEqual(
     getPlaybackAudioClips(clips, 30).map((clip) => clip.id),
@@ -4148,12 +4402,118 @@ test("falls back to main audio when the top overlay audio is muted", () => {
     duration: 120,
     overlayLane: 0,
   });
-  const mutedOverlay = {...overlay, volume: 0};
-  const mutedOverlayAudio = {...overlayAudio, volume: 0};
+  const mutedOverlay = { ...overlay, volume: 0 };
+  const mutedOverlayAudio = { ...overlayAudio, volume: 0 };
 
   assert.deepEqual(
-    getPlaybackAudioClips([main, mainAudio, mutedOverlay, mutedOverlayAudio], 30).map((clip) => clip.id),
+    getPlaybackAudioClips(
+      [main, mainAudio, mutedOverlay, mutedOverlayAudio],
+      30,
+    ).map((clip) => clip.id),
     [mainAudio.id],
+  );
+});
+
+test("toggles one video layer with its audio and lets that audio be restored independently", () => {
+  const [main, mainAudio] = createVideoMediaPair({
+    videoId: "visibility-main",
+    audioId: "visibility-main-audio",
+    track: "main",
+    label: "Main",
+    src: "main.mp4",
+    start: 0,
+    duration: 180,
+  });
+  const [overlay, overlayAudio] = createVideoMediaPair({
+    videoId: "visibility-overlay",
+    audioId: "visibility-overlay-audio",
+    track: "upper",
+    label: "Overlay",
+    src: "overlay.mp4",
+    start: 0,
+    duration: 180,
+    overlayLane: 1,
+  });
+  const clips = [main, mainAudio, overlay, overlayAudio];
+
+  const hiddenOverlay = toggleTrackVisibility(clips, "upper", 2);
+  assert.equal(
+    hiddenOverlay.find((clip) => clip.id === overlay.id)?.hidden,
+    true,
+  );
+  assert.equal(
+    hiddenOverlay.find((clip) => clip.id === overlayAudio.id)?.hidden,
+    true,
+  );
+  assert.equal(
+    hiddenOverlay.find((clip) => clip.id === main.id)?.hidden,
+    undefined,
+  );
+  assert.equal(isTrackHidden(hiddenOverlay, "upper", 2), true);
+
+  const restoredOverlayAudio = toggleTrackVisibility(
+    hiddenOverlay,
+    "audio",
+    null,
+    [overlayAudio.id],
+  );
+  assert.equal(
+    restoredOverlayAudio.find((clip) => clip.id === overlay.id)?.hidden,
+    true,
+  );
+  assert.equal(
+    restoredOverlayAudio.find((clip) => clip.id === overlayAudio.id)?.hidden,
+    false,
+  );
+  assert.deepEqual(
+    getIndependentPlaybackAudioClips(restoredOverlayAudio, 30).map(
+      (clip) => clip.id,
+    ),
+    [overlayAudio.id],
+  );
+
+  const shownOverlay = toggleTrackVisibility(restoredOverlayAudio, "upper", 2);
+  assert.equal(
+    shownOverlay.find((clip) => clip.id === overlay.id)?.hidden,
+    false,
+  );
+  assert.equal(
+    shownOverlay.find((clip) => clip.id === overlayAudio.id)?.hidden,
+    false,
+  );
+});
+
+test("toggles every clip on a non-video track together", () => {
+  const stickers: TimelineClip[] = [
+    {
+      id: "sticker-one",
+      label: "One",
+      track: "sticker",
+      start: 0,
+      duration: 60,
+      color: "#f59e0b",
+    },
+    {
+      id: "sticker-two",
+      label: "Two",
+      track: "sticker",
+      start: 60,
+      duration: 60,
+      color: "#f59e0b",
+    },
+  ];
+
+  const hidden = toggleTrackVisibility(stickers, "sticker");
+  assert.equal(
+    hidden.every((clip) => clip.hidden),
+    true,
+  );
+  assert.equal(isTrackHidden(hidden, "sticker"), true);
+
+  const shown = toggleTrackVisibility(hidden, "sticker");
+  assert.equal(
+    shown.every((clip) => clip.hidden === false),
+    true,
   );
 });
 
@@ -4229,7 +4589,9 @@ test("preserves occupied clips and snaps imported media after them on the target
   );
   assert.deepEqual(
     result
-      .filter((clip) => clip.id === replacement.id || clip.id === replacementAudio.id)
+      .filter(
+        (clip) => clip.id === replacement.id || clip.id === replacementAudio.id,
+      )
       .map((clip) => ({
         id: clip.id,
         track: clip.track,
@@ -4294,10 +4656,19 @@ test("inserts a new video layer between main and the first overlay layer", () =>
   );
 
   assert.equal(getVideoLayer(result.find((clip) => clip.id === "main")!), 0);
-  assert.equal(getVideoLayer(result.find((clip) => clip.id === "new-overlay")!), 1);
-  assert.equal(getVideoLayer(result.find((clip) => clip.id === "existing-overlay")!), 2);
+  assert.equal(
+    getVideoLayer(result.find((clip) => clip.id === "new-overlay")!),
+    1,
+  );
+  assert.equal(
+    getVideoLayer(result.find((clip) => clip.id === "existing-overlay")!),
+    2,
+  );
   assert.equal(result.find((clip) => clip.id === "new-overlay")?.start, 30);
-  assert.equal(result.find((clip) => clip.id === "new-overlay-audio")?.start, 30);
+  assert.equal(
+    result.find((clip) => clip.id === "new-overlay-audio")?.start,
+    30,
+  );
 });
 
 test("visual tools fall back to the highest visible signed video layer", () => {
@@ -4343,7 +4714,10 @@ test("visual tools fall back to the highest visible signed video layer", () => {
 
   const clips = [aboveOne, main, aboveThree, below];
 
-  assert.deepEqual(getActiveVideoLayersAtFrame(clips, 30).map(getVideoLayer), [-1, 0, 1, 3]);
+  assert.deepEqual(
+    getActiveVideoLayersAtFrame(clips, 30).map(getVideoLayer),
+    [-1, 0, 1, 3],
+  );
   assert.equal(getTopVisibleVideoClipAtFrame(clips, 30)?.id, aboveThree.id);
   assert.equal(getVisualToolTargetClipId(clips, null, 30), aboveThree.id);
 });
@@ -4393,7 +4767,12 @@ test("snaps a moved clip after an occupied clip without deleting either clip", (
     duration: 90,
   });
 
-  const moved = moveVideoClipToLayer([oldClip, newClip, newAudio], newClip.id, 0, 80);
+  const moved = moveVideoClipToLayer(
+    [oldClip, newClip, newAudio],
+    newClip.id,
+    0,
+    80,
+  );
 
   assert.equal(moved.find((clip) => clip.id === oldClip.id)?.start, 0);
   assert.equal(moved.find((clip) => clip.id === newClip.id)?.start, 120);
@@ -4458,10 +4837,16 @@ test("creates a three-second sticker clip at the playhead", () => {
     duration: 90,
     color: "#f59e0b",
     src: "data:image/svg+xml,star",
-    sticker: {x: 50, y: 50, scale: 1, rotation: 0},
+    sticker: { x: 50, y: 50, scale: 1, rotation: 0 },
   });
-  assert.equal(getActiveClipAtFrame([sticker], "sticker", 120)?.id, "sticker-1");
-  assert.equal(getActiveClipAtFrame([sticker], "sticker", 209)?.id, "sticker-1");
+  assert.equal(
+    getActiveClipAtFrame([sticker], "sticker", 120)?.id,
+    "sticker-1",
+  );
+  assert.equal(
+    getActiveClipAtFrame([sticker], "sticker", 209)?.id,
+    "sticker-1",
+  );
   assert.equal(getActiveClipAtFrame([sticker], "sticker", 210), undefined);
 });
 
@@ -4488,7 +4873,10 @@ test("appends overlapping stickers without changing other tracks", () => {
     playheadFrame: 30,
   });
 
-  const result = appendStickerClip(appendStickerClip([main, audio], firstSticker), secondSticker);
+  const result = appendStickerClip(
+    appendStickerClip([main, audio], firstSticker),
+    secondSticker,
+  );
 
   assert.deepEqual(
     result.filter((clip) => clip.track === "sticker"),
@@ -4511,7 +4899,10 @@ test("shows optional timeline tracks only while they contain clips", () => {
 
   assert.equal(hasClipsOnTrack(clips, "sticker"), true);
   assert.equal(hasClipsOnTrack(clips, "caption"), false);
-  assert.equal(hasClipsOnTrack(deleteClipById(clips, "sticker-1"), "sticker"), false);
+  assert.equal(
+    hasClipsOnTrack(deleteClipById(clips, "sticker-1"), "sticker"),
+    false,
+  );
 });
 
 test("creates a three-second text clip at the playhead", () => {
@@ -4670,17 +5061,31 @@ test("sets exact speed on every video in one signed layer and its linked audio",
 
   assert.deepEqual(
     result
-      .filter((clip) => ["main-1", "main-audio-1", "main-2", "main-audio-2", "legacy-main"].includes(clip.id))
-      .map(({id, speed}) => ({id, speed})),
+      .filter((clip) =>
+        [
+          "main-1",
+          "main-audio-1",
+          "main-2",
+          "main-audio-2",
+          "legacy-main",
+        ].includes(clip.id),
+      )
+      .map(({ id, speed }) => ({ id, speed })),
     [
-      {id: "main-1", speed: 1.5},
-      {id: "main-audio-1", speed: 1.5},
-      {id: "main-2", speed: 1.5},
-      {id: "main-audio-2", speed: 1.5},
-      {id: "legacy-main", speed: 1.5},
+      { id: "main-1", speed: 1.5 },
+      { id: "main-audio-1", speed: 1.5 },
+      { id: "main-2", speed: 1.5 },
+      { id: "main-audio-2", speed: 1.5 },
+      { id: "legacy-main", speed: 1.5 },
     ],
   );
-  for (const id of ["overlay", "overlay-audio", "narration", "music", "caption"]) {
+  for (const id of [
+    "overlay",
+    "overlay-audio",
+    "narration",
+    "music",
+    "caption",
+  ]) {
     assert.strictEqual(
       result.find((clip) => clip.id === id),
       layerControlClips.find((clip) => clip.id === id),
@@ -4783,16 +5188,16 @@ test("keeps a video layer contiguous when speeding up", () => {
   const videos = result.filter((clip) => clip.id.startsWith("ripple-video"));
 
   assert.deepEqual(
-    videos.map(({id, start, duration, speed}) => ({
+    videos.map(({ id, start, duration, speed }) => ({
       id,
       start,
       duration,
       speed,
     })),
     [
-      {id: "ripple-video-1", start: 30, duration: 60, speed: 2},
-      {id: "ripple-video-2", start: 90, duration: 90, speed: 2},
-      {id: "ripple-video-3", start: 180, duration: 120, speed: 2},
+      { id: "ripple-video-1", start: 30, duration: 60, speed: 2 },
+      { id: "ripple-video-2", start: 90, duration: 90, speed: 2 },
+      { id: "ripple-video-3", start: 180, duration: 120, speed: 2 },
     ],
   );
 
@@ -4817,21 +5222,27 @@ test("keeps a video layer contiguous when slowing down", () => {
   const videos = result.filter((clip) => clip.id.startsWith("ripple-video"));
 
   assert.deepEqual(
-    videos.map(({id, start, duration, speed}) => ({
+    videos.map(({ id, start, duration, speed }) => ({
       id,
       start,
       duration,
       speed,
     })),
     [
-      {id: "ripple-video-1", start: 30, duration: 240, speed: 0.5},
-      {id: "ripple-video-2", start: 270, duration: 360, speed: 0.5},
-      {id: "ripple-video-3", start: 630, duration: 480, speed: 0.5},
+      { id: "ripple-video-1", start: 30, duration: 240, speed: 0.5 },
+      { id: "ripple-video-2", start: 270, duration: 360, speed: 0.5 },
+      { id: "ripple-video-3", start: 630, duration: 480, speed: 0.5 },
     ],
   );
 
-  assert.equal(videos[1]?.start, (videos[0]?.start ?? 0) + (videos[0]?.duration ?? 0));
-  assert.equal(videos[2]?.start, (videos[1]?.start ?? 0) + (videos[1]?.duration ?? 0));
+  assert.equal(
+    videos[1]?.start,
+    (videos[0]?.start ?? 0) + (videos[0]?.duration ?? 0),
+  );
+  assert.equal(
+    videos[2]?.start,
+    (videos[1]?.start ?? 0) + (videos[1]?.duration ?? 0),
+  );
   for (const video of videos) {
     const audio = result.find((clip) => clip.id === video.linkedClipId);
     assert.ok(audio);
@@ -4846,7 +5257,14 @@ test("sets exact volume on every video in one signed layer and its linked audio"
 
   assert.equal(result.find((clip) => clip.id === "overlay")?.volume, 0.7);
   assert.equal(result.find((clip) => clip.id === "overlay-audio")?.volume, 0.7);
-  for (const id of ["main-1", "main-audio-1", "legacy-main", "narration", "music", "caption"]) {
+  for (const id of [
+    "main-1",
+    "main-audio-1",
+    "legacy-main",
+    "narration",
+    "music",
+    "caption",
+  ]) {
     assert.strictEqual(
       result.find((clip) => clip.id === id),
       layerControlClips.find((clip) => clip.id === id),
@@ -4985,12 +5403,12 @@ test("leaves one-way linked audio untouched by signed-layer controls", () => {
 });
 
 test("finalizes multiple video-layer drag previews as one undoable history entry", () => {
-  const original = layerControlClips.map((clip) => ({...clip}));
+  const original = layerControlClips.map((clip) => ({ ...clip }));
   const gesture = startVideoLayerControlHistoryGesture(original, 1, "speed");
   const firstPreview = previewVideoLayerControlHistoryGesture(gesture, 1.25);
   const secondPreview = previewVideoLayerControlHistoryGesture(gesture, 1.5);
   const completed = finishVideoLayerControlHistoryGesture(
-    {...createTimelineHistory(original), present: secondPreview},
+    { ...createTimelineHistory(original), present: secondPreview },
     gesture,
   );
 
@@ -5000,12 +5418,12 @@ test("finalizes multiple video-layer drag previews as one undoable history entry
 });
 
 test("finalizes multiple video-layer volume previews as one undoable history entry", () => {
-  const original = layerControlClips.map((clip) => ({...clip}));
+  const original = layerControlClips.map((clip) => ({ ...clip }));
   const gesture = startVideoLayerControlHistoryGesture(original, 1, "volume");
   const firstPreview = previewVideoLayerControlHistoryGesture(gesture, 0.8);
   const secondPreview = previewVideoLayerControlHistoryGesture(gesture, 0.5);
   const completed = finishVideoLayerControlHistoryGesture(
-    {...createTimelineHistory(original), present: secondPreview},
+    { ...createTimelineHistory(original), present: secondPreview },
     gesture,
   );
 
@@ -5015,10 +5433,22 @@ test("finalizes multiple video-layer volume previews as one undoable history ent
 });
 
 test("rejects invalid video-layer speed and volume values", () => {
-  assert.strictEqual(setVideoLayerSpeed(layerControlClips, 0, 0), layerControlClips);
-  assert.strictEqual(setVideoLayerSpeed(layerControlClips, 0, Number.NaN), layerControlClips);
-  assert.strictEqual(setVideoLayerVolume(layerControlClips, 0, -0.1), layerControlClips);
-  assert.strictEqual(setVideoLayerVolume(layerControlClips, 0, Number.NaN), layerControlClips);
+  assert.strictEqual(
+    setVideoLayerSpeed(layerControlClips, 0, 0),
+    layerControlClips,
+  );
+  assert.strictEqual(
+    setVideoLayerSpeed(layerControlClips, 0, Number.NaN),
+    layerControlClips,
+  );
+  assert.strictEqual(
+    setVideoLayerVolume(layerControlClips, 0, -0.1),
+    layerControlClips,
+  );
+  assert.strictEqual(
+    setVideoLayerVolume(layerControlClips, 0, Number.NaN),
+    layerControlClips,
+  );
 });
 
 test("creates a three-second image cutout at the playhead", () => {
@@ -5071,7 +5501,9 @@ test("creates a linked video cutout and audio pair at the playhead", () => {
   assert.equal(audio.linkedClipId, cutout.id);
   assert.equal(audio.start, cutout.start);
   assert.equal(audio.duration, cutout.duration);
-  assert.deepEqual(getContextualAudioClips([cutout, audio], cutout.id), [audio]);
+  assert.deepEqual(getContextualAudioClips([cutout, audio], cutout.id), [
+    audio,
+  ]);
   assert.deepEqual(getPlaybackAudioClips([cutout, audio], 150), [audio]);
 });
 
@@ -5134,11 +5566,21 @@ test("sets a solid-color key on selected main and cutout videos", () => {
     playheadFrame: 0,
   });
 
-  const updated = setCutoutChromaKeyById([videoCutout, audio, imageCutout], videoCutout.id, "green");
+  const updated = setCutoutChromaKeyById(
+    [videoCutout, audio, imageCutout],
+    videoCutout.id,
+    "green",
+  );
 
-  assert.equal(updated.find((clip) => clip.id === videoCutout.id)?.cutout?.chromaKey, "green");
+  assert.equal(
+    updated.find((clip) => clip.id === videoCutout.id)?.cutout?.chromaKey,
+    "green",
+  );
   assert.equal(updated.find((clip) => clip.id === audio.id)?.cutout, undefined);
-  assert.equal(setCutoutChromaKeyById(updated, imageCutout.id, "white"), updated);
+  assert.equal(
+    setCutoutChromaKeyById(updated, imageCutout.id, "white"),
+    updated,
+  );
 
   const mainVideo = {
     id: "main-video-key",
@@ -5153,9 +5595,13 @@ test("sets a solid-color key on selected main and cutout videos", () => {
   const keyedMain = setCutoutChromaKeyById([mainVideo], mainVideo.id, "green");
   assert.equal(keyedMain[0]?.chromaKey, "green");
 
-  const legacyMain = {...mainVideo, id: "legacy-main-video"};
+  const legacyMain = { ...mainVideo, id: "legacy-main-video" };
   delete (legacyMain as Partial<typeof legacyMain>).mediaType;
-  const keyedLegacyMain = setCutoutChromaKeyById([legacyMain], legacyMain.id, "white");
+  const keyedLegacyMain = setCutoutChromaKeyById(
+    [legacyMain],
+    legacyMain.id,
+    "white",
+  );
   assert.equal(keyedLegacyMain[0]?.chromaKey, "white");
 });
 
@@ -5200,14 +5646,14 @@ test("stores erase and restore strokes and can reset the cutout mask", () => {
     mode: "erase",
     size: 12,
     points: [
-      {x: 10, y: 20},
-      {x: 30, y: 40},
+      { x: 10, y: 20 },
+      { x: 30, y: 40 },
     ],
   });
   const restored = appendCutoutMaskStroke(erased, cutout.id, {
     mode: "restore",
     size: 8,
-    points: [{x: 20, y: 30}],
+    points: [{ x: 20, y: 30 }],
   });
 
   assert.equal(restored[0]?.cutout?.maskStrokes?.length, 2);
@@ -5216,7 +5662,10 @@ test("stores erase and restore strokes and can reset the cutout mask", () => {
   const decodedMask = decodeURIComponent(maskUrl.split(",", 2)[1] ?? "");
   assert.match(decodedMask, /<mask id="cutout-mask"/);
   assert.match(decodedMask, /mask="url\(#cutout-mask\)"/);
-  assert.deepEqual(resetCutoutMask(restored, cutout.id)[0]?.cutout?.maskStrokes, []);
+  assert.deepEqual(
+    resetCutoutMask(restored, cutout.id)[0]?.cutout?.maskStrokes,
+    [],
+  );
 });
 
 test("resetting an automatic cutout restores its original image source", () => {
@@ -5226,7 +5675,11 @@ test("resetting an automatic cutout restores its original image source", () => {
     src: "uploads/bottle-original.png",
     playheadFrame: 0,
   });
-  const processed = applyAutomaticCutoutById([cutout], cutout.id, "uploads/bottle-background-removed.png");
+  const processed = applyAutomaticCutoutById(
+    [cutout],
+    cutout.id,
+    "uploads/bottle-background-removed.png",
+  );
 
   const reset = resetCutoutMask(processed, cutout.id);
 
@@ -5294,12 +5747,18 @@ test("automatic video cutout rebases a processed split segment and preserves tim
       scale: 1.4,
       rotation: -12,
       chromaKey: "green" as const,
-      maskStrokes: [{mode: "erase" as const, size: 12, points: [{x: 10, y: 20}]}],
+      maskStrokes: [
+        { mode: "erase" as const, size: 12, points: [{ x: 10, y: 20 }] },
+      ],
     },
   };
   const clips = [cutout, audio];
 
-  const result = applyAutomaticCutoutById(clips, cutout.id, "uploads/person-transparent.webm");
+  const result = applyAutomaticCutoutById(
+    clips,
+    cutout.id,
+    "uploads/person-transparent.webm",
+  );
 
   assert.equal(result[0]?.src, "uploads/person-transparent.webm");
   assert.equal(result[0]?.id, cutout.id);
@@ -5316,7 +5775,11 @@ test("automatic video cutout rebases a processed split segment and preserves tim
   });
   assert.strictEqual(result[1], audio);
 
-  const repeated = applyAutomaticCutoutById(result, cutout.id, "uploads/person-transparent-v2.webm");
+  const repeated = applyAutomaticCutoutById(
+    result,
+    cutout.id,
+    "uploads/person-transparent-v2.webm",
+  );
 
   assert.equal(repeated[0]?.src, "uploads/person-transparent-v2.webm");
   assert.equal(repeated[0]?.sourceStart, 0);
@@ -5334,8 +5797,8 @@ test("split and trim preserve effective original offsets for a processed 2x vide
     start: 0,
     duration: 120,
   });
-  const originalVideo = {...video, sourceStart: 90, speed: 2};
-  const originalAudio = {...audio, sourceStart: 90, speed: 2};
+  const originalVideo = { ...video, sourceStart: 90, speed: 2 };
+  const originalAudio = { ...audio, sourceStart: 90, speed: 2 };
   const processed = applyAutomaticCutoutById(
     [originalVideo, originalAudio],
     originalVideo.id,
@@ -5346,14 +5809,21 @@ test("split and trim preserve effective original offsets for a processed 2x vide
   const splitRight = split.find((clip) => clip.id === `${originalVideo.id}-b`)!;
   assert.equal(splitRight.sourceStart, 60);
   assert.equal(getEffectiveCutoutOriginalSourceStart(splitRight), 150);
-  assert.equal(resetCutoutMask(split, splitRight.id).find((clip) => clip.id === splitRight.id)?.sourceStart, 150);
+  assert.equal(
+    resetCutoutMask(split, splitRight.id).find(
+      (clip) => clip.id === splitRight.id,
+    )?.sourceStart,
+    150,
+  );
 
   const trimmed = trimClipById(processed, originalVideo.id, "left", 30);
   const trimmedVideo = trimmed.find((clip) => clip.id === originalVideo.id)!;
   assert.equal(trimmedVideo.sourceStart, 60);
   assert.equal(getEffectiveCutoutOriginalSourceStart(trimmedVideo), 150);
   assert.equal(
-    resetCutoutMask(trimmed, originalVideo.id).find((clip) => clip.id === originalVideo.id)?.sourceStart,
+    resetCutoutMask(trimmed, originalVideo.id).find(
+      (clip) => clip.id === originalVideo.id,
+    )?.sourceStart,
     150,
   );
 });
@@ -5367,9 +5837,13 @@ test("resetting an automatic video cutout restores its original source offset an
     start: 120,
     duration: 180,
   });
-  const cutout = {...video, sourceStart: 75, speed: 1.5};
-  const audio = {...createdAudio, sourceStart: 75, speed: 1.5};
-  const processed = applyAutomaticCutoutById([cutout, audio], cutout.id, "uploads/speaker-transparent.webm");
+  const cutout = { ...video, sourceStart: 75, speed: 1.5 };
+  const audio = { ...createdAudio, sourceStart: 75, speed: 1.5 };
+  const processed = applyAutomaticCutoutById(
+    [cutout, audio],
+    cutout.id,
+    "uploads/speaker-transparent.webm",
+  );
 
   const reset = resetCutoutMask(processed, cutout.id);
 
@@ -5386,8 +5860,9 @@ test("resetting an automatic video cutout restores its original source offset an
 
 test("automatically removes pixels matching the image corner background", () => {
   const pixels = new Uint8ClampedArray([
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 20, 40, 80, 255, 255, 255, 255, 255,
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 20, 40, 80, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255,
   ]);
 
   const result = removeBackgroundPixels(pixels, 3, 3, 30);
@@ -5395,8 +5870,9 @@ test("automatically removes pixels matching the image corner background", () => 
   assert.deepEqual(
     Array.from(result),
     [
-      255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0, 20, 40, 80, 255, 255, 255, 255, 0, 255,
-      255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0,
+      255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0,
+      20, 40, 80, 255, 255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0,
+      255, 255, 255, 0,
     ],
   );
 });
@@ -5499,8 +5975,9 @@ test("automatic cutout keeps the central subject and removes off-center decorati
 
 test("automatic cutout removes enclosed white background pixels", () => {
   const pixels = new Uint8ClampedArray([
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255,
   ]);
 
   const result = removeBackgroundPixels(pixels, 3, 3, 72);
@@ -5541,11 +6018,19 @@ test("automatic cutout retains the original source for manual restoration", () =
   const erased = appendCutoutMaskStroke([cutout], cutout.id, {
     mode: "erase",
     size: 12,
-    points: [{x: 50, y: 50}],
+    points: [{ x: 50, y: 50 }],
   })[0];
 
-  const processed = applyAutomaticCutoutById([erased], cutout.id, "uploads/bottle-cutout.png");
-  const repeated = applyAutomaticCutoutById(processed, cutout.id, "uploads/bottle-cutout-2.png");
+  const processed = applyAutomaticCutoutById(
+    [erased],
+    cutout.id,
+    "uploads/bottle-cutout.png",
+  );
+  const repeated = applyAutomaticCutoutById(
+    processed,
+    cutout.id,
+    "uploads/bottle-cutout-2.png",
+  );
 
   assert.equal(repeated[0]?.src, "uploads/bottle-cutout-2.png");
   assert.equal(repeated[0]?.cutout?.originalSrc, "uploads/bottle-original.png");
@@ -5562,10 +6047,12 @@ test("restore mask reveals only areas painted with the restore brush", () => {
   const restored = appendCutoutMaskStroke([cutout], cutout.id, {
     mode: "restore",
     size: 10,
-    points: [{x: 50, y: 50}],
+    points: [{ x: 50, y: 50 }],
   });
 
-  const decoded = decodeURIComponent(createCutoutRestoreMaskDataUrl(restored[0]?.cutout).split(",", 2)[1] ?? "");
+  const decoded = decodeURIComponent(
+    createCutoutRestoreMaskDataUrl(restored[0]?.cutout).split(",", 2)[1] ?? "",
+  );
   assert.match(decoded, /<rect width="100" height="100" fill="black"\/>/);
   assert.match(decoded, /fill="white"/);
 });
@@ -5626,10 +6113,19 @@ test("returns deterministic one-time text entrance presentations", () => {
     playheadFrame: 30,
   });
   const withAnimation = (
-    animation: "pop" | "jump" | "fade" | "star-jump" | "bounce" | "typewriter" | "wave" | "flicker" | "spin-in",
+    animation:
+      | "pop"
+      | "jump"
+      | "fade"
+      | "star-jump"
+      | "bounce"
+      | "typewriter"
+      | "wave"
+      | "flicker"
+      | "spin-in",
   ) => ({
     ...base,
-    text: {...base.text!, animation},
+    text: { ...base.text!, animation },
   });
 
   assert.deepEqual(getTextAnimationPresentation(base, 30), {
@@ -5645,7 +6141,9 @@ test("returns deterministic one-time text entrance presentations", () => {
     rotation: 0,
   });
   assert.ok(getTextAnimationPresentation(withAnimation("pop"), 42).scale > 1);
-  assert.ok(getTextAnimationPresentation(withAnimation("jump"), 30).translateY > 0);
+  assert.ok(
+    getTextAnimationPresentation(withAnimation("jump"), 30).translateY > 0,
+  );
   assert.deepEqual(getTextAnimationPresentation(withAnimation("jump"), 45), {
     opacity: 1,
     scale: 1,
@@ -5661,29 +6159,59 @@ test("creative text animations are deterministic and settle correctly", () => {
     playheadFrame: 30,
   });
   const withAnimation = (
-    animation: "pop" | "jump" | "fade" | "star-jump" | "bounce" | "typewriter" | "wave" | "flicker" | "spin-in",
+    animation:
+      | "pop"
+      | "jump"
+      | "fade"
+      | "star-jump"
+      | "bounce"
+      | "typewriter"
+      | "wave"
+      | "flicker"
+      | "spin-in",
   ) => ({
     ...base,
-    text: {...base.text!, animation},
+    text: { ...base.text!, animation },
   });
   const starClip = withAnimation("star-jump");
-  assert.deepEqual(getTextAnimationStars(starClip, 42, 1, 3), getTextAnimationStars(starClip, 42, 1, 3));
+  assert.deepEqual(
+    getTextAnimationStars(starClip, 42, 1, 3),
+    getTextAnimationStars(starClip, 42, 1, 3),
+  );
   assert.ok(getTextAnimationStars(starClip, 42, 1, 3).length > 0);
   assert.deepEqual(getTextAnimationStars(starClip, 42, 0, 3), []);
 
-  const bounce = getTextAnimationWordPresentation(withAnimation("bounce"), 36, 0, 3);
+  const bounce = getTextAnimationWordPresentation(
+    withAnimation("bounce"),
+    36,
+    0,
+    3,
+  );
   assert.notEqual(bounce.translateY, 0);
 
-  const wave = getTextAnimationWordPresentation(withAnimation("wave"), 48, 1, 3);
+  const wave = getTextAnimationWordPresentation(
+    withAnimation("wave"),
+    48,
+    1,
+    3,
+  );
   assert.notEqual(wave.translateY, 0);
 
   const typewriter = withAnimation("typewriter");
   assert.equal(getTextAnimationVisibleCharacterCount(typewriter, 30), 0);
   assert.ok(getTextAnimationVisibleCharacterCount(typewriter, 45) > 0);
-  assert.equal(getTextAnimationVisibleCharacterCount(typewriter, 120), typewriter.text?.content.length);
+  assert.equal(
+    getTextAnimationVisibleCharacterCount(typewriter, 120),
+    typewriter.text?.content.length,
+  );
 
-  assert.ok(getTextAnimationPresentation(withAnimation("flicker"), 34).opacity < 1);
-  assert.notEqual(getTextAnimationPresentation(withAnimation("spin-in"), 34).rotation, 0);
+  assert.ok(
+    getTextAnimationPresentation(withAnimation("flicker"), 34).opacity < 1,
+  );
+  assert.notEqual(
+    getTextAnimationPresentation(withAnimation("spin-in"), 34).rotation,
+    0,
+  );
   assert.deepEqual(getTextAnimationPresentation(withAnimation("spin-in"), 60), {
     opacity: 1,
     scale: 1,
@@ -5828,7 +6356,7 @@ test("projects screen pointer movement onto a rotated text box", () => {
       previewWidth: 200,
       previewHeight: 100,
     }),
-    {deltaX: 0, deltaY: -10},
+    { deltaX: 0, deltaY: -10 },
   );
 });
 
@@ -5848,8 +6376,14 @@ test("rotates selected text while preserving its style and timing", () => {
       rotation: 47,
     },
   });
-  assert.equal(setTextRotationById([textClip], "text-1", 250)[0].text?.rotation, 180);
-  assert.equal(setTextRotationById([textClip], "text-1", -250)[0].text?.rotation, -180);
+  assert.equal(
+    setTextRotationById([textClip], "text-1", 250)[0].text?.rotation,
+    180,
+  );
+  assert.equal(
+    setTextRotationById([textClip], "text-1", -250)[0].text?.rotation,
+    -180,
+  );
 });
 
 test("serializes and parses a saved editor project", () => {
@@ -5994,9 +6528,9 @@ test("creates generated captions from transcript segments on the selected source
   const result = createGeneratedCaptionClips({
     sourceClip,
     segments: [
-      {startSeconds: 0.2, endSeconds: 1, text: "Trim boundary"},
-      {startSeconds: 1.5, endSeconds: 3, text: "Second segment"},
-      {startSeconds: 10, endSeconds: 11, text: "Out of range"},
+      { startSeconds: 0.2, endSeconds: 1, text: "Trim boundary" },
+      { startSeconds: 1.5, endSeconds: 3, text: "Second segment" },
+      { startSeconds: 10, endSeconds: 11, text: "Out of range" },
     ],
     fps: 30,
     timelineDuration: 480,
@@ -6037,9 +6571,9 @@ test("drops malformed transcript segments before generating captions", () => {
   const result = createGeneratedCaptionClips({
     sourceClip,
     segments: [
-      {startSeconds: -1, endSeconds: 1, text: "Negative start"},
-      {startSeconds: 2, endSeconds: 2, text: "Zero length"},
-      {startSeconds: Number.NaN, endSeconds: 3, text: "Not finite"},
+      { startSeconds: -1, endSeconds: 1, text: "Negative start" },
+      { startSeconds: 2, endSeconds: 2, text: "Zero length" },
+      { startSeconds: Number.NaN, endSeconds: 3, text: "Not finite" },
     ],
     fps: 30,
     timelineDuration: 480,
@@ -6188,7 +6722,12 @@ test("moves text in the preview while preserving timing and appearance", () => {
     playheadFrame: 45,
   });
 
-  const result = moveTextOverlay([text], "text-1", {x: 30, y: 40}, {halfWidthPercent: 10, halfHeightPercent: 5});
+  const result = moveTextOverlay(
+    [text],
+    "text-1",
+    { x: 30, y: 40 },
+    { halfWidthPercent: 10, halfHeightPercent: 5 },
+  );
 
   assert.equal(result[0].start, 45);
   assert.equal(result[0].duration, 90);
@@ -6215,15 +6754,15 @@ test("moves only the selected caption and clamps it inside the preview", () => {
     style: defaultCaptionStyle,
   })!;
 
-  assert.deepEqual(getCaptionPosition(first.caption!), {x: 50, y: 82});
+  assert.deepEqual(getCaptionPosition(first.caption!), { x: 50, y: 82 });
   const moved = moveCaptionOverlay(
     [first, second],
     first.id,
-    {x: 98, y: 2},
-    {halfWidthPercent: 14, halfHeightPercent: 6},
+    { x: 98, y: 2 },
+    { halfWidthPercent: 14, halfHeightPercent: 6 },
   );
 
-  assert.deepEqual(getCaptionPosition(moved[0].caption!), {x: 86, y: 6});
+  assert.deepEqual(getCaptionPosition(moved[0].caption!), { x: 86, y: 6 });
   assert.deepEqual(moved[1], second);
   assert.equal(moved[0].start, first.start);
   assert.equal(moved[0].duration, first.duration);
@@ -6247,10 +6786,16 @@ test("keeps caption clip arrays unchanged for invalid and no-op moves", () => {
   };
   const clips = [caption];
   const positionedClips = [positionedCaption];
-  const bounds = {halfWidthPercent: 14, halfHeightPercent: 6};
+  const bounds = { halfWidthPercent: 14, halfHeightPercent: 6 };
 
-  assert.strictEqual(moveCaptionOverlay(clips, "missing", {x: 50, y: 82}, bounds), clips);
-  assert.strictEqual(moveCaptionOverlay(positionedClips, caption.id, {x: 98, y: 82}, bounds), positionedClips);
+  assert.strictEqual(
+    moveCaptionOverlay(clips, "missing", { x: 50, y: 82 }, bounds),
+    clips,
+  );
+  assert.strictEqual(
+    moveCaptionOverlay(positionedClips, caption.id, { x: 98, y: 82 }, bounds),
+    positionedClips,
+  );
 });
 
 test("resizes only the selected caption within readable limits", () => {
@@ -6269,9 +6814,19 @@ test("resizes only the selected caption within readable limits", () => {
     pointerY: 180,
   });
 
-  assert.equal(resizeCaptionOverlayById([caption], caption.id, larger)[0].caption?.fontSize, 86);
-  assert.equal(resizeCaptionOverlayById([caption], caption.id, 500)[0].caption?.fontSize, 160);
-  assert.equal(resizeCaptionOverlayById([caption], caption.id, -20)[0].caption?.fontSize, 1);
+  assert.equal(
+    resizeCaptionOverlayById([caption], caption.id, larger)[0].caption
+      ?.fontSize,
+    86,
+  );
+  assert.equal(
+    resizeCaptionOverlayById([caption], caption.id, 500)[0].caption?.fontSize,
+    160,
+  );
+  assert.equal(
+    resizeCaptionOverlayById([caption], caption.id, -20)[0].caption?.fontSize,
+    1,
+  );
 });
 
 test("projects caption resizing along cardinal and diagonal handle directions", () => {
@@ -6363,7 +6918,7 @@ test("preserves caption resize references when the clamped size is unchanged", (
     content: "No resize",
     playheadFrame: 0,
     timelineDuration: 300,
-    style: {...defaultCaptionStyle, fontSize: 160},
+    style: { ...defaultCaptionStyle, fontSize: 160 },
   })!;
   const clips = [caption];
 
@@ -6380,7 +6935,7 @@ test("preserves references after a caption reaches its measured fit limit", () =
     content: "Already fitted",
     playheadFrame: 0,
     timelineDuration: 300,
-    style: {...defaultCaptionStyle, fontSize: 72},
+    style: { ...defaultCaptionStyle, fontSize: 72 },
   })!;
   const clips = [caption];
 
@@ -6413,14 +6968,19 @@ test("keeps a resized caption box inside the preview frame", () => {
     },
   };
 
-  const resized = resizeCaptionOverlayById([positionedCaption], positionedCaption.id, 80, {
-    halfWidthPercent: 8,
-    halfHeightPercent: 5,
-    referenceFontSize: 40,
-  });
+  const resized = resizeCaptionOverlayById(
+    [positionedCaption],
+    positionedCaption.id,
+    80,
+    {
+      halfWidthPercent: 8,
+      halfHeightPercent: 5,
+      referenceFontSize: 40,
+    },
+  );
 
   assert.equal(resized[0].caption?.fontSize, 80);
-  assert.deepEqual(getCaptionPosition(resized[0].caption!), {x: 84, y: 90});
+  assert.deepEqual(getCaptionPosition(resized[0].caption!), { x: 84, y: 90 });
 });
 
 test("caps caption font size at the largest measured size that fits the preview", () => {
@@ -6474,7 +7034,7 @@ test("fits and clamps a resized near-edge caption without changing other clips",
   })!;
   const positioned = {
     ...selected,
-    caption: {...selected.caption!, x: 94, y: 8},
+    caption: { ...selected.caption!, x: 94, y: 8 },
   };
   const previewWidth = 800;
   const previewHeight = 450;
@@ -6482,18 +7042,23 @@ test("fits and clamps a resized near-edge caption without changing other clips",
     requestedFontSize: 140,
     previewWidth,
     previewHeight,
-    measure: (fontSize) => ({width: fontSize * 9, height: fontSize * 4}),
+    measure: (fontSize) => ({ width: fontSize * 9, height: fontSize * 4 }),
   });
   const fittedBox = {
     width: maximumFontSize * 9,
     height: maximumFontSize * 4,
   };
 
-  const resized = resizeCaptionOverlayById([positioned, other], positioned.id, 140, {
-    halfWidthPercent: (fittedBox.width / previewWidth) * 50,
-    halfHeightPercent: (fittedBox.height / previewHeight) * 50,
-    maximumFontSize,
-  });
+  const resized = resizeCaptionOverlayById(
+    [positioned, other],
+    positioned.id,
+    140,
+    {
+      halfWidthPercent: (fittedBox.width / previewWidth) * 50,
+      halfHeightPercent: (fittedBox.height / previewHeight) * 50,
+      maximumFontSize,
+    },
+  );
 
   assert.equal(maximumFontSize, 88);
   assert.equal(resized[0].caption?.fontSize, 88);
@@ -6512,13 +7077,26 @@ test("keeps the full text inside every preview edge", () => {
     content: "Hello",
     playheadFrame: 0,
   });
-  const bounds = {halfWidthPercent: 12, halfHeightPercent: 8};
+  const bounds = { halfWidthPercent: 12, halfHeightPercent: 8 };
 
-  const topLeft = moveTextOverlay([text], "text-1", {x: -20, y: -20}, bounds)[0];
-  const bottomRight = moveTextOverlay([text], "text-1", {x: 120, y: 120}, bounds)[0];
+  const topLeft = moveTextOverlay(
+    [text],
+    "text-1",
+    { x: -20, y: -20 },
+    bounds,
+  )[0];
+  const bottomRight = moveTextOverlay(
+    [text],
+    "text-1",
+    { x: 120, y: 120 },
+    bounds,
+  )[0];
 
-  assert.deepEqual({x: topLeft.text?.x, y: topLeft.text?.y}, {x: 12, y: 8});
-  assert.deepEqual({x: bottomRight.text?.x, y: bottomRight.text?.y}, {x: 88, y: 92});
+  assert.deepEqual({ x: topLeft.text?.x, y: topLeft.text?.y }, { x: 12, y: 8 });
+  assert.deepEqual(
+    { x: bottomRight.text?.x, y: bottomRight.text?.y },
+    { x: 88, y: 92 },
+  );
 });
 
 test("keeps arrays unchanged when preview text cannot move", () => {
@@ -6528,10 +7106,16 @@ test("keeps arrays unchanged when preview text cannot move", () => {
     playheadFrame: 0,
   });
   const clips = [text];
-  const bounds = {halfWidthPercent: 10, halfHeightPercent: 5};
+  const bounds = { halfWidthPercent: 10, halfHeightPercent: 5 };
 
-  assert.strictEqual(moveTextOverlay(clips, "missing", {x: 30, y: 40}, bounds), clips);
-  assert.strictEqual(moveTextOverlay(clips, "text-1", {x: 50, y: 78}, bounds), clips);
+  assert.strictEqual(
+    moveTextOverlay(clips, "missing", { x: 30, y: 40 }, bounds),
+    clips,
+  );
+  assert.strictEqual(
+    moveTextOverlay(clips, "text-1", { x: 50, y: 78 }, bounds),
+    clips,
+  );
 });
 
 test("removes unused imported media and selects the first remaining item", () => {

@@ -116,7 +116,9 @@ import {
   setTextRotationById,
   setTextStyleById,
   resetCutoutMask,
+  isTrackHidden,
   toggleClipMuteById,
+  toggleTrackVisibility,
   shouldMovePlayheadDuringScrub,
   shouldMuteVideoNativeAudio,
   splitClipByIdAtFrame,
@@ -416,6 +418,36 @@ const getMediaItemType = (mediaItem: Pick<MediaItem, "mediaType" | "src">) =>
 
 const isImageClip = (clip?: Pick<TimelineClip, "mediaType" | "src">) =>
   clip?.mediaType === "image" || (!clip?.mediaType && isImageSource(clip?.src));
+
+const shouldShowTimelineWaveform = (clip: TimelineClip) =>
+  clip.track === "audio" ||
+  (Boolean(clip.src) &&
+    (clip.track === "main" || clip.track === "upper"
+      ? !isImageClip(clip)
+      : clip.track === "cutout" && clip.cutout?.mediaKind === "video"));
+
+const createWaveformLinePoints = (clipId: string, duration: number) => {
+  const amplitudes = createWaveformBars(
+    clipId,
+    Math.max(20, Math.min(72, Math.round(duration / 8))),
+  );
+  const seed = Array.from(clipId).reduce(
+    (total, character) => total + character.charCodeAt(0),
+    0,
+  );
+
+  return amplitudes
+    .map((amplitude, index) => {
+      const x =
+        amplitudes.length === 1 ? 0 : (index / (amplitudes.length - 1)) * 100;
+      const isQuiet = (index + seed) % 13 < 3;
+      const direction = (index * 7 + seed) % 9 === 0 ? 1 : -1;
+      const height = isQuiet ? amplitude * 1.1 : amplitude * 11.5;
+      const y = Math.max(1, Math.min(19, 14 + direction * height));
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+};
 
 const durationToFrames = (durationInSeconds: number) => {
   if (!Number.isFinite(durationInSeconds) || durationInSeconds <= 0) {
@@ -1567,7 +1599,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     clipId: string;
     processedSrc: string;
   } | null>(null);
-  const [isAudioTrackVisible, setIsAudioTrackVisible] = useState(false);
+  const [, setIsAudioTrackVisible] = useState(false);
   const [pointerDrag, setPointerDrag] = useState<PointerDrag | null>(null);
   const [trimDrag, setTrimDrag] = useState<TrimDrag | null>(null);
   const [videoDropTarget, setVideoDropTarget] =
@@ -1801,6 +1833,34 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const contextualAudioClipIds = useMemo(
     () => new Set(contextualAudioClips.map((clip) => clip.id)),
     [contextualAudioClips],
+  );
+  const selectedVisibilityVideoLayer =
+    selectedTrack === "main" || selectedTrack === "upper"
+      ? (selectedVideoLayer ??
+        (selectedClip ? getVideoLayer(selectedClip) : null))
+      : null;
+  const selectedVisibilityClipIds =
+    selectedTrack === "audio" && contextualAudioClips.length > 0
+      ? contextualAudioClips.map((clip) => clip.id)
+      : undefined;
+  const selectedVisibilityTargets = clips.filter((clip) => {
+    if (selectedVisibilityClipIds) {
+      return selectedVisibilityClipIds.includes(clip.id);
+    }
+    if (
+      (selectedTrack === "main" || selectedTrack === "upper") &&
+      selectedVisibilityVideoLayer !== null
+    ) {
+      return getVideoLayer(clip) === selectedVisibilityVideoLayer;
+    }
+    return clip.track === selectedTrack;
+  });
+  const canToggleSelectedTrackVisibility = selectedVisibilityTargets.length > 0;
+  const isSelectedTrackHidden = isTrackHidden(
+    clips,
+    selectedTrack,
+    selectedVisibilityVideoLayer,
+    selectedVisibilityClipIds,
   );
   const clipControlTarget = selectedClip;
   const selectedVideoLayerControlState = getVideoLayerControlState(
@@ -2104,12 +2164,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         label: "",
         videoLayer,
       })),
-      ...((isAudioTrackVisible && contextualAudioClips.length > 0) ||
-      (activeTool === "audio" && hasClipsOnTrack(clips, "audio"))
-        ? [{ key: "audio", id: "audio" as TrackName, label: "Audio track" }]
-        : []),
     ];
-  }, [activeTool, contextualAudioClips.length, clips, isAudioTrackVisible]);
+  }, [clips]);
   const previewSource =
     previewMode === "timeline"
       ? topVisibleVideoClip
@@ -2143,10 +2199,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         playheadFrame,
         topVisibleVideoClip?.id ?? null,
       ));
-  const hasAudioTimelineRow = timelineRows.some(
-    (track) => track.id === "audio",
-  );
-
   useEffect(() => {
     mediaPreviewVolumeDragRef.current = false;
     setIsMediaPreviewVolumeAdjusting(false);
@@ -2419,6 +2471,16 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       ),
     );
     setPreviewMode("timeline");
+  };
+
+  const commitSelectedCaptionContent = () => {
+    if (!selectedCaptionClip?.caption) return;
+
+    const content = captionDraft.trim();
+    if (!content) return;
+
+    updateSelectedCaptionContent(content);
+    setCaptionDraft(content);
   };
 
   const updateSelectedTextRotation = (rotation: number) => {
@@ -2786,6 +2848,29 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setPreviewMode("timeline");
   };
 
+  const toggleSelectedTrackVisibility = () => {
+    if (!canToggleSelectedTrackVisibility) {
+      return;
+    }
+
+    commitClipChange((currentClips) =>
+      toggleTrackVisibility(
+        currentClips,
+        selectedTrack,
+        selectedVisibilityVideoLayer,
+        selectedVisibilityClipIds,
+      ),
+    );
+    if (
+      selectedTrack === "main" ||
+      selectedTrack === "upper" ||
+      selectedTrack === "cutout"
+    ) {
+      setIsAudioTrackVisible(true);
+    }
+    setPreviewMode("timeline");
+  };
+
   const selectTransitionBoundary = useCallback(
     (incomingClipId: string, track: TrackName) => {
       setSelectedVideoLayer(null);
@@ -2798,28 +2883,22 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     [],
   );
 
-  const selectTimelineClip = (
-    clip: TimelineClip,
-    pointerFrame?: number | null,
-  ) => {
+  const selectTimelineClip = (clip: TimelineClip, pointerFrame?: number) => {
     setSelectedVideoLayer(null);
     setSelectedClipId(clip.id);
     setSelectedTrack(clip.track);
-    const isVideoClip =
-      clip.track === "main" ||
-      clip.track === "upper" ||
-      clip.track === "cutout";
-    if (isVideoClip && pointerFrame !== null && pointerFrame !== undefined) {
+    setPreviewMode("timeline");
+    if (pointerFrame !== undefined && clip.track !== "audio") {
       setPlayheadFrame(
         Math.max(
           clip.start,
-          Math.min(clip.start + clip.duration - 1, pointerFrame),
+          Math.min(
+            clip.start + Math.max(0, clip.duration - 1),
+            Math.round(pointerFrame),
+          ),
         ),
       );
-      setPreviewMode("timeline");
-    } else if (clip.track === "text" || clip.track === "caption") {
-      setPlayheadFrame(Math.max(clip.start, clip.start + clip.duration - 1));
-      setPreviewMode("timeline");
+      setIsPreviewPlaying(false);
     }
     if (clip.track === "text") {
       setActiveTool("text");
@@ -6387,7 +6466,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           setCaptionMode("manual");
                           setActiveTool("captions");
                           setPreviewMode("timeline");
-                          setPlayheadFrame(clip.start);
                         }}
                       >
                         <span>{formatTimelineClock(clip.start, fps)}</span>
@@ -6441,14 +6519,47 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                         }
                       </strong>
                     </div>
-                    {captionMode === "manual" &&
-                      (selectedCaptionClip ? (
-                        <div className="caption-selection-summary">
-                          <strong>Editing selected caption</strong>
-                          <span>
-                            Use the caption inspector to change its words and
-                            style.
-                          </span>
+                    {captionMode === "manual" ? (
+                      <div className="caption-manual-form">
+                        <label htmlFor="caption-overlay-input">
+                          {selectedCaptionClip ? "Edit caption" : "Caption"}
+                        </label>
+                        <textarea
+                          id="caption-overlay-input"
+                          value={captionDraft}
+                          maxLength={180}
+                          placeholder={
+                            selectedCaptionClip
+                              ? "Edit the selected caption"
+                              : "Type your caption"
+                          }
+                          onChange={(event) => {
+                            setCaptionDraft(event.currentTarget.value);
+                            resetCaptionStatus();
+                          }}
+                        />
+                        <button
+                          className="import-button"
+                          type="button"
+                          disabled={
+                            !captionDraft.trim() ||
+                            Boolean(
+                              selectedCaptionClip?.caption &&
+                              captionDraft.trim() ===
+                                selectedCaptionClip.caption.content,
+                            )
+                          }
+                          onClick={
+                            selectedCaptionClip
+                              ? commitSelectedCaptionContent
+                              : addCaptionAtPlayhead
+                          }
+                        >
+                          {selectedCaptionClip
+                            ? "Commit changes"
+                            : "Add caption at playhead"}
+                        </button>
+                        {selectedCaptionClip ? (
                           <button
                             className="secondary-action-button"
                             type="button"
@@ -6460,22 +6571,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           >
                             New caption
                           </button>
-                        </div>
-                      ) : (
-                        <div className="caption-manual-form">
-                          <label htmlFor="caption-overlay-input">Caption</label>
-                          <textarea
-                            id="caption-overlay-input"
-                            value={captionDraft}
-                            maxLength={180}
-                            placeholder="Type your caption"
-                            onChange={(event) => {
-                              setCaptionDraft(event.currentTarget.value);
-                              resetCaptionStatus();
-                            }}
-                          />
-                        </div>
-                      ))}
+                        ) : null}
+                      </div>
+                    ) : null}
                     {captionMode === "upload" ? (
                       <div className="caption-auto-panel">
                         <p className="caption-auto-copy">
@@ -6545,16 +6643,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             : "Generate auto lyrics"}
                         </button>
                       </div>
-                    ) : null}
-                    {captionMode === "manual" && !selectedCaptionClip ? (
-                      <button
-                        className="import-button"
-                        type="button"
-                        disabled={!captionDraft.trim()}
-                        onClick={addCaptionAtPlayhead}
-                      >
-                        Add caption at playhead
-                      </button>
                     ) : null}
                     {captionStatus.message ? (
                       <div
@@ -8363,6 +8451,29 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               ⧉
             </button>
             <button
+              className={`icon-tool-button visibility-icon-tool ${
+                isSelectedTrackHidden ? "hidden-track-tool" : ""
+              }`}
+              type="button"
+              aria-label={
+                isSelectedTrackHidden
+                  ? `Show ${selectedTrack} track`
+                  : `Hide ${selectedTrack} track`
+              }
+              title={
+                isSelectedTrackHidden
+                  ? `Show ${selectedTrack} track`
+                  : `Hide ${selectedTrack} track`
+              }
+              aria-pressed={isSelectedTrackHidden}
+              onClick={toggleSelectedTrackVisibility}
+              disabled={!canToggleSelectedTrackVisibility}
+            >
+              <span className="track-visibility-eye" aria-hidden="true">
+                <span className="track-visibility-pupil" />
+              </span>
+            </button>
+            <button
               className="icon-tool-button danger-icon-tool"
               type="button"
               aria-label="Delete selected clip"
@@ -8441,6 +8552,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     : track.videoLayer === 0
                       ? 1
                       : track.videoLayer;
+              const rowHasTimelineWaveform = clips.some(
+                (clip) =>
+                  (track.videoLayer !== undefined
+                    ? getVideoLayer(clip) === track.videoLayer
+                    : clip.track === track.id) &&
+                  shouldShowTimelineWaveform(clip),
+              );
 
               return (
                 <Fragment key={track.key}>
@@ -8477,7 +8595,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     </div>
                   ) : null}
                   <div
-                    className={`timeline-track ${track.id === "upper" ? "overlay-timeline-track" : ""}`}
+                    className={`timeline-track ${track.id === "upper" ? "overlay-timeline-track" : ""} ${
+                      rowHasTimelineWaveform ? "waveform-timeline-track" : ""
+                    }`}
                   >
                     <div
                       className={`track-label ${selectedTrack === track.id ? "selected-track-label" : ""}`}
@@ -8516,7 +8636,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                         selectedVideoLayer === track.videoLayer
                           ? "selected-track-lane"
                           : ""
-                      } ${track.id === "upper" ? "overlay-track-lane" : ""}`}
+                      } ${track.id === "upper" ? "overlay-track-lane" : ""} ${
+                        rowHasTimelineWaveform ? "waveform-track-lane" : ""
+                      }`}
                       data-track-id={track.id}
                       data-video-layer={track.videoLayer}
                       onPointerDown={(event) => {
@@ -8613,15 +8735,25 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               selectedClipId === clip.id
                                 ? "selected-timeline-clip"
                                 : ""
-                            } ${replaceTargetClipId === clip.id ? "replace-target-clip" : ""}`}
+                            } ${replaceTargetClipId === clip.id ? "replace-target-clip" : ""} ${
+                              shouldShowTimelineWaveform(clip)
+                                ? "has-timeline-waveform"
+                                : ""
+                            } ${clip.track === "audio" ? "audio-timeline-clip" : ""}`}
                             key={clip.id}
                             data-replace-clip-id={
                               clip.track === "main" ? clip.id : undefined
                             }
                             onPointerDown={(event) => {
                               event.stopPropagation();
-                              const pointerFrame = getPointerTimelineFrame(
+                              const contentLeft =
+                                timelineContentRef.current?.getBoundingClientRect()
+                                  .left ?? 0;
+                              const pointerFrame = getTimelineFrameFromPointer(
                                 event.clientX,
+                                contentLeft,
+                                timelineOrigin,
+                                timelineScale,
                               );
                               selectTimelineClip(clip, pointerFrame);
                               if (
@@ -8741,28 +8873,24 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 />
                               </>
                             ) : null}
-                            {clip.track === "audio" ? (
+                            {shouldShowTimelineWaveform(clip) ? (
                               <div
                                 className="audio-waveform"
                                 aria-hidden="true"
                               >
-                                {createWaveformBars(
-                                  clip.id,
-                                  Math.max(
-                                    12,
-                                    Math.min(
-                                      48,
-                                      Math.round(clip.duration / 12),
-                                    ),
-                                  ),
-                                ).map((bar, index) => (
-                                  <span
-                                    key={`${clip.id}-wave-${index}`}
-                                    style={{
-                                      height: `${Math.round(bar * 100)}%`,
-                                    }}
+                                <svg
+                                  className="audio-waveform-svg"
+                                  viewBox="0 0 100 20"
+                                  preserveAspectRatio="none"
+                                >
+                                  <polyline
+                                    className="audio-waveform-line"
+                                    points={createWaveformLinePoints(
+                                      clip.id,
+                                      clip.duration,
+                                    )}
                                   />
-                                ))}
+                                </svg>
                               </div>
                             ) : null}
                             <button
@@ -8801,22 +8929,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 </Fragment>
               );
             })}
-            {hasAudioTimelineRow ? null : (
-              <div
-                className={`timeline-track new-video-layer-drop ${
-                  videoDropTarget?.kind === "new-layer" &&
-                  videoDropTarget.direction === "below"
-                    ? "drop-target"
-                    : ""
-                }`}
-                data-new-video-layer="below"
-                role="group"
-                aria-label="Add video track below"
-              >
-                <div className="track-label" aria-hidden="true" />
-                <div className="track-lane" />
-              </div>
-            )}
+            <div
+              className={`timeline-track new-video-layer-drop ${
+                videoDropTarget?.kind === "new-layer" &&
+                videoDropTarget.direction === "below"
+                  ? "drop-target"
+                  : ""
+              }`}
+              data-new-video-layer="below"
+              role="group"
+              aria-label="Add video track below"
+            >
+              <div className="track-label" aria-hidden="true" />
+              <div className="track-lane" />
+            </div>
           </div>
         </div>
       </section>

@@ -2166,6 +2166,44 @@ button {
   margin-top: 2px;
 }
 
+.visibility-icon-tool {
+  overflow: visible;
+}
+
+.track-visibility-eye {
+  position: relative;
+  display: grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  border: 2px solid currentColor;
+  border-radius: 75% 15%;
+  transform: rotate(45deg);
+}
+
+.track-visibility-pupil {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.visibility-icon-tool.hidden-track-tool .track-visibility-eye::after {
+  position: absolute;
+  width: 23px;
+  height: 2px;
+  background: currentColor;
+  content: "";
+  transform: rotate(-45deg);
+}
+
+.visibility-icon-tool.hidden-track-tool {
+  border-color: #465363;
+  background: #111821;
+  color: #738295;
+  filter: grayscale(1);
+}
+
 .caption-selected-controls input[type="color"] {
   grid-column: 1 / -1;
   width: 100%;
@@ -2359,6 +2397,10 @@ button {
   height: 45px;
 }
 
+.timeline-track.waveform-timeline-track {
+  height: 62px;
+}
+
 .track-label {
   position: sticky;
   left: 0;
@@ -2386,10 +2428,15 @@ button {
   position: relative;
   height: 36px;
   overflow: visible;
-  border: 1px solid #26313c;
-  border-radius: 8px;
-  background: #151b24;
+  border: 0;
+  border-bottom: 1px solid #29323d;
+  border-radius: 0;
+  background: transparent;
   cursor: pointer;
+}
+
+.track-lane.waveform-track-lane {
+  height: 53px;
 }
 
 .transition-anchor {
@@ -2424,8 +2471,8 @@ button {
 }
 
 .track-lane.selected-track-lane {
-  border-color: #38d6c8;
-  box-shadow: inset 0 0 0 1px rgba(56, 214, 200, 0.35);
+  border-bottom: 2px solid #facc15;
+  box-shadow: none;
 }
 
 .timeline-playhead::before {
@@ -2458,9 +2505,9 @@ button {
 }
 
 .track-lane.drop-target {
-  background: #12302f;
-  border-color: #38d6c8;
-  box-shadow: inset 0 0 0 1px rgba(56, 214, 200, 0.55);
+  border-bottom: 2px solid #facc15;
+  background: rgba(250, 204, 21, 0.06);
+  box-shadow: none;
 }
 
 .main-track-append-target {
@@ -2498,14 +2545,14 @@ button {
 .new-video-layer-drop .track-lane {
   height: 10px;
   min-height: 10px;
-  border-color: transparent;
-  border-style: dashed;
+  border: 0;
+  border-top: 1px solid transparent;
   background: transparent;
 }
 
 .new-video-layer-drop.drop-target .track-lane {
-  border-color: #38d6c8;
-  background: #12302f;
+  border-top: 2px solid #facc15;
+  background: transparent;
 }
 
 .timeline-clip {
@@ -2532,18 +2579,58 @@ button {
 .timeline-clip .audio-waveform {
   position: absolute;
   inset: 4px 32px 4px 78px;
-  display: flex;
-  align-items: center;
-  gap: 3px;
+  display: block;
   opacity: 0.52;
   pointer-events: none;
 }
 
-.audio-waveform span {
-  flex: 1;
-  min-width: 2px;
-  border-radius: 999px;
-  background: rgba(191, 219, 254, 0.72);
+.audio-waveform-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+.audio-waveform-line {
+  fill: none;
+  stroke: #67e8f9;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip) .audio-waveform {
+  inset: auto 0 0;
+  height: 20px;
+  z-index: 3;
+  opacity: 1;
+  padding: 2px 32px 2px 8px;
+  border-top: 1px solid rgba(103, 232, 249, 0.5);
+  background: rgba(3, 17, 27, 0.92);
+}
+
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip) {
+  align-items: flex-start;
+  padding-top: 5px;
+  padding-bottom: 22px;
+}
+
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
+  .timeline-clip-video,
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
+  .timeline-clip-image,
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
+  .timeline-cutout-media,
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
+  .timeline-clip-filmstrip {
+  bottom: 20px;
+  height: auto;
+}
+
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
+  .clip-mute-button {
+  top: 17px;
 }
 
 .timeline-clip.selected-timeline-clip {

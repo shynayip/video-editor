@@ -1,4 +1,11 @@
-export type TrackName = "upper" | "cutout" | "sticker" | "text" | "main" | "caption" | "audio";
+export type TrackName =
+  | "upper"
+  | "cutout"
+  | "sticker"
+  | "text"
+  | "main"
+  | "caption"
+  | "audio";
 
 export type CaptionStyle = {
   fontSize: number;
@@ -12,7 +19,13 @@ export type CaptionStyle = {
   animationSpeed?: number;
 };
 
-export type CaptionAnimationPreset = "none" | "pop" | "bounce" | "jump" | "fade" | "slide";
+export type CaptionAnimationPreset =
+  | "none"
+  | "pop"
+  | "bounce"
+  | "jump"
+  | "fade"
+  | "slide";
 
 export type CaptionOverlay = CaptionStyle & {
   content: string;
@@ -73,7 +86,7 @@ export type CutoutTransform = StickerTransform & {
   originalSourceStart?: number;
 };
 
-export type CutoutMaskPoint = {x: number; y: number};
+export type CutoutMaskPoint = { x: number; y: number };
 
 export type CutoutMaskStroke = {
   mode: "erase" | "restore";
@@ -113,7 +126,14 @@ export type TextAnimationStar = {
 export type TextStyleUpdate = Partial<
   Pick<
     TextOverlay,
-    "fontSize" | "color" | "fontFamily" | "fontWeight" | "fontStyle" | "effect" | "animation" | "rotation"
+    | "fontSize"
+    | "color"
+    | "fontFamily"
+    | "fontWeight"
+    | "fontStyle"
+    | "effect"
+    | "animation"
+    | "rotation"
   >
 >;
 
@@ -135,7 +155,10 @@ export type SavedMediaItem = {
 
 const sceneCardFps = 30;
 
-const formatSceneCardDuration = (durationInFrames: number, fps: number): string => {
+const formatSceneCardDuration = (
+  durationInFrames: number,
+  fps: number,
+): string => {
   const totalSeconds = Math.max(0, Math.round(durationInFrames / fps));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -143,9 +166,11 @@ const formatSceneCardDuration = (durationInFrames: number, fps: number): string 
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 
-const getSceneCardLabelBase = (label: string): string => label.replace(/ - Scene \d+$/, "").replace(/\.[^.]+$/, "");
+const getSceneCardLabelBase = (label: string): string =>
+  label.replace(/ - Scene \d+$/, "").replace(/\.[^.]+$/, "");
 
-const getSceneCardId = (sourceFileId: string, sourceStart: number): string => `scene-${sourceFileId}-${sourceStart}`;
+const getSceneCardId = (sourceFileId: string, sourceStart: number): string =>
+  `scene-${sourceFileId}-${sourceStart}`;
 
 export const createSceneMediaItems = ({
   sourceFileId,
@@ -160,7 +185,7 @@ export const createSceneMediaItems = ({
   sourceGroupIndex?: number;
   label: string;
   src: string;
-  ranges: Array<{startSeconds: number; endSeconds: number}>;
+  ranges: Array<{ startSeconds: number; endSeconds: number }>;
   fps: number;
   sourceDurationInFrames?: number;
 }): SavedMediaItem[] => {
@@ -197,11 +222,16 @@ export const createSceneMediaItems = ({
         sourceStart,
         ...(Number.isFinite(sourceDurationInFrames)
           ? {
-              sourceDurationInFrames: Math.max(sourceEnd, Math.round(sourceDurationInFrames ?? sourceEnd)),
+              sourceDurationInFrames: Math.max(
+                sourceEnd,
+                Math.round(sourceDurationInFrames ?? sourceEnd),
+              ),
             }
           : {}),
         sourceFileId,
-        ...(sourceGroupIndex === undefined ? {} : {sourceGroupIndex, sourceLabel: label}),
+        ...(sourceGroupIndex === undefined
+          ? {}
+          : { sourceGroupIndex, sourceLabel: label }),
         sceneIndex,
       },
     ];
@@ -247,7 +277,9 @@ export const splitSceneMediaItemAtFrame = ({
     durationInFrames: secondDuration,
     sourceStart: secondSourceStart,
   };
-  const splitItems = mediaItems.flatMap((item) => (item.id === mediaId ? [firstScene, secondScene] : [item]));
+  const splitItems = mediaItems.flatMap((item) =>
+    item.id === mediaId ? [firstScene, secondScene] : [item],
+  );
   const sourceItems = splitItems
     .filter((item) => item.sourceFileId === target.sourceFileId)
     .sort((left, right) => (left.sourceStart ?? 0) - (right.sourceStart ?? 0));
@@ -282,12 +314,33 @@ export const getInitialNextSourceGroupIndex = (
   savedNextSourceGroupIndex?: number,
 ): number =>
   Math.max(
-    Number.isInteger(savedNextSourceGroupIndex) ? (savedNextSourceGroupIndex ?? 1) : 1,
-    mediaItems.reduce((maximum, item) => Math.max(maximum, item.sourceGroupIndex ?? 0), 0) + 1,
+    Number.isInteger(savedNextSourceGroupIndex)
+      ? (savedNextSourceGroupIndex ?? 1)
+      : 1,
+    mediaItems.reduce(
+      (maximum, item) => Math.max(maximum, item.sourceGroupIndex ?? 0),
+      0,
+    ) + 1,
   );
 
-export type ClipEffect = "none" | "blur" | "glow" | "grayscale" | "invert" | "fade" | "shadow" | "zoom";
-export type ClipFilter = "none" | "warm" | "cool" | "vivid" | "vintage" | "sepia" | "cinema" | "soft";
+export type ClipEffect =
+  | "none"
+  | "blur"
+  | "glow"
+  | "grayscale"
+  | "invert"
+  | "fade"
+  | "shadow"
+  | "zoom";
+export type ClipFilter =
+  | "none"
+  | "warm"
+  | "cool"
+  | "vivid"
+  | "vintage"
+  | "sepia"
+  | "cinema"
+  | "soft";
 
 export type ClipVisualStyle = {
   effect: ClipEffect;
@@ -323,7 +376,12 @@ export type ClipAnimationStyle = {
   easing?: ClipAnimationEasing;
 };
 
-export type ClipTransitionPreset = "none" | "fade" | "dissolve" | "slide" | "zoom";
+export type ClipTransitionPreset =
+  | "none"
+  | "fade"
+  | "dissolve"
+  | "slide"
+  | "zoom";
 
 export type ClipTransitionStyle = {
   preset: Exclude<ClipTransitionPreset, "none">;
@@ -392,7 +450,14 @@ export type TimelineClip = {
 export const getTimelineDuration = (clips: TimelineClip[]): number =>
   Math.max(
     1,
-    clips.reduce((furthestEnd, clip) => Math.max(furthestEnd, Math.max(0, clip.start) + Math.max(1, clip.duration)), 0),
+    clips.reduce(
+      (furthestEnd, clip) =>
+        Math.max(
+          furthestEnd,
+          Math.max(0, clip.start) + Math.max(1, clip.duration),
+        ),
+      0,
+    ),
   );
 
 export const getTimelineFrameFromPointer = (
@@ -421,8 +486,12 @@ export const getStableTimelineFrameDelta = (
   timelineOrigin: number,
   scale: number,
 ): number =>
-  getTimelineFrameFromPointer(clientX, capturedContentLeft, timelineOrigin, scale) -
-  (Number.isFinite(startFrame) ? Math.round(startFrame) : 0);
+  getTimelineFrameFromPointer(
+    clientX,
+    capturedContentLeft,
+    timelineOrigin,
+    scale,
+  ) - (Number.isFinite(startFrame) ? Math.round(startFrame) : 0);
 
 export const getManualRotationAngle = (
   centerX: number,
@@ -442,7 +511,9 @@ export const getManualRotationAngle = (
   }
 
   const pointerAngle = Math.atan2(pointerY - centerY, pointerX - centerX);
-  const degrees = Math.round((pointerAngle * 180) / Math.PI + 90 + rotationOffset);
+  const degrees = Math.round(
+    (pointerAngle * 180) / Math.PI + 90 + rotationOffset,
+  );
 
   const normalized = ((degrees + 540) % 360) - 180;
 
@@ -455,9 +526,14 @@ export const getVisibleRotateHandleTop = (cropTopPercent: number): number => {
   return 18 + frameOffset;
 };
 
-export const clampPlayheadFrame = (frame: number, projectDuration: number): number => {
+export const clampPlayheadFrame = (
+  frame: number,
+  projectDuration: number,
+): number => {
   const safeFrame = Number.isFinite(frame) ? Math.round(frame) : 0;
-  const safeDuration = Number.isFinite(projectDuration) ? Math.max(0, Math.round(projectDuration)) : 0;
+  const safeDuration = Number.isFinite(projectDuration)
+    ? Math.max(0, Math.round(projectDuration))
+    : 0;
 
   return Math.max(0, Math.min(safeFrame, safeDuration - 1));
 };
@@ -467,12 +543,16 @@ export const advanceTimelinePlaybackFrame = (
   projectDuration: number,
   framesPerTick = 3,
 ): number => {
-  const safeDuration = Number.isFinite(projectDuration) ? Math.max(0, Math.round(projectDuration)) : 0;
+  const safeDuration = Number.isFinite(projectDuration)
+    ? Math.max(0, Math.round(projectDuration))
+    : 0;
   if (safeDuration === 0) return 0;
 
   const safeCurrentFrame = clampPlayheadFrame(currentFrame, safeDuration);
   const safeFramesPerTick =
-    Number.isFinite(framesPerTick) && framesPerTick > 0 ? Math.max(1, Math.round(framesPerTick)) : 3;
+    Number.isFinite(framesPerTick) && framesPerTick > 0
+      ? Math.max(1, Math.round(framesPerTick))
+      : 3;
 
   return clampPlayheadFrame(safeCurrentFrame + safeFramesPerTick, safeDuration);
 };
@@ -482,13 +562,18 @@ export type TimelinePlaybackStep = {
   continues: boolean;
 };
 
-export const stepTimelinePlayback = (currentFrame: number, projectDuration: number): TimelinePlaybackStep => {
-  const safeDuration = Number.isFinite(projectDuration) ? Math.max(0, Math.round(projectDuration)) : 0;
-  if (safeDuration === 0) return {nextFrame: 0, continues: false};
+export const stepTimelinePlayback = (
+  currentFrame: number,
+  projectDuration: number,
+): TimelinePlaybackStep => {
+  const safeDuration = Number.isFinite(projectDuration)
+    ? Math.max(0, Math.round(projectDuration))
+    : 0;
+  if (safeDuration === 0) return { nextFrame: 0, continues: false };
 
   const safeCurrentFrame = clampPlayheadFrame(currentFrame, safeDuration);
   if (safeCurrentFrame >= safeDuration - 1) {
-    return {nextFrame: 0, continues: false};
+    return { nextFrame: 0, continues: false };
   }
 
   return {
@@ -502,7 +587,11 @@ export type TrailingAutosaveTimer = {
   cancel: (timerId: number) => void;
 };
 
-export const createTrailingAutosaveScheduler = (persist: () => void, timer: TrailingAutosaveTimer, delayMs = 250) => {
+export const createTrailingAutosaveScheduler = (
+  persist: () => void,
+  timer: TrailingAutosaveTimer,
+  delayMs = 250,
+) => {
   let pendingTimerId: number | null = null;
 
   const cancel = () => {
@@ -529,17 +618,33 @@ export const getExpandedTimelineBoundary = (
   targetStart: number,
   clipDuration: number,
 ): number => {
-  const safeCurrentDuration = Number.isFinite(currentDuration) ? Math.max(1, Math.round(currentDuration)) : 1;
-  const safeTargetStart = Number.isFinite(targetStart) ? Math.max(0, Math.round(targetStart)) : 0;
-  const safeClipDuration = Number.isFinite(clipDuration) ? Math.max(1, Math.round(clipDuration)) : 1;
+  const safeCurrentDuration = Number.isFinite(currentDuration)
+    ? Math.max(1, Math.round(currentDuration))
+    : 1;
+  const safeTargetStart = Number.isFinite(targetStart)
+    ? Math.max(0, Math.round(targetStart))
+    : 0;
+  const safeClipDuration = Number.isFinite(clipDuration)
+    ? Math.max(1, Math.round(clipDuration))
+    : 1;
 
   return Math.max(safeCurrentDuration, safeTargetStart + safeClipDuration);
 };
 
-const clampTimelineStart = (targetStart: number, clipDuration: number, timelineBoundary: number): number => {
-  const safeTargetStart = Number.isFinite(targetStart) ? Math.round(targetStart) : 0;
-  const safeClipDuration = Number.isFinite(clipDuration) ? Math.max(1, Math.round(clipDuration)) : 1;
-  const safeBoundary = Number.isFinite(timelineBoundary) ? Math.max(1, Math.round(timelineBoundary)) : safeClipDuration;
+const clampTimelineStart = (
+  targetStart: number,
+  clipDuration: number,
+  timelineBoundary: number,
+): number => {
+  const safeTargetStart = Number.isFinite(targetStart)
+    ? Math.round(targetStart)
+    : 0;
+  const safeClipDuration = Number.isFinite(clipDuration)
+    ? Math.max(1, Math.round(clipDuration))
+    : 1;
+  const safeBoundary = Number.isFinite(timelineBoundary)
+    ? Math.max(1, Math.round(timelineBoundary))
+    : safeClipDuration;
   const maximumStart = Math.max(0, safeBoundary - safeClipDuration);
 
   return Math.max(0, Math.min(safeTargetStart, maximumStart));
@@ -551,7 +656,9 @@ export const formatTimelineClock = (frame: number, fps: number): string => {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   const minuteAndSecond = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  return hours > 0 ? `${String(hours).padStart(2, "0")}:${minuteAndSecond}` : minuteAndSecond;
+  return hours > 0
+    ? `${String(hours).padStart(2, "0")}:${minuteAndSecond}`
+    : minuteAndSecond;
 };
 
 export const formatTimelineTimecode = (frame: number, fps: number): string => {
@@ -559,18 +666,31 @@ export const formatTimelineTimecode = (frame: number, fps: number): string => {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+  return [hours, minutes, seconds]
+    .map((value) => String(value).padStart(2, "0"))
+    .join(":");
 };
 
-export const createTimelineTicks = (durationInFrames: number, fps: number, targetTickCount = 8) => {
+export const createTimelineTicks = (
+  durationInFrames: number,
+  fps: number,
+  targetTickCount = 8,
+) => {
   const safeFps = Math.max(1, fps);
   const durationSeconds = Math.max(1, Math.ceil(durationInFrames / safeFps));
-  const intervals = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
+  const intervals = [
+    1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200,
+  ];
   const desiredInterval = durationSeconds / Math.max(2, targetTickCount);
   const intervalSeconds =
-    intervals.find((interval) => interval >= desiredInterval) ?? Math.ceil(desiredInterval / 3600) * 3600;
+    intervals.find((interval) => interval >= desiredInterval) ??
+    Math.ceil(desiredInterval / 3600) * 3600;
   const frames = [0];
-  for (let seconds = intervalSeconds; seconds < durationSeconds; seconds += intervalSeconds) {
+  for (
+    let seconds = intervalSeconds;
+    seconds < durationSeconds;
+    seconds += intervalSeconds
+  ) {
     frames.push(seconds * safeFps);
   }
   frames.push(durationInFrames);
@@ -579,7 +699,10 @@ export const createTimelineTicks = (durationInFrames: number, fps: number, targe
     label: formatTimelineClock(tickFrame, safeFps),
   }));
 
-  return ticks.filter((tick, index) => index === ticks.length - 1 || tick.label !== ticks[index + 1].label);
+  return ticks.filter(
+    (tick, index) =>
+      index === ticks.length - 1 || tick.label !== ticks[index + 1].label,
+  );
 };
 
 export type TimelineHistoryState = {
@@ -602,13 +725,18 @@ export type VideoLayerControlState = {
 
 export type VideoLayerDirection = "above" | "below";
 
-export const createTimelineHistory = (present: TimelineClip[]): TimelineHistoryState => ({
+export const createTimelineHistory = (
+  present: TimelineClip[],
+): TimelineHistoryState => ({
   past: [],
   present,
   future: [],
 });
 
-export const applyTimelineHistoryEdit = (state: TimelineHistoryState, next: TimelineClip[]): TimelineHistoryState => {
+export const applyTimelineHistoryEdit = (
+  state: TimelineHistoryState,
+  next: TimelineClip[],
+): TimelineHistoryState => {
   if (next === state.present) {
     return state;
   }
@@ -620,7 +748,9 @@ export const applyTimelineHistoryEdit = (state: TimelineHistoryState, next: Time
   };
 };
 
-export const undoTimelineHistory = (state: TimelineHistoryState): TimelineHistoryState => {
+export const undoTimelineHistory = (
+  state: TimelineHistoryState,
+): TimelineHistoryState => {
   const previous = state.past[state.past.length - 1];
 
   if (!previous) {
@@ -634,7 +764,9 @@ export const undoTimelineHistory = (state: TimelineHistoryState): TimelineHistor
   };
 };
 
-export const redoTimelineHistory = (state: TimelineHistoryState): TimelineHistoryState => {
+export const redoTimelineHistory = (
+  state: TimelineHistoryState,
+): TimelineHistoryState => {
   const next = state.future[0];
 
   if (!next) {
@@ -665,7 +797,8 @@ export const getVisualToolTargetClipId = (
   selectedClipId: string | null,
   playheadFrame: number,
 ): string | null => {
-  const isVideoClip = (clip: TimelineClip) => (clip.track === "main" || clip.track === "upper") && Boolean(clip.src);
+  const isVideoClip = (clip: TimelineClip) =>
+    (clip.track === "main" || clip.track === "upper") && Boolean(clip.src);
   const selectedClip = clips.find((clip) => clip.id === selectedClipId);
 
   if (selectedClip && isVideoClip(selectedClip)) {
@@ -678,7 +811,8 @@ export const getVisualToolTargetClipId = (
       .filter((clip) => isVideoClip(clip) && !clip.hidden)
       .sort(
         (firstClip, secondClip) =>
-          (getVideoLayer(secondClip) ?? 0) - (getVideoLayer(firstClip) ?? 0) || firstClip.start - secondClip.start,
+          (getVideoLayer(secondClip) ?? 0) - (getVideoLayer(firstClip) ?? 0) ||
+          firstClip.start - secondClip.start,
       )[0]?.id ??
     null
   );
@@ -693,7 +827,9 @@ type RecordedAudioOptions = {
   fps: number;
 };
 
-export const createRecordedAudioClip = (options: RecordedAudioOptions): TimelineClip | null => {
+export const createRecordedAudioClip = (
+  options: RecordedAudioOptions,
+): TimelineClip | null => {
   const duration = Math.round(options.durationSeconds * options.fps);
 
   if (duration < 1) {
@@ -748,7 +884,9 @@ export type VideoMediaPairOptions = {
   sourceDuration?: number;
 };
 
-export const createVideoMediaPair = (options: VideoMediaPairOptions): [TimelineClip, TimelineClip] => {
+export const createVideoMediaPair = (
+  options: VideoMediaPairOptions,
+): [TimelineClip, TimelineClip] => {
   const video: TimelineClip = {
     id: options.videoId,
     label: options.label,
@@ -757,14 +895,16 @@ export const createVideoMediaPair = (options: VideoMediaPairOptions): [TimelineC
     duration: options.duration,
     sourceStart: Math.max(0, options.sourceStart ?? 0),
     ...(Number.isFinite(options.sourceDuration)
-      ? {sourceDuration: Math.max(1, Math.round(options.sourceDuration ?? 1))}
+      ? { sourceDuration: Math.max(1, Math.round(options.sourceDuration ?? 1)) }
       : {}),
     color: options.track === "main" ? "#0891b2" : "#7c3aed",
     src: options.src,
     speed: 1,
     volume: 1,
     linkedClipId: options.audioId,
-    ...(options.track === "upper" ? {overlayLane: options.overlayLane ?? 0} : {}),
+    ...(options.track === "upper"
+      ? { overlayLane: options.overlayLane ?? 0 }
+      : {}),
   };
   const audio: TimelineClip = {
     id: options.audioId,
@@ -774,7 +914,7 @@ export const createVideoMediaPair = (options: VideoMediaPairOptions): [TimelineC
     duration: options.duration,
     sourceStart: Math.max(0, options.sourceStart ?? 0),
     ...(Number.isFinite(options.sourceDuration)
-      ? {sourceDuration: Math.max(1, Math.round(options.sourceDuration ?? 1))}
+      ? { sourceDuration: Math.max(1, Math.round(options.sourceDuration ?? 1)) }
       : {}),
     color: "#2563eb",
     src: options.src,
@@ -805,7 +945,9 @@ export const createImageMediaClip = (options: {
   speed: 1,
   volume: 1,
   mediaType: "image",
-  ...(options.track === "upper" ? {overlayLane: options.overlayLane ?? 0} : {}),
+  ...(options.track === "upper"
+    ? { overlayLane: options.overlayLane ?? 0 }
+    : {}),
 });
 
 export const createMainMediaPair = (options: {
@@ -825,7 +967,7 @@ export const createMainMediaPair = (options: {
     start: options.start,
     duration: options.duration,
   });
-  const legacyAudio = {...audio};
+  const legacyAudio = { ...audio };
   delete legacyAudio.speed;
   return [video, legacyAudio];
 };
@@ -837,7 +979,9 @@ type StickerClipOptions = {
   playheadFrame: number;
 };
 
-export const createStickerClip = (options: StickerClipOptions): TimelineClip => ({
+export const createStickerClip = (
+  options: StickerClipOptions,
+): TimelineClip => ({
   id: options.id,
   label: options.label,
   track: "sticker",
@@ -845,10 +989,13 @@ export const createStickerClip = (options: StickerClipOptions): TimelineClip => 
   duration: 90,
   color: "#f59e0b",
   src: options.src,
-  sticker: {x: 50, y: 50, scale: 1, rotation: 0},
+  sticker: { x: 50, y: 50, scale: 1, rotation: 0 },
 });
 
-export const appendStickerClip = (clips: TimelineClip[], sticker: TimelineClip): TimelineClip[] => [...clips, sticker];
+export const appendStickerClip = (
+  clips: TimelineClip[],
+  sticker: TimelineClip,
+): TimelineClip[] => [...clips, sticker];
 
 export const createCutoutImageClip = ({
   id,
@@ -904,7 +1051,7 @@ export const createCutoutVideoPair = ({
     speed: 1,
     volume: 1,
     linkedClipId: audioId,
-    cutout: {x: 50, y: 50, scale: 1, rotation: 0, mediaKind: "video"},
+    cutout: { x: 50, y: 50, scale: 1, rotation: 0, mediaKind: "video" },
   };
   const audio: TimelineClip = {
     id: audioId,
@@ -928,17 +1075,28 @@ export const moveCutoutClip = (
   targetStart: number,
   timelineDuration: number,
 ): TimelineClip[] => {
-  const cutout = clips.find((clip) => clip.id === clipId && clip.track === "cutout" && clip.cutout);
+  const cutout = clips.find(
+    (clip) => clip.id === clipId && clip.track === "cutout" && clip.cutout,
+  );
   if (!cutout) return clips;
 
-  const start = clampTimelineStart(targetStart, cutout.duration, timelineDuration);
+  const start = clampTimelineStart(
+    targetStart,
+    cutout.duration,
+    timelineDuration,
+  );
   if (start === cutout.start) return clips;
 
   const linkedAudio = getReciprocalLinkedAudio(clips, cutout);
-  return clips.map((clip) => (clip.id === cutout.id || clip.id === linkedAudio?.id ? {...clip, start} : clip));
+  return clips.map((clip) =>
+    clip.id === cutout.id || clip.id === linkedAudio?.id
+      ? { ...clip, start }
+      : clip,
+  );
 };
 
-const clampMaskPercent = (value: number): number => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+const clampMaskPercent = (value: number): number =>
+  Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 
 export const appendCutoutMaskStroke = (
   clips: TimelineClip[],
@@ -983,11 +1141,17 @@ export const setCutoutChromaKeyById = (
 ): TimelineClip[] => {
   let changed = false;
   const nextClips = clips.map((clip) => {
-    const isVideoTrack = clip.track === "main" || clip.track === "upper" || clip.track === "cutout";
+    const isVideoTrack =
+      clip.track === "main" ||
+      clip.track === "upper" ||
+      clip.track === "cutout";
     const isVideo =
       clip.cutout?.mediaKind === "video" ||
       clip.mediaType === "video" ||
-      (isVideoTrack && Boolean(clip.src) && clip.mediaType !== "image" && clip.cutout?.mediaKind !== "image");
+      (isVideoTrack &&
+        Boolean(clip.src) &&
+        clip.mediaType !== "image" &&
+        clip.cutout?.mediaKind !== "image");
     if (clip.id !== clipId || !isVideo) {
       return clip;
     }
@@ -1000,14 +1164,16 @@ export const setCutoutChromaKeyById = (
     return {
       ...clip,
       chromaKey,
-      ...(clip.cutout ? {cutout: {...clip.cutout, chromaKey}} : {}),
+      ...(clip.cutout ? { cutout: { ...clip.cutout, chromaKey } } : {}),
     };
   });
 
   return changed ? nextClips : clips;
 };
 
-export const getEffectiveCutoutOriginalSourceStart = (clip: TimelineClip): number => {
+export const getEffectiveCutoutOriginalSourceStart = (
+  clip: TimelineClip,
+): number => {
   const sourceStart = clip.sourceStart ?? 0;
   if (clip.cutout?.mediaKind !== "video" || !clip.cutout.originalSrc) {
     return sourceStart;
@@ -1016,7 +1182,10 @@ export const getEffectiveCutoutOriginalSourceStart = (clip: TimelineClip): numbe
   return (clip.cutout.originalSourceStart ?? 0) + sourceStart;
 };
 
-export const resetCutoutMask = (clips: TimelineClip[], clipId: string): TimelineClip[] => {
+export const resetCutoutMask = (
+  clips: TimelineClip[],
+  clipId: string,
+): TimelineClip[] => {
   let changed = false;
   const nextClips = clips.map((clip) => {
     if (
@@ -1030,26 +1199,35 @@ export const resetCutoutMask = (clips: TimelineClip[], clipId: string): Timeline
     }
 
     changed = true;
-    const effectiveOriginalSourceStart = getEffectiveCutoutOriginalSourceStart(clip);
-    const {originalSrc, originalSourceStart, ...cutout} = clip.cutout;
+    const effectiveOriginalSourceStart =
+      getEffectiveCutoutOriginalSourceStart(clip);
+    const { originalSrc, originalSourceStart, ...cutout } = clip.cutout;
     return {
       ...clip,
-      ...(originalSrc ? {src: originalSrc} : {}),
-      ...(originalSrc && clip.cutout.mediaKind === "video" && originalSourceStart !== undefined
-        ? {sourceStart: effectiveOriginalSourceStart}
+      ...(originalSrc ? { src: originalSrc } : {}),
+      ...(originalSrc &&
+      clip.cutout.mediaKind === "video" &&
+      originalSourceStart !== undefined
+        ? { sourceStart: effectiveOriginalSourceStart }
         : {}),
-      cutout: {...cutout, maskStrokes: []},
+      cutout: { ...cutout, maskStrokes: [] },
     };
   });
   return changed ? nextClips : clips;
 };
 
-const createCutoutStrokeMaskDataUrl = (cutout: CutoutTransform | undefined, baseColor: "black" | "white"): string => {
+const createCutoutStrokeMaskDataUrl = (
+  cutout: CutoutTransform | undefined,
+  baseColor: "black" | "white",
+): string => {
   const strokes = cutout?.maskStrokes ?? [];
   const paths = strokes
     .map((stroke) => {
       const points = stroke.points
-        .map((point) => `${clampMaskPercent(point.x)},${clampMaskPercent(point.y)}`)
+        .map(
+          (point) =>
+            `${clampMaskPercent(point.x)},${clampMaskPercent(point.y)}`,
+        )
         .join(" ");
       const color = stroke.mode === "erase" ? "black" : "white";
       if (stroke.points.length === 1) {
@@ -1066,8 +1244,9 @@ const createCutoutStrokeMaskDataUrl = (cutout: CutoutTransform | undefined, base
 export const createCutoutMaskDataUrl = (cutout?: CutoutTransform): string =>
   createCutoutStrokeMaskDataUrl(cutout, "white");
 
-export const createCutoutRestoreMaskDataUrl = (cutout?: CutoutTransform): string =>
-  createCutoutStrokeMaskDataUrl(cutout, "black");
+export const createCutoutRestoreMaskDataUrl = (
+  cutout?: CutoutTransform,
+): string => createCutoutStrokeMaskDataUrl(cutout, "black");
 
 export const removeBackgroundPixels = (
   pixels: Uint8ClampedArray,
@@ -1080,9 +1259,16 @@ export const removeBackgroundPixels = (
     return output;
   }
 
-  const cornerIndexes = [0, (width - 1) * 4, (height - 1) * width * 4, (height * width - 1) * 4];
+  const cornerIndexes = [
+    0,
+    (width - 1) * 4,
+    (height - 1) * width * 4,
+    (height * width - 1) * 4,
+  ];
   const background = [0, 1, 2].map(
-    (channel) => cornerIndexes.reduce((sum, index) => sum + output[index + channel], 0) / cornerIndexes.length,
+    (channel) =>
+      cornerIndexes.reduce((sum, index) => sum + output[index + channel], 0) /
+      cornerIndexes.length,
   );
   const edgeDistance = Math.max(1, Math.min(24, threshold));
   const enclosedWhiteDistance = Math.min(8, edgeDistance);
@@ -1100,7 +1286,12 @@ export const removeBackgroundPixels = (
     );
   };
   const enqueueBackground = (pixelIndex: number) => {
-    if (pixelIndex < 0 || pixelIndex >= pixelCount || visited[pixelIndex] || colorDistance(pixelIndex) > edgeDistance) {
+    if (
+      pixelIndex < 0 ||
+      pixelIndex >= pixelCount ||
+      visited[pixelIndex] ||
+      colorDistance(pixelIndex) > edgeDistance
+    ) {
       return;
     }
     visited[pixelIndex] = 1;
@@ -1150,7 +1341,10 @@ export const removeBackgroundPixels = (
 
   for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
     const index = pixelIndex * 4;
-    if (output[index + 3] > 0 && colorDistance(pixelIndex) <= enclosedWhiteDistance) {
+    if (
+      output[index + 3] > 0 &&
+      colorDistance(pixelIndex) <= enclosedWhiteDistance
+    ) {
       enqueueEnclosedBackground(pixelIndex);
     }
   }
@@ -1205,7 +1399,11 @@ export const removeBackgroundPixels = (
       ];
 
       for (const neighbor of neighbors) {
-        if (neighbor >= 0 && !visited[neighbor] && isBrightNeutralPixel(neighbor)) {
+        if (
+          neighbor >= 0 &&
+          !visited[neighbor] &&
+          isBrightNeutralPixel(neighbor)
+        ) {
           visited[neighbor] = 1;
           queue[queueEnd] = neighbor;
           queueEnd += 1;
@@ -1264,7 +1462,11 @@ export const removeBackgroundPixels = (
       ];
 
       for (const neighbor of neighbors) {
-        if (neighbor >= 0 && !visited[neighbor] && output[neighbor * 4 + 3] > 0) {
+        if (
+          neighbor >= 0 &&
+          !visited[neighbor] &&
+          output[neighbor * 4 + 3] > 0
+        ) {
           visited[neighbor] = 1;
           queue[queueEnd] = neighbor;
           queueEnd += 1;
@@ -1272,7 +1474,7 @@ export const removeBackgroundPixels = (
       }
     }
 
-    components.push({pixels: pixelsInComponent, minX, maxX, minY, maxY});
+    components.push({ pixels: pixelsInComponent, minX, maxX, minY, maxY });
   }
 
   if (components.length > 1) {
@@ -1291,16 +1493,24 @@ export const removeBackgroundPixels = (
         ? focusedComponents
         : [
             components.reduce((largest, component) =>
-              component.pixels.length > largest.pixels.length ? component : largest,
+              component.pixels.length > largest.pixels.length
+                ? component
+                : largest,
             ),
           ];
-    const largestSubjectSize = Math.max(...subjectComponents.map((component) => component.pixels.length));
-    const minimumCompanionSize = Math.max(4, Math.floor(largestSubjectSize * 0.35));
+    const largestSubjectSize = Math.max(
+      ...subjectComponents.map((component) => component.pixels.length),
+    );
+    const minimumCompanionSize = Math.max(
+      4,
+      Math.floor(largestSubjectSize * 0.35),
+    );
     const keepComponents = new Set(
       components.filter(
         (component) =>
           subjectComponents.includes(component) ||
-          (intersectsFocusArea(component) && component.pixels.length >= minimumCompanionSize),
+          (intersectsFocusArea(component) &&
+            component.pixels.length >= minimumCompanionSize),
       ),
     );
 
@@ -1325,7 +1535,12 @@ export const applyAutomaticCutoutById = (
 ): TimelineClip[] => {
   let changed = false;
   const nextClips = clips.map((clip) => {
-    if (clip.id !== clipId || clip.track !== "cutout" || !clip.cutout || !clip.src) {
+    if (
+      clip.id !== clipId ||
+      clip.track !== "cutout" ||
+      !clip.cutout ||
+      !clip.src
+    ) {
       return clip;
     }
 
@@ -1333,7 +1548,7 @@ export const applyAutomaticCutoutById = (
     return {
       ...clip,
       src: processedSrc,
-      ...(clip.cutout.mediaKind === "video" ? {sourceStart: 0} : {}),
+      ...(clip.cutout.mediaKind === "video" ? { sourceStart: 0 } : {}),
       cutout: {
         ...clip.cutout,
         originalSrc: clip.cutout.originalSrc ?? clip.src,
@@ -1380,7 +1595,11 @@ export const createTextClip = ({
   },
 });
 
-export const setTextContentById = (clips: TimelineClip[], clipId: string | null, content: string): TimelineClip[] => {
+export const setTextContentById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+  content: string,
+): TimelineClip[] => {
   const nextContent = content.trim();
   if (!clipId || !nextContent) {
     return clips;
@@ -1421,12 +1640,18 @@ const clampUnit = (value: number): number => Math.max(0, Math.min(1, value));
 const STAR_X = [-18, 4, 20];
 const STAR_Y = [-16, -24, -10];
 
-export const getTextAnimationVisibleCharacterCount = (clip: TimelineClip, playheadFrame: number): number => {
+export const getTextAnimationVisibleCharacterCount = (
+  clip: TimelineClip,
+  playheadFrame: number,
+): number => {
   const content = clip.text?.content ?? "";
   if (clip.text?.animation !== "typewriter") return content.length;
   const localFrame = Math.max(0, playheadFrame - clip.start);
   const revealFrames = Math.max(15, Math.min(60, content.length * 2));
-  return Math.min(content.length, Math.floor((localFrame / revealFrames) * content.length));
+  return Math.min(
+    content.length,
+    Math.floor((localFrame / revealFrames) * content.length),
+  );
 };
 
 export const getTextAnimationWordPresentation = (
@@ -1453,7 +1678,9 @@ export const getTextAnimationWordPresentation = (
   }
   if (animation === "star-jump") {
     const activeWord = Math.floor(localFrame / 12) % Math.max(1, wordCount);
-    return activeWord === wordIndex ? {...neutralTextAnimation, translateY: -5, scale: 1.06} : neutralTextAnimation;
+    return activeWord === wordIndex
+      ? { ...neutralTextAnimation, translateY: -5, scale: 1.06 }
+      : neutralTextAnimation;
   }
   return neutralTextAnimation;
 };
@@ -1486,10 +1713,17 @@ export const getTextAnimationPresentation = (
   const preset = clip.text?.animation ?? "none";
   if (preset === "none") return neutralTextAnimation;
 
-  const progress = clampUnit((playheadFrame - clip.start) / Math.max(1, durationInFrames));
+  const progress = clampUnit(
+    (playheadFrame - clip.start) / Math.max(1, durationInFrames),
+  );
   if (progress >= 1) return neutralTextAnimation;
 
-  if (preset === "bounce" || preset === "star-jump" || preset === "typewriter" || preset === "wave") {
+  if (
+    preset === "bounce" ||
+    preset === "star-jump" ||
+    preset === "typewriter" ||
+    preset === "wave"
+  ) {
     return neutralTextAnimation;
   }
 
@@ -1497,7 +1731,13 @@ export const getTextAnimationPresentation = (
     const flickerOpacity = [0.2, 0.8, 0.35, 0.9, 0.55, 1];
     return {
       ...neutralTextAnimation,
-      opacity: flickerOpacity[Math.min(flickerOpacity.length - 1, Math.max(0, playheadFrame - clip.start))] ?? 1,
+      opacity:
+        flickerOpacity[
+          Math.min(
+            flickerOpacity.length - 1,
+            Math.max(0, playheadFrame - clip.start),
+          )
+        ] ?? 1,
     };
   }
 
@@ -1510,7 +1750,7 @@ export const getTextAnimationPresentation = (
   }
 
   if (preset === "fade") {
-    return {...neutralTextAnimation, opacity: progress};
+    return { ...neutralTextAnimation, opacity: progress };
   }
 
   if (preset === "jump") {
@@ -1579,12 +1819,20 @@ export const setCaptionStyleById = (
   return changed ? nextClips : clips;
 };
 
-export const resizeTextOverlayById = (clips: TimelineClip[], clipId: string | null, fontSize: number): TimelineClip[] =>
+export const resizeTextOverlayById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+  fontSize: number,
+): TimelineClip[] =>
   setTextStyleById(clips, clipId, {
     fontSize: Math.max(12, Math.min(160, Math.round(fontSize))),
   });
 
-export const setTextRotationById = (clips: TimelineClip[], clipId: string | null, rotation: number): TimelineClip[] =>
+export const setTextRotationById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+  rotation: number,
+): TimelineClip[] =>
   setTextStyleById(clips, clipId, {
     rotation: Math.max(-180, Math.min(180, Math.round(rotation))),
   });
@@ -1605,7 +1853,10 @@ export const getResizedTextFontSize = ({
   const dragDistance = Math.hypot(pointerX - startX, pointerY - startY);
   const direction = pointerX + pointerY >= startX + startY ? 1 : -1;
 
-  return Math.max(12, Math.min(160, Math.round(startFontSize + (direction * dragDistance) / 2)));
+  return Math.max(
+    12,
+    Math.min(160, Math.round(startFontSize + (direction * dragDistance) / 2)),
+  );
 };
 
 export const createSavedEditorProject = ({
@@ -1659,17 +1910,29 @@ export const removeUnusedMediaItem = ({
   return {
     outcome: "removed",
     mediaItems: nextMediaItems,
-    selectedMediaId: selectedMediaId === mediaId ? (nextMediaItems[0]?.id ?? null) : selectedMediaId,
+    selectedMediaId:
+      selectedMediaId === mediaId
+        ? (nextMediaItems[0]?.id ?? null)
+        : selectedMediaId,
     message: `${mediaItem.label} removed from imported media.`,
   };
 };
 
-const isBrowserOnlySavedSource = (src?: string) => src?.startsWith("blob:") ?? false;
+const isBrowserOnlySavedSource = (src?: string) =>
+  src?.startsWith("blob:") ?? false;
 
-export const removeBrowserOnlySavedMedia = (project: SavedEditorProject): SavedEditorProject => {
-  const mediaItems = project.mediaItems.filter((mediaItem) => !isBrowserOnlySavedSource(mediaItem.src));
-  const clips = project.clips.filter((clip) => !isBrowserOnlySavedSource(clip.src));
-  const selectedMediaId = mediaItems.some((mediaItem) => mediaItem.id === project.selectedMediaId)
+export const removeBrowserOnlySavedMedia = (
+  project: SavedEditorProject,
+): SavedEditorProject => {
+  const mediaItems = project.mediaItems.filter(
+    (mediaItem) => !isBrowserOnlySavedSource(mediaItem.src),
+  );
+  const clips = project.clips.filter(
+    (clip) => !isBrowserOnlySavedSource(clip.src),
+  );
+  const selectedMediaId = mediaItems.some(
+    (mediaItem) => mediaItem.id === project.selectedMediaId,
+  )
     ? project.selectedMediaId
     : (mediaItems[0]?.id ?? null);
 
@@ -1681,12 +1944,18 @@ export const removeBrowserOnlySavedMedia = (project: SavedEditorProject): SavedE
   };
 };
 
-export const parseSavedEditorProject = (value: string | null): SavedEditorProject | null => {
+export const parseSavedEditorProject = (
+  value: string | null,
+): SavedEditorProject | null => {
   if (!value) return null;
 
   try {
     const parsed = JSON.parse(value) as Partial<SavedEditorProject>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.clips) || !Array.isArray(parsed.mediaItems)) {
+    if (
+      parsed.version !== 1 ||
+      !Array.isArray(parsed.clips) ||
+      !Array.isArray(parsed.mediaItems)
+    ) {
       return null;
     }
 
@@ -1695,9 +1964,13 @@ export const parseSavedEditorProject = (value: string | null): SavedEditorProjec
       savedAt: typeof parsed.savedAt === "string" ? parsed.savedAt : "",
       clips: parsed.clips,
       mediaItems: parsed.mediaItems,
-      selectedMediaId: typeof parsed.selectedMediaId === "string" ? parsed.selectedMediaId : null,
-      ...(Number.isInteger(parsed.nextSourceGroupIndex) && (parsed.nextSourceGroupIndex ?? 0) > 0
-        ? {nextSourceGroupIndex: parsed.nextSourceGroupIndex}
+      selectedMediaId:
+        typeof parsed.selectedMediaId === "string"
+          ? parsed.selectedMediaId
+          : null,
+      ...(Number.isInteger(parsed.nextSourceGroupIndex) &&
+      (parsed.nextSourceGroupIndex ?? 0) > 0
+        ? { nextSourceGroupIndex: parsed.nextSourceGroupIndex }
         : {}),
     };
   } catch {
@@ -1705,10 +1978,18 @@ export const parseSavedEditorProject = (value: string | null): SavedEditorProjec
   }
 };
 
-export const createWaveformBars = (clipId: string, numberOfBars: number): number[] =>
-  Array.from({length: Math.max(1, numberOfBars)}, (_, index) => {
-    const seed = Array.from(clipId).reduce((total, character) => total + character.charCodeAt(0), 0);
-    const value = Math.sin((index + 1) * 1.73 + seed * 0.07) * 0.5 + Math.sin((index + 1) * 0.61 + seed * 0.13) * 0.5;
+export const createWaveformBars = (
+  clipId: string,
+  numberOfBars: number,
+): number[] =>
+  Array.from({ length: Math.max(1, numberOfBars) }, (_, index) => {
+    const seed = Array.from(clipId).reduce(
+      (total, character) => total + character.charCodeAt(0),
+      0,
+    );
+    const value =
+      Math.sin((index + 1) * 1.73 + seed * 0.07) * 0.5 +
+      Math.sin((index + 1) * 0.61 + seed * 0.13) * 0.5;
 
     return Math.max(0.18, Math.min(1, 0.55 + value * 0.35));
   });
@@ -1719,16 +2000,25 @@ export const moveTextClip = (
   targetStart: number,
   timelineDuration: number,
 ): TimelineClip[] => {
-  const clip = clips.find((candidate) => candidate.id === clipId && candidate.track === "text" && candidate.text);
+  const clip = clips.find(
+    (candidate) =>
+      candidate.id === clipId && candidate.track === "text" && candidate.text,
+  );
   if (!clip) return clips;
 
-  const start = clampTimelineStart(targetStart, clip.duration, timelineDuration);
+  const start = clampTimelineStart(
+    targetStart,
+    clip.duration,
+    timelineDuration,
+  );
   if (start === clip.start) return clips;
 
-  return clips.map((candidate) => (candidate.id === clipId ? {...candidate, start} : candidate));
+  return clips.map((candidate) =>
+    candidate.id === clipId ? { ...candidate, start } : candidate,
+  );
 };
 
-type TextPosition = {x: number; y: number};
+type TextPosition = { x: number; y: number };
 type TextPositionBounds = {
   halfWidthPercent: number;
   halfHeightPercent: number;
@@ -1740,7 +2030,10 @@ export const moveTextOverlay = (
   position: TextPosition,
   bounds: TextPositionBounds,
 ): TimelineClip[] => {
-  const clip = clips.find((candidate) => candidate.id === clipId && candidate.track === "text" && candidate.text);
+  const clip = clips.find(
+    (candidate) =>
+      candidate.id === clipId && candidate.track === "text" && candidate.text,
+  );
   if (!clip?.text) return clips;
 
   const halfWidth = Math.max(0, Math.min(50, bounds.halfWidthPercent));
@@ -1751,7 +2044,9 @@ export const moveTextOverlay = (
   if (x === clip.text.x && y === clip.text.y) return clips;
 
   return clips.map((candidate) =>
-    candidate.id === clipId ? {...candidate, text: {...candidate.text!, x, y}} : candidate,
+    candidate.id === clipId
+      ? { ...candidate, text: { ...candidate.text!, x, y } }
+      : candidate,
   );
 };
 
@@ -1760,7 +2055,7 @@ export const getCaptionPosition = (caption: CaptionOverlay) => ({
   y: caption.y ?? 82,
 });
 
-type CaptionPosition = {x: number; y: number};
+type CaptionPosition = { x: number; y: number };
 
 type CaptionPositionBounds = {
   halfWidthPercent: number;
@@ -1831,7 +2126,7 @@ export const createManualCaptionClip = ({
     start,
     duration,
     color: "#ef4444",
-    caption: {...style, content: text},
+    caption: { ...style, content: text },
   };
 };
 
@@ -1852,7 +2147,8 @@ export const createGeneratedCaptionClips = ({
 }): TimelineClip[] => {
   const speed = sourceClip.speed ?? 1;
   const sourceStartSeconds = (sourceClip.sourceStart ?? 0) / fps;
-  const sourceEndSeconds = sourceStartSeconds + (sourceClip.duration * speed) / fps;
+  const sourceEndSeconds =
+    sourceStartSeconds + (sourceClip.duration * speed) / fps;
 
   return segments.flatMap((segment, index) => {
     const text = segment.text.trim();
@@ -1865,7 +2161,11 @@ export const createGeneratedCaptionClips = ({
       Number.isFinite(sourceClip.duration) &&
       Number.isFinite(sourceClip.sourceStart ?? 0);
 
-    if (!valuesAreFinite || segment.startSeconds < 0 || segment.endSeconds <= segment.startSeconds) {
+    if (
+      !valuesAreFinite ||
+      segment.startSeconds < 0 ||
+      segment.endSeconds <= segment.startSeconds
+    ) {
       return [];
     }
 
@@ -1876,10 +2176,13 @@ export const createGeneratedCaptionClips = ({
       return [];
     }
 
-    const start = sourceClip.start + Math.round(((visibleStart - sourceStartSeconds) * fps) / speed);
+    const start =
+      sourceClip.start +
+      Math.round(((visibleStart - sourceStartSeconds) * fps) / speed);
     const end = Math.min(
       timelineDuration,
-      sourceClip.start + Math.round(((visibleEnd - sourceStartSeconds) * fps) / speed),
+      sourceClip.start +
+        Math.round(((visibleEnd - sourceStartSeconds) * fps) / speed),
     );
 
     if (end <= start) {
@@ -1911,7 +2214,10 @@ export const replaceGeneratedCaptionBatch = (
   generated: TimelineClip[],
 ): TimelineClip[] => [
   ...clips.filter(
-    (clip) => clip.track !== "caption" || !clip.caption?.generationId || clip.caption.sourceClipId !== sourceClipId,
+    (clip) =>
+      clip.track !== "caption" ||
+      !clip.caption?.generationId ||
+      clip.caption.sourceClipId !== sourceClipId,
   ),
   ...generated,
 ];
@@ -1931,8 +2237,14 @@ export const resizeCaptionOverlayById = (
       return clip;
     }
 
-    const maximumFontSize = Math.max(1, Math.min(160, Math.round(bounds?.maximumFontSize ?? 160)));
-    const nextFontSize = Math.max(1, Math.min(maximumFontSize, Math.round(fontSize)));
+    const maximumFontSize = Math.max(
+      1,
+      Math.min(160, Math.round(bounds?.maximumFontSize ?? 160)),
+    );
+    const nextFontSize = Math.max(
+      1,
+      Math.min(maximumFontSize, Math.round(fontSize)),
+    );
     if (nextFontSize === clip.caption.fontSize) {
       return clip;
     }
@@ -1942,10 +2254,17 @@ export const resizeCaptionOverlayById = (
       bounds?.maximumFontSize === undefined && bounds?.referenceFontSize
         ? Math.max(1, nextFontSize / Math.max(1, bounds.referenceFontSize))
         : 1;
-    const halfWidth = bounds ? Math.max(0, Math.min(50, bounds.halfWidthPercent * growthScale)) : 0;
-    const halfHeight = bounds ? Math.max(0, Math.min(50, bounds.halfHeightPercent * growthScale)) : 0;
+    const halfWidth = bounds
+      ? Math.max(0, Math.min(50, bounds.halfWidthPercent * growthScale))
+      : 0;
+    const halfHeight = bounds
+      ? Math.max(0, Math.min(50, bounds.halfHeightPercent * growthScale))
+      : 0;
     const x = Math.max(halfWidth, Math.min(100 - halfWidth, currentPosition.x));
-    const y = Math.max(halfHeight, Math.min(100 - halfHeight, currentPosition.y));
+    const y = Math.max(
+      halfHeight,
+      Math.min(100 - halfHeight, currentPosition.y),
+    );
 
     changed = true;
 
@@ -1975,15 +2294,18 @@ export type CaptionResizeHandle =
   | "bottom-left"
   | "left";
 
-const captionResizeHandleVectors: Record<CaptionResizeHandle, {x: number; y: number}> = {
-  "top-left": {x: -1, y: -1},
-  top: {x: 0, y: -1},
-  "top-right": {x: 1, y: -1},
-  right: {x: 1, y: 0},
-  "bottom-right": {x: 1, y: 1},
-  bottom: {x: 0, y: 1},
-  "bottom-left": {x: -1, y: 1},
-  left: {x: -1, y: 0},
+const captionResizeHandleVectors: Record<
+  CaptionResizeHandle,
+  { x: number; y: number }
+> = {
+  "top-left": { x: -1, y: -1 },
+  top: { x: 0, y: -1 },
+  "top-right": { x: 1, y: -1 },
+  right: { x: 1, y: 0 },
+  "bottom-right": { x: 1, y: 1 },
+  bottom: { x: 0, y: 1 },
+  "bottom-left": { x: -1, y: 1 },
+  left: { x: -1, y: 0 },
 };
 
 export const resizeCutoutTransform = ({
@@ -2020,23 +2342,43 @@ export const resizeCutoutTransform = ({
   const nextWidth =
     vector.x === 0
       ? startWidth
-      : Math.max(safeBaseWidth * 0.08, Math.min(safeBaseWidth * 6, startWidth + vector.x * localDeltaX));
+      : Math.max(
+          safeBaseWidth * 0.08,
+          Math.min(safeBaseWidth * 6, startWidth + vector.x * localDeltaX),
+        );
   const nextHeight =
     vector.y === 0
       ? startHeight
-      : Math.max(safeBaseHeight * 0.08, Math.min(safeBaseHeight * 6, startHeight + vector.y * localDeltaY));
+      : Math.max(
+          safeBaseHeight * 0.08,
+          Math.min(safeBaseHeight * 6, startHeight + vector.y * localDeltaY),
+        );
   const localCenterShiftX = (vector.x * (nextWidth - startWidth)) / 2;
   const localCenterShiftY = (vector.y * (nextHeight - startHeight)) / 2;
-  const worldCenterShiftX = localCenterShiftX * cosine - localCenterShiftY * sine;
-  const worldCenterShiftY = localCenterShiftX * sine + localCenterShiftY * cosine;
+  const worldCenterShiftX =
+    localCenterShiftX * cosine - localCenterShiftY * sine;
+  const worldCenterShiftY =
+    localCenterShiftX * sine + localCenterShiftY * cosine;
 
   return {
     ...transform,
     scale: 1,
     scaleX: nextWidth / safeBaseWidth,
     scaleY: nextHeight / safeBaseHeight,
-    x: Math.max(0, Math.min(100, transform.x + (worldCenterShiftX / Math.max(1, previewWidth)) * 100)),
-    y: Math.max(0, Math.min(100, transform.y + (worldCenterShiftY / Math.max(1, previewHeight)) * 100)),
+    x: Math.max(
+      0,
+      Math.min(
+        100,
+        transform.x + (worldCenterShiftX / Math.max(1, previewWidth)) * 100,
+      ),
+    ),
+    y: Math.max(
+      0,
+      Math.min(
+        100,
+        transform.y + (worldCenterShiftY / Math.max(1, previewHeight)) * 100,
+      ),
+    ),
   };
 };
 
@@ -2057,9 +2399,14 @@ export const getResizedCaptionFontSizeFromHandle = ({
 }): number => {
   const vector = captionResizeHandleVectors[handle];
   const vectorLength = Math.hypot(vector.x, vector.y);
-  const projectedDistance = ((pointerX - startX) * vector.x + (pointerY - startY) * vector.y) / vectorLength;
+  const projectedDistance =
+    ((pointerX - startX) * vector.x + (pointerY - startY) * vector.y) /
+    vectorLength;
 
-  return Math.max(1, Math.min(160, Math.round(startFontSize + projectedDistance / 2)));
+  return Math.max(
+    1,
+    Math.min(160, Math.round(startFontSize + projectedDistance / 2)),
+  );
 };
 
 export const getMaximumFittingCaptionFontSize = ({
@@ -2071,7 +2418,7 @@ export const getMaximumFittingCaptionFontSize = ({
   requestedFontSize: number;
   previewWidth: number;
   previewHeight: number;
-  measure: (fontSize: number) => {width: number; height: number};
+  measure: (fontSize: number) => { width: number; height: number };
 }): number => {
   const upperLimit = Math.max(1, Math.min(160, Math.round(requestedFontSize)));
   if (previewWidth <= 0 || previewHeight <= 0) return 1;
@@ -2100,23 +2447,40 @@ export const getActiveClipAtFrame = (
   return getActiveClipsAtFrame(clips, track, frame)[0];
 };
 
-export const hasClipsOnTrack = (clips: TimelineClip[], track: TrackName): boolean =>
-  clips.some((clip) => clip.track === track);
+export const hasClipsOnTrack = (
+  clips: TimelineClip[],
+  track: TrackName,
+): boolean => clips.some((clip) => clip.track === track);
 
-export const getActiveClipsAtFrame = (clips: TimelineClip[], track: TrackName, frame: number): TimelineClip[] => {
+export const getActiveClipsAtFrame = (
+  clips: TimelineClip[],
+  track: TrackName,
+  frame: number,
+): TimelineClip[] => {
   return clips
     .filter((clip) => clip.track === track && !clip.hidden)
     .sort((firstClip, secondClip) => firstClip.start - secondClip.start)
-    .filter((clip) => frame >= clip.start && frame < clip.start + clip.duration);
+    .filter(
+      (clip) => frame >= clip.start && frame < clip.start + clip.duration,
+    );
 };
 
-export const getActiveOverlayClipsAtFrame = (clips: TimelineClip[], frame: number): TimelineClip[] => {
+export const getActiveOverlayClipsAtFrame = (
+  clips: TimelineClip[],
+  frame: number,
+): TimelineClip[] => {
   return getActiveClipsAtFrame(clips, "upper", frame)
     .filter((clip) => Boolean(clip.src))
-    .sort((firstClip, secondClip) => (firstClip.overlayLane ?? 0) - (secondClip.overlayLane ?? 0));
+    .sort(
+      (firstClip, secondClip) =>
+        (firstClip.overlayLane ?? 0) - (secondClip.overlayLane ?? 0),
+    );
 };
 
-export const getActiveVideoLayersAtFrame = (clips: TimelineClip[], frame: number): TimelineClip[] => {
+export const getActiveVideoLayersAtFrame = (
+  clips: TimelineClip[],
+  frame: number,
+): TimelineClip[] => {
   return clips
     .filter(
       (clip) =>
@@ -2126,18 +2490,30 @@ export const getActiveVideoLayersAtFrame = (clips: TimelineClip[], frame: number
         frame >= clip.start &&
         frame < clip.start + clip.duration,
     )
-    .sort((firstClip, secondClip) => (getVideoLayer(firstClip) ?? 0) - (getVideoLayer(secondClip) ?? 0));
+    .sort(
+      (firstClip, secondClip) =>
+        (getVideoLayer(firstClip) ?? 0) - (getVideoLayer(secondClip) ?? 0),
+    );
 };
 
-export const getTopVisibleVideoClipAtFrame = (clips: TimelineClip[], frame: number): TimelineClip | undefined => {
+export const getTopVisibleVideoClipAtFrame = (
+  clips: TimelineClip[],
+  frame: number,
+): TimelineClip | undefined => {
   const activeLayers = getActiveVideoLayersAtFrame(clips, frame);
   return activeLayers[activeLayers.length - 1];
 };
 
-export const getContextualAudioClips = (clips: TimelineClip[], selectedClipId: string | null): TimelineClip[] => {
+export const getContextualAudioClips = (
+  clips: TimelineClip[],
+  selectedClipId: string | null,
+): TimelineClip[] => {
   const selectedVideo = clips.find(
     (clip) =>
-      clip.id === selectedClipId && (clip.track === "main" || clip.track === "upper" || clip.track === "cutout"),
+      clip.id === selectedClipId &&
+      (clip.track === "main" ||
+        clip.track === "upper" ||
+        clip.track === "cutout"),
   );
 
   if (!selectedVideo?.linkedClipId) {
@@ -2149,7 +2525,9 @@ export const getContextualAudioClips = (clips: TimelineClip[], selectedClipId: s
     const speechSequenceId = speechSegmentMatch[1];
     const siblingVideos = clips.filter(
       (clip) =>
-        (clip.track === "main" || clip.track === "upper" || clip.track === "cutout") &&
+        (clip.track === "main" ||
+          clip.track === "upper" ||
+          clip.track === "cutout") &&
         clip.id.match(/^(.*)-speech-\d+$/)?.[1] === speechSequenceId,
     );
 
@@ -2157,16 +2535,24 @@ export const getContextualAudioClips = (clips: TimelineClip[], selectedClipId: s
       .filter(
         (clip) =>
           clip.track === "audio" &&
-          siblingVideos.some((videoClip) => videoClip.linkedClipId === clip.id && clip.linkedClipId === videoClip.id),
+          siblingVideos.some(
+            (videoClip) =>
+              videoClip.linkedClipId === clip.id &&
+              clip.linkedClipId === videoClip.id,
+          ),
       )
       .sort((first, second) => first.start - second.start);
   }
 
-  return clips.filter((clip) => clip.track === "audio" && clip.id === selectedVideo.linkedClipId);
+  return clips.filter(
+    (clip) => clip.track === "audio" && clip.id === selectedVideo.linkedClipId,
+  );
 };
 
-const getWinningVideoClipAtFrame = (clips: TimelineClip[], frame: number): TimelineClip | undefined =>
-  getTopVisibleVideoClipAtFrame(clips, frame);
+const getWinningVideoClipAtFrame = (
+  clips: TimelineClip[],
+  frame: number,
+): TimelineClip | undefined => getTopVisibleVideoClipAtFrame(clips, frame);
 
 const getAudibleLinkedAudioAtFrame = (
   clips: TimelineClip[],
@@ -2189,7 +2575,10 @@ const getAudibleLinkedAudioAtFrame = (
   return linkedAudio;
 };
 
-export const getPlaybackAudioClips = (clips: TimelineClip[], frame: number): TimelineClip[] => {
+export const getPlaybackAudioClips = (
+  clips: TimelineClip[],
+  frame: number,
+): TimelineClip[] => {
   const linkedAudio = [...getActiveVideoLayersAtFrame(clips, frame)]
     .reverse()
     .map((videoClip) => getAudibleLinkedAudioAtFrame(clips, videoClip, frame))
@@ -2203,22 +2592,46 @@ export const getPlaybackAudioClips = (clips: TimelineClip[], frame: number): Tim
   return [...(linkedAudio ? [linkedAudio] : []), ...cutoutAudio];
 };
 
-export const getIndependentPlaybackAudioClips = (clips: TimelineClip[], frame: number): TimelineClip[] => {
+export const getIndependentPlaybackAudioClips = (
+  clips: TimelineClip[],
+  frame: number,
+): TimelineClip[] => {
   return getActiveClipsAtFrame(clips, "audio", frame)
     .filter((audioClip) => Boolean(audioClip.src))
-    .filter((audioClip) => !clips.some((videoClip) => isAudioOwnedByVideo(audioClip, videoClip)));
+    .filter(
+      (audioClip) =>
+        !clips.some(
+          (videoClip) =>
+            !videoClip.hidden && isAudioOwnedByVideo(audioClip, videoClip),
+        ),
+    );
 };
 
-const clipRangesOverlap = (firstStart: number, firstDuration: number, secondStart: number, secondDuration: number) =>
-  firstStart < secondStart + secondDuration && secondStart < firstStart + firstDuration;
+const clipRangesOverlap = (
+  firstStart: number,
+  firstDuration: number,
+  secondStart: number,
+  secondDuration: number,
+) =>
+  firstStart < secondStart + secondDuration &&
+  secondStart < firstStart + firstDuration;
 
-export const findAvailableOverlayLane = (clips: TimelineClip[], start: number, duration: number): number => {
+export const findAvailableOverlayLane = (
+  clips: TimelineClip[],
+  start: number,
+  duration: number,
+): number => {
   const overlayClips = clips.filter((clip) => clip.track === "upper");
-  const highestLane = overlayClips.reduce((highest, clip) => Math.max(highest, clip.overlayLane ?? 0), -1);
+  const highestLane = overlayClips.reduce(
+    (highest, clip) => Math.max(highest, clip.overlayLane ?? 0),
+    -1,
+  );
 
   for (let lane = 0; lane <= highestLane + 1; lane += 1) {
     const laneIsOccupied = overlayClips.some(
-      (clip) => (clip.overlayLane ?? 0) === lane && clipRangesOverlap(start, duration, clip.start, clip.duration),
+      (clip) =>
+        (clip.overlayLane ?? 0) === lane &&
+        clipRangesOverlap(start, duration, clip.start, clip.duration),
     );
 
     if (!laneIsOccupied) {
@@ -2229,16 +2642,24 @@ export const findAvailableOverlayLane = (clips: TimelineClip[], start: number, d
   return highestLane + 1;
 };
 
-const getReciprocalLinkedAudio = (clips: TimelineClip[], videoClip: TimelineClip): TimelineClip | undefined => {
+const getReciprocalLinkedAudio = (
+  clips: TimelineClip[],
+  videoClip: TimelineClip,
+): TimelineClip | undefined => {
   if (
-    (videoClip.track !== "main" && videoClip.track !== "upper" && videoClip.track !== "cutout") ||
+    (videoClip.track !== "main" &&
+      videoClip.track !== "upper" &&
+      videoClip.track !== "cutout") ||
     !videoClip.linkedClipId
   ) {
     return undefined;
   }
 
   const audioClip = clips.find(
-    (clip) => clip.id === videoClip.linkedClipId && clip.track === "audio" && clip.linkedClipId === videoClip.id,
+    (clip) =>
+      clip.id === videoClip.linkedClipId &&
+      clip.track === "audio" &&
+      clip.linkedClipId === videoClip.id,
   );
 
   return audioClip;
@@ -2309,7 +2730,7 @@ export const resizeTextOverlayBoxById = (
     changed = true;
     return {
       ...clip,
-      text: {...clip.text, x, y, boxWidth, boxHeight},
+      text: { ...clip.text, x, y, boxWidth, boxHeight },
     };
   });
 
@@ -2330,7 +2751,7 @@ export const getRotatedTextResizeDelta = ({
   scale?: number;
   previewWidth: number;
   previewHeight: number;
-}): {deltaX: number; deltaY: number} => {
+}): { deltaX: number; deltaY: number } => {
   const radians = (rotation * Math.PI) / 180;
   const cosine = Math.cos(radians);
   const sine = Math.sin(radians);
@@ -2339,16 +2760,30 @@ export const getRotatedTextResizeDelta = ({
   const localY = (-deltaX * sine + deltaY * cosine) / safeScale;
 
   return {
-    deltaX: Math.abs(localX) < 0.000001 ? 0 : (localX / Math.max(1, previewWidth)) * 100,
-    deltaY: Math.abs(localY) < 0.000001 ? 0 : (localY / Math.max(1, previewHeight)) * 100,
+    deltaX:
+      Math.abs(localX) < 0.000001
+        ? 0
+        : (localX / Math.max(1, previewWidth)) * 100,
+    deltaY:
+      Math.abs(localY) < 0.000001
+        ? 0
+        : (localY / Math.max(1, previewHeight)) * 100,
   };
 };
 
-export const isVideoLayerControlTarget = (clip: TimelineClip, videoLayer: number): boolean =>
-  getVideoLayer(clip) === videoLayer && clip.mediaType !== "image";
+export const isVideoLayerControlTarget = (
+  clip: TimelineClip,
+  videoLayer: number,
+): boolean => getVideoLayer(clip) === videoLayer && clip.mediaType !== "image";
 
-export const getVideoLayerControlState = (clips: TimelineClip[], videoLayer: number | null): VideoLayerControlState => {
-  const targets = videoLayer === null ? [] : clips.filter((clip) => isVideoLayerControlTarget(clip, videoLayer));
+export const getVideoLayerControlState = (
+  clips: TimelineClip[],
+  videoLayer: number | null,
+): VideoLayerControlState => {
+  const targets =
+    videoLayer === null
+      ? []
+      : clips.filter((clip) => isVideoLayerControlTarget(clip, videoLayer));
   const speeds = new Set(targets.map((clip) => clip.speed ?? 1));
   const volumes = new Set(targets.map((clip) => clip.volume ?? 1));
 
@@ -2359,10 +2794,15 @@ export const getVideoLayerControlState = (clips: TimelineClip[], videoLayer: num
   };
 };
 
-export const getVideoLayerEnd = (clips: TimelineClip[], videoLayer: number): number =>
+export const getVideoLayerEnd = (
+  clips: TimelineClip[],
+  videoLayer: number,
+): number =>
   clips.reduce(
     (furthestEnd, clip) =>
-      getVideoLayer(clip) === videoLayer ? Math.max(furthestEnd, clip.start + clip.duration) : furthestEnd,
+      getVideoLayer(clip) === videoLayer
+        ? Math.max(furthestEnd, clip.start + clip.duration)
+        : furthestEnd,
     0,
   );
 
@@ -2373,14 +2813,26 @@ export type TimelineTransitionBoundary = {
 };
 
 const isTransitionTargetClip = (clip: TimelineClip): boolean =>
-  (clip.track === "main" || clip.track === "upper") && Boolean(clip.src) && !clip.hidden && clip.mediaType !== "image";
+  (clip.track === "main" || clip.track === "upper") &&
+  Boolean(clip.src) &&
+  !clip.hidden &&
+  clip.mediaType !== "image";
 
-const getOrderedTransitionTargetClips = (clips: TimelineClip[], videoLayer: number) =>
+const getOrderedTransitionTargetClips = (
+  clips: TimelineClip[],
+  videoLayer: number,
+) =>
   clips
-    .map((clip, index) => ({clip, index}))
-    .filter(({clip}) => isTransitionTargetClip(clip) && getVideoLayer(clip) === videoLayer)
-    .sort((left, right) => left.clip.start - right.clip.start || left.index - right.index)
-    .map(({clip}) => clip);
+    .map((clip, index) => ({ clip, index }))
+    .filter(
+      ({ clip }) =>
+        isTransitionTargetClip(clip) && getVideoLayer(clip) === videoLayer,
+    )
+    .sort(
+      (left, right) =>
+        left.clip.start - right.clip.start || left.index - right.index,
+    )
+    .map(({ clip }) => clip);
 
 export const getTimelineTransitionBoundaries = (
   clips: TimelineClip[],
@@ -2407,11 +2859,13 @@ export const getTimelineTransitionBoundaries = (
 
 const withoutClipTransition = (clip: TimelineClip): TimelineClip => {
   if (!clip.transition) return clip;
-  const {transition: _transition, ...clipWithoutTransition} = clip;
+  const { transition: _transition, ...clipWithoutTransition } = clip;
   return clipWithoutTransition;
 };
 
-const normalizeTimelineTransitions = (clips: TimelineClip[]): TimelineClip[] => {
+const normalizeTimelineTransitions = (
+  clips: TimelineClip[],
+): TimelineClip[] => {
   const adjacentPredecessors = new Map<string, TimelineClip>();
   const videoLayers = new Set(
     clips
@@ -2444,11 +2898,14 @@ const normalizeTimelineTransitions = (clips: TimelineClip[]): TimelineClip[] => 
     const requestedDuration = Number.isFinite(clip.transition.duration)
       ? Math.max(1, Math.round(clip.transition.duration))
       : 1;
-    const duration = Math.max(1, Math.min(requestedDuration, previousClip.duration, clip.duration));
+    const duration = Math.max(
+      1,
+      Math.min(requestedDuration, previousClip.duration, clip.duration),
+    );
     if (duration === clip.transition.duration) return clip;
 
     changed = true;
-    return {...clip, transition: {...clip.transition, duration}};
+    return { ...clip, transition: { ...clip.transition, duration } };
   });
 
   return changed ? normalizedClips : clips;
@@ -2464,7 +2921,9 @@ export const setClipTransitionById = (
     return clips;
   }
 
-  const incomingClipIndex = clips.findIndex((clip) => clip.id === incomingClipId);
+  const incomingClipIndex = clips.findIndex(
+    (clip) => clip.id === incomingClipId,
+  );
   if (incomingClipIndex < 0) {
     return clips;
   }
@@ -2479,21 +2938,42 @@ export const setClipTransitionById = (
       return clips;
     }
 
-    return clips.map((clip) => (clip.id === incomingClipId ? withoutClipTransition(clip) : clip));
+    return clips.map((clip) =>
+      clip.id === incomingClipId ? withoutClipTransition(clip) : clip,
+    );
   }
 
-  const orderedClips = getOrderedTransitionTargetClips(clips, getVideoLayer(incomingClip) ?? 0);
-  const orderedIncomingIndex = orderedClips.findIndex((clip) => clip.id === incomingClipId);
-  const previousClip = orderedIncomingIndex > 0 ? orderedClips[orderedIncomingIndex - 1] : undefined;
+  const orderedClips = getOrderedTransitionTargetClips(
+    clips,
+    getVideoLayer(incomingClip) ?? 0,
+  );
+  const orderedIncomingIndex = orderedClips.findIndex(
+    (clip) => clip.id === incomingClipId,
+  );
+  const previousClip =
+    orderedIncomingIndex > 0
+      ? orderedClips[orderedIncomingIndex - 1]
+      : undefined;
 
-  if (!previousClip || previousClip.start + previousClip.duration !== incomingClip.start) {
+  if (
+    !previousClip ||
+    previousClip.start + previousClip.duration !== incomingClip.start
+  ) {
     return clips;
   }
 
-  const safeDuration = Number.isFinite(duration) ? Math.max(1, Math.round(duration)) : 1;
-  const clampedDuration = Math.max(1, Math.min(safeDuration, previousClip.duration, incomingClip.duration));
+  const safeDuration = Number.isFinite(duration)
+    ? Math.max(1, Math.round(duration))
+    : 1;
+  const clampedDuration = Math.max(
+    1,
+    Math.min(safeDuration, previousClip.duration, incomingClip.duration),
+  );
 
-  if (incomingClip.transition?.preset === preset && incomingClip.transition.duration === clampedDuration) {
+  if (
+    incomingClip.transition?.preset === preset &&
+    incomingClip.transition.duration === clampedDuration
+  ) {
     return clips;
   }
 
@@ -2524,15 +3004,21 @@ export const getClipTransitionPresentation = (
   for (const incomingClip of clips) {
     if (!incomingClip.transition) continue;
 
-    const boundary = getTimelineTransitionBoundaries(clips, getVideoLayer(incomingClip) ?? 0).find(
-      (candidate) => candidate.incomingClipId === incomingClip.id,
-    );
-    if (!boundary || (clipId !== boundary.outgoingClipId && clipId !== boundary.incomingClipId)) {
+    const boundary = getTimelineTransitionBoundaries(
+      clips,
+      getVideoLayer(incomingClip) ?? 0,
+    ).find((candidate) => candidate.incomingClipId === incomingClip.id);
+    if (
+      !boundary ||
+      (clipId !== boundary.outgoingClipId && clipId !== boundary.incomingClipId)
+    ) {
       continue;
     }
 
-    const start = boundary.frame - Math.floor(incomingClip.transition.duration / 2);
-    const end = boundary.frame + Math.ceil(incomingClip.transition.duration / 2);
+    const start =
+      boundary.frame - Math.floor(incomingClip.transition.duration / 2);
+    const end =
+      boundary.frame + Math.ceil(incomingClip.transition.duration / 2);
     if (frame < start || frame > end) continue;
 
     const progress =
@@ -2545,7 +3031,7 @@ export const getClipTransitionPresentation = (
     switch (incomingClip.transition.preset) {
       case "fade":
       case "dissolve":
-        return {...neutralClipTransitionPresentation, opacity: visibility};
+        return { ...neutralClipTransitionPresentation, opacity: visibility };
       case "slide":
         return {
           ...neutralClipTransitionPresentation,
@@ -2563,10 +3049,17 @@ export const getClipTransitionPresentation = (
   return neutralClipTransitionPresentation;
 };
 
-export const getNextVideoLayer = (clips: TimelineClip[], direction: VideoLayerDirection): number => {
-  const layers = clips.map(getVideoLayer).filter((layer): layer is number => layer !== null && layer !== 0);
+export const getNextVideoLayer = (
+  clips: TimelineClip[],
+  direction: VideoLayerDirection,
+): number => {
+  const layers = clips
+    .map(getVideoLayer)
+    .filter((layer): layer is number => layer !== null && layer !== 0);
 
-  return direction === "above" ? Math.max(0, ...layers) + 1 : Math.min(0, ...layers) - 1;
+  return direction === "above"
+    ? Math.max(0, ...layers) + 1
+    : Math.min(0, ...layers) - 1;
 };
 
 export const replaceVideoLayerRange = (
@@ -2598,7 +3091,9 @@ export const replaceVideoLayerRange = (
     return clips;
   }
 
-  return normalizeTimelineTransitions(clips.filter((clip) => !replacedIds.has(clip.id)));
+  return normalizeTimelineTransitions(
+    clips.filter((clip) => !replacedIds.has(clip.id)),
+  );
 };
 
 const getSnappedVideoStart = (
@@ -2612,20 +3107,25 @@ const getSnappedVideoStart = (
     .filter((clip) => clip.id !== clipId && getVideoLayer(clip) === videoLayer)
     .sort((first, second) => first.start - second.start);
   let start = Math.max(0, Math.round(proposedStart));
-  const firstCollision = occupied.find((clip) => clipRangesOverlap(start, duration, clip.start, clip.duration));
+  const firstCollision = occupied.find((clip) =>
+    clipRangesOverlap(start, duration, clip.start, clip.duration),
+  );
 
   if (!firstCollision) {
     return start;
   }
 
-  const dropAfter = start + duration / 2 >= firstCollision.start + firstCollision.duration / 2;
+  const dropAfter =
+    start + duration / 2 >= firstCollision.start + firstCollision.duration / 2;
   const scanOrder = dropAfter ? occupied : [...occupied].reverse();
 
   for (const clip of scanOrder) {
     if (!clipRangesOverlap(start, duration, clip.start, clip.duration)) {
       continue;
     }
-    start = dropAfter ? clip.start + clip.duration : Math.max(0, clip.start - duration);
+    start = dropAfter
+      ? clip.start + clip.duration
+      : Math.max(0, clip.start - duration);
   }
 
   return start;
@@ -2637,10 +3137,18 @@ export const placeVideoPairOnLayer = (
   videoLayer: number,
   start: number,
 ): TimelineClip[] => {
-  const video = pair.find((clip) => clip.track === "main" || clip.track === "upper");
+  const video = pair.find(
+    (clip) => clip.track === "main" || clip.track === "upper",
+  );
   if (!video) return clips;
 
-  const clampedStart = getSnappedVideoStart(clips, video.id, videoLayer, start, video.duration);
+  const clampedStart = getSnappedVideoStart(
+    clips,
+    video.id,
+    videoLayer,
+    start,
+    video.duration,
+  );
   const track: "main" | "upper" = videoLayer === 0 ? "main" : "upper";
 
   return normalizeTimelineTransitions([
@@ -2654,19 +3162,24 @@ export const placeVideoPairOnLayer = (
             videoLayer: videoLayer === 0 ? undefined : videoLayer,
             overlayLane: undefined,
           }
-        : {...clip, start: clampedStart},
+        : { ...clip, start: clampedStart },
     ),
   ]);
 };
 
-const shiftVideoLayerForInsert = (clip: TimelineClip, insertedVideoLayer: number): TimelineClip => {
+const shiftVideoLayerForInsert = (
+  clip: TimelineClip,
+  insertedVideoLayer: number,
+): TimelineClip => {
   const currentLayer = getVideoLayer(clip);
   if (currentLayer === null || currentLayer === 0) {
     return clip;
   }
 
-  const shouldShiftUp = insertedVideoLayer > 0 && currentLayer >= insertedVideoLayer;
-  const shouldShiftDown = insertedVideoLayer < 0 && currentLayer <= insertedVideoLayer;
+  const shouldShiftUp =
+    insertedVideoLayer > 0 && currentLayer >= insertedVideoLayer;
+  const shouldShiftDown =
+    insertedVideoLayer < 0 && currentLayer <= insertedVideoLayer;
 
   if (!shouldShiftUp && !shouldShiftDown) {
     return clip;
@@ -2689,7 +3202,9 @@ export const placeVideoPairInInsertedLayer = (
     return placeVideoPairOnLayer(clips, pair, 0, start);
   }
 
-  const shiftedClips = clips.map((clip) => shiftVideoLayerForInsert(clip, insertedVideoLayer));
+  const shiftedClips = clips.map((clip) =>
+    shiftVideoLayerForInsert(clip, insertedVideoLayer),
+  );
   return placeVideoPairOnLayer(shiftedClips, pair, insertedVideoLayer, start);
 };
 
@@ -2700,14 +3215,22 @@ export const moveVideoClipToLayer = (
   targetStart: number,
   timelineBoundary?: number,
 ): TimelineClip[] => {
-  const target = clips.find((clip) => clip.id === clipId && getVideoLayer(clip) !== null);
+  const target = clips.find(
+    (clip) => clip.id === clipId && getVideoLayer(clip) !== null,
+  );
   if (!target) return clips;
 
   const proposedStart =
     timelineBoundary === undefined
       ? Math.max(0, Math.round(targetStart))
       : clampTimelineStart(targetStart, target.duration, timelineBoundary);
-  const start = getSnappedVideoStart(clips, target.id, videoLayer, proposedStart, target.duration);
+  const start = getSnappedVideoStart(
+    clips,
+    target.id,
+    videoLayer,
+    proposedStart,
+    target.duration,
+  );
   const currentLayer = getVideoLayer(target);
   const linkedAudio = getReciprocalLinkedAudio(clips, target);
 
@@ -2728,21 +3251,28 @@ export const moveVideoClipToLayer = (
             overlayLane: undefined,
           }
         : clip.id === linkedAudio?.id
-          ? {...clip, start}
+          ? { ...clip, start }
           : clip,
     ),
   );
 };
 
-const isAudioOwnedByVideo = (audioClip: TimelineClip, videoClip: TimelineClip): boolean => {
+const isAudioOwnedByVideo = (
+  audioClip: TimelineClip,
+  videoClip: TimelineClip,
+): boolean => {
   if (
     audioClip.track !== "audio" ||
-    (videoClip.track !== "main" && videoClip.track !== "upper" && videoClip.track !== "cutout")
+    (videoClip.track !== "main" &&
+      videoClip.track !== "upper" &&
+      videoClip.track !== "cutout")
   ) {
     return false;
   }
 
-  const isReciprocalPair = videoClip.linkedClipId === audioClip.id && audioClip.linkedClipId === videoClip.id;
+  const isReciprocalPair =
+    videoClip.linkedClipId === audioClip.id &&
+    audioClip.linkedClipId === videoClip.id;
   const isLegacyOriginalAudio =
     !audioClip.linkedClipId &&
     Boolean(videoClip.src) &&
@@ -2754,8 +3284,14 @@ const isAudioOwnedByVideo = (audioClip: TimelineClip, videoClip: TimelineClip): 
   return isReciprocalPair || isLegacyOriginalAudio;
 };
 
-export const getOwnedAudioClip = (clips: TimelineClip[], videoClip: TimelineClip): TimelineClip | undefined => {
-  return getReciprocalLinkedAudio(clips, videoClip) ?? clips.find((clip) => isAudioOwnedByVideo(clip, videoClip));
+export const getOwnedAudioClip = (
+  clips: TimelineClip[],
+  videoClip: TimelineClip,
+): TimelineClip | undefined => {
+  return (
+    getReciprocalLinkedAudio(clips, videoClip) ??
+    clips.find((clip) => isAudioOwnedByVideo(clip, videoClip))
+  );
 };
 
 export const shouldMuteVideoNativeAudio = (
@@ -2765,10 +3301,17 @@ export const shouldMuteVideoNativeAudio = (
 ): boolean => {
   const winningVideo = getWinningVideoClipAtFrame(clips, frame);
 
-  return !winningVideo || winningVideo.id !== videoClipId || Boolean(getOwnedAudioClip(clips, winningVideo));
+  return (
+    !winningVideo ||
+    winningVideo.id !== videoClipId ||
+    Boolean(getOwnedAudioClip(clips, winningVideo))
+  );
 };
 
-const resolvePairOperationTarget = (clips: TimelineClip[], selectedClip: TimelineClip): TimelineClip => {
+const resolvePairOperationTarget = (
+  clips: TimelineClip[],
+  selectedClip: TimelineClip,
+): TimelineClip => {
   if (selectedClip.track !== "audio" || !selectedClip.linkedClipId) {
     return selectedClip;
   }
@@ -2783,7 +3326,10 @@ const resolvePairOperationTarget = (clips: TimelineClip[], selectedClip: Timelin
   );
 };
 
-export const deleteClipById = (clips: TimelineClip[], clipId: string | null): TimelineClip[] => {
+export const deleteClipById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+): TimelineClip[] => {
   if (!clipId) {
     return clips;
   }
@@ -2797,12 +3343,19 @@ export const deleteClipById = (clips: TimelineClip[], clipId: string | null): Ti
   const linkedAudio = getReciprocalLinkedAudio(clips, target);
   const deletedIds = new Set([target.id, linkedAudio?.id]);
 
-  return normalizeTimelineTransitions(clips.filter((clip) => !deletedIds.has(clip.id)));
+  return normalizeTimelineTransitions(
+    clips.filter((clip) => !deletedIds.has(clip.id)),
+  );
 };
 
-const duplicateLabel = (label: string): string => `${label.replace(/ copy$/, "")} copy`;
+const duplicateLabel = (label: string): string =>
+  `${label.replace(/ copy$/, "")} copy`;
 
-export const duplicateClipById = (clips: TimelineClip[], clipId: string | null, idPrefix: string): TimelineClip[] => {
+export const duplicateClipById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+  idPrefix: string,
+): TimelineClip[] => {
   if (!clipId || !idPrefix) {
     return clips;
   }
@@ -2843,7 +3396,10 @@ export const duplicateClipById = (clips: TimelineClip[], clipId: string | null, 
   return [...clips, duplicatedVideo, duplicatedAudio];
 };
 
-export const toggleClipMuteById = (clips: TimelineClip[], clipId: string | null): TimelineClip[] => {
+export const toggleClipMuteById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+): TimelineClip[] => {
   if (!clipId) {
     return clips;
   }
@@ -2861,12 +3417,105 @@ export const toggleClipMuteById = (clips: TimelineClip[], clipId: string | null)
     .every((clip) => (clip.volume ?? 1) === 0);
   const nextVolume = shouldUnmute ? 1 : 0;
 
-  return clips.map((clip) => (targetIds.has(clip.id) ? {...clip, volume: nextVolume} : clip));
+  return clips.map((clip) =>
+    targetIds.has(clip.id) ? { ...clip, volume: nextVolume } : clip,
+  );
 };
 
-export const getClipSourceTime = (clip: TimelineClip, playheadFrame: number, fps: number): number => {
-  const speed = Number.isFinite(clip.speed) && (clip.speed ?? 0) > 0 ? (clip.speed ?? 1) : 1;
-  const sourceFrame = (clip.sourceStart ?? 0) + Math.max(0, playheadFrame - clip.start) * speed;
+const getTrackVisibilityTargets = (
+  clips: TimelineClip[],
+  track: TrackName,
+  videoLayer: number | null,
+  targetClipIds?: readonly string[],
+): TimelineClip[] => {
+  const targetIds = targetClipIds ? new Set(targetClipIds) : null;
+
+  return clips.filter((clip) => {
+    if (targetIds) {
+      return targetIds.has(clip.id);
+    }
+
+    if ((track === "main" || track === "upper") && videoLayer !== null) {
+      return getVideoLayer(clip) === videoLayer;
+    }
+
+    return clip.track === track;
+  });
+};
+
+export const isTrackHidden = (
+  clips: TimelineClip[],
+  track: TrackName,
+  videoLayer: number | null = null,
+  targetClipIds?: readonly string[],
+): boolean => {
+  const targets = getTrackVisibilityTargets(
+    clips,
+    track,
+    videoLayer,
+    targetClipIds,
+  );
+  return targets.length > 0 && targets.every((clip) => clip.hidden);
+};
+
+export const toggleTrackVisibility = (
+  clips: TimelineClip[],
+  track: TrackName,
+  videoLayer: number | null = null,
+  targetClipIds?: readonly string[],
+): TimelineClip[] => {
+  const targets = getTrackVisibilityTargets(
+    clips,
+    track,
+    videoLayer,
+    targetClipIds,
+  );
+  if (targets.length === 0) {
+    return clips;
+  }
+
+  const shouldHide = !targets.every((clip) => clip.hidden);
+  const targetIds = new Set(targets.map((clip) => clip.id));
+  const linkedAudioIds = new Set(
+    targets
+      .filter(
+        (clip) =>
+          clip.track === "main" ||
+          clip.track === "upper" ||
+          clip.track === "cutout",
+      )
+      .map((clip) => clip.linkedClipId)
+      .filter((clipId): clipId is string => Boolean(clipId)),
+  );
+
+  return clips.map((clip) => {
+    if (targetIds.has(clip.id)) {
+      return { ...clip, hidden: shouldHide };
+    }
+
+    if (
+      clip.track === "audio" &&
+      linkedAudioIds.has(clip.id) &&
+      targets.some((videoClip) => videoClip.id === clip.linkedClipId)
+    ) {
+      return { ...clip, hidden: shouldHide };
+    }
+
+    return clip;
+  });
+};
+
+export const getClipSourceTime = (
+  clip: TimelineClip,
+  playheadFrame: number,
+  fps: number,
+): number => {
+  const speed =
+    Number.isFinite(clip.speed) && (clip.speed ?? 0) > 0
+      ? (clip.speed ?? 1)
+      : 1;
+  const sourceFrame =
+    (clip.sourceStart ?? 0) + Math.max(0, playheadFrame - clip.start) * speed;
   const boundedSourceFrame = Number.isFinite(clip.sourceDuration)
     ? Math.min(sourceFrame, Math.max(0, (clip.sourceDuration ?? 1) - 1))
     : sourceFrame;
@@ -2874,14 +3523,19 @@ export const getClipSourceTime = (clip: TimelineClip, playheadFrame: number, fps
   return boundedSourceFrame / fps;
 };
 
-export const synchronizeOriginalAudio = (clips: TimelineClip[]): TimelineClip[] => {
+export const synchronizeOriginalAudio = (
+  clips: TimelineClip[],
+): TimelineClip[] => {
   const linkedPairs = new Map<string, TimelineClip>();
 
   clips
     .filter((clip) => clip.track === "main" && clip.src)
     .forEach((mainClip) => {
       const audioClip = mainClip.linkedClipId
-        ? clips.find((clip) => clip.id === mainClip.linkedClipId && clip.track === "audio")
+        ? clips.find(
+            (clip) =>
+              clip.id === mainClip.linkedClipId && clip.track === "audio",
+          )
         : clips.find(
             (clip) =>
               clip.track === "audio" &&
@@ -2947,16 +3601,28 @@ export const trimClipById = (
   const sourceFramesRemaining = Number.isFinite(target.sourceDuration)
     ? Math.max(
         1,
-        Math.floor(((target.sourceDuration ?? 1) - (target.sourceStart ?? 0)) / Math.max(0.01, target.speed ?? 1)),
+        Math.floor(
+          ((target.sourceDuration ?? 1) - (target.sourceStart ?? 0)) /
+            Math.max(0.01, target.speed ?? 1),
+        ),
       )
     : Number.POSITIVE_INFINITY;
   const appliedDelta =
     edge === "left"
-      ? Math.max(-target.start, Math.min(frameDelta, target.duration - minimumDuration))
-      : Math.min(sourceFramesRemaining - target.duration, Math.max(minimumDuration - target.duration, frameDelta));
-  const nextStart = edge === "left" ? target.start + appliedDelta : target.start;
+      ? Math.max(
+          -target.start,
+          Math.min(frameDelta, target.duration - minimumDuration),
+        )
+      : Math.min(
+          sourceFramesRemaining - target.duration,
+          Math.max(minimumDuration - target.duration, frameDelta),
+        );
+  const nextStart =
+    edge === "left" ? target.start + appliedDelta : target.start;
   const nextDuration =
-    edge === "left" ? target.duration - appliedDelta : Math.max(minimumDuration, target.duration + appliedDelta);
+    edge === "left"
+      ? target.duration - appliedDelta
+      : Math.max(minimumDuration, target.duration + appliedDelta);
   const linkedAudio = getReciprocalLinkedAudio(clips, target);
 
   const trimmedClips = clips.map((clip) => {
@@ -2970,7 +3636,11 @@ export const trimClipById = (
       duration: nextDuration,
       sourceStart:
         edge === "left"
-          ? Math.max(0, (clip.sourceStart ?? 0) + appliedDelta * Math.max(0.01, clip.speed ?? 1))
+          ? Math.max(
+              0,
+              (clip.sourceStart ?? 0) +
+                appliedDelta * Math.max(0.01, clip.speed ?? 1),
+            )
           : (clip.sourceStart ?? 0),
     };
   });
@@ -2981,10 +3651,11 @@ export const trimClipById = (
 export const replaceClipMediaById = (
   clips: TimelineClip[],
   clipId: string,
-  media: {label: string; src: string},
+  media: { label: string; src: string },
 ): TimelineClip[] => {
   const target = clips.find((clip) => clip.id === clipId);
-  const linkedAudioId = target?.track === "audio" ? undefined : target?.linkedClipId;
+  const linkedAudioId =
+    target?.track === "audio" ? undefined : target?.linkedClipId;
 
   return clips.map((clip) => {
     if (clip.id !== clipId && clip.id !== linkedAudioId) {
@@ -2999,8 +3670,12 @@ export const replaceClipMediaById = (
   });
 };
 
-export const getPublicMediaFallbackSource = (clip: Pick<TimelineClip, "label" | "src">): string | null => {
-  const extension = (clip.src ?? "").split(/[?#]/)[0]?.match(/\.[a-z0-9]+$/i)?.[0];
+export const getPublicMediaFallbackSource = (
+  clip: Pick<TimelineClip, "label" | "src">,
+): string | null => {
+  const extension = (clip.src ?? "")
+    .split(/[?#]/)[0]
+    ?.match(/\.[a-z0-9]+$/i)?.[0];
   const label = clip.label
     .replace(/\s+audio$/i, "")
     .replace(/\s+-\s+Scene\s+\d+$/i, "")
@@ -3010,15 +3685,20 @@ export const getPublicMediaFallbackSource = (clip: Pick<TimelineClip, "label" | 
     return null;
   }
 
-  return new RegExp(`${extension.replace(".", "\\.")}$`, "i").test(label) ? label : `${label}${extension}`;
+  return new RegExp(`${extension.replace(".", "\\.")}$`, "i").test(label)
+    ? label
+    : `${label}${extension}`;
 };
 
 export const isPlayableMediaResponse = (response: {
   ok: boolean;
-  headers: {get: (name: string) => string | null};
-}): boolean => response.ok && /^(video|audio)\//i.test(response.headers.get("content-type") ?? "");
+  headers: { get: (name: string) => string | null };
+}): boolean =>
+  response.ok &&
+  /^(video|audio)\//i.test(response.headers.get("content-type") ?? "");
 
-export const isStoredUploadSource = (src?: string): boolean => /^\/?uploads\//i.test(src ?? "");
+export const isStoredUploadSource = (src?: string): boolean =>
+  /^\/?uploads\//i.test(src ?? "");
 
 export const reconnectMediaSource = (
   clips: TimelineClip[],
@@ -3034,7 +3714,7 @@ export const reconnectMediaSource = (
     if (clip.src !== missingSrc) return clip;
 
     changed = true;
-    const reconnectedClip = {...clip, src: replacementSrc};
+    const reconnectedClip = { ...clip, src: replacementSrc };
     delete reconnectedClip.sourceDuration;
     return reconnectedClip;
   });
@@ -3069,9 +3749,16 @@ export const addOverlayMediaClip = (
   ];
 };
 
-export const splitClipByIdAtFrame = (clips: TimelineClip[], clipId: string, frame: number): TimelineClip[] => {
+export const splitClipByIdAtFrame = (
+  clips: TimelineClip[],
+  clipId: string,
+  frame: number,
+): TimelineClip[] => {
   const clipToSplit = clips.find(
-    (clip) => clip.id === clipId && frame > clip.start && frame < clip.start + clip.duration,
+    (clip) =>
+      clip.id === clipId &&
+      frame > clip.start &&
+      frame < clip.start + clip.duration,
   );
 
   if (!clipToSplit) {
@@ -3106,15 +3793,17 @@ export const splitClipByIdAtFrame = (clips: TimelineClip[], clipId: string, fram
         ...clip,
         id: firstId,
         duration: firstDuration,
-        ...(linkedAudio ? {linkedClipId: firstLinkedClipId} : {}),
+        ...(linkedAudio ? { linkedClipId: firstLinkedClipId } : {}),
       },
       {
         ...withoutClipTransition(clip),
         id: secondId,
         start: frame,
         duration: secondDuration,
-        sourceStart: (clip.sourceStart ?? 0) + firstDuration * Math.max(0.01, clip.speed ?? 1),
-        ...(linkedAudio ? {linkedClipId: secondLinkedClipId} : {}),
+        sourceStart:
+          (clip.sourceStart ?? 0) +
+          firstDuration * Math.max(0.01, clip.speed ?? 1),
+        ...(linkedAudio ? { linkedClipId: secondLinkedClipId } : {}),
       },
     ];
   });
@@ -3132,7 +3821,7 @@ const hasValidSourceRanges = (ranges: unknown): ranges is SilenceRange[] =>
   ranges.every((range) => {
     if (!range || typeof range !== "object") return false;
 
-    const {startSeconds, endSeconds} = range as Partial<SilenceRange>;
+    const { startSeconds, endSeconds } = range as Partial<SilenceRange>;
     return (
       typeof startSeconds === "number" &&
       typeof endSeconds === "number" &&
@@ -3142,7 +3831,10 @@ const hasValidSourceRanges = (ranges: unknown): ranges is SilenceRange[] =>
     );
   });
 
-const normalizeSourceRanges = (ranges: SilenceRange[], sourceDurationSeconds: number): SilenceRange[] => {
+const normalizeSourceRanges = (
+  ranges: SilenceRange[],
+  sourceDurationSeconds: number,
+): SilenceRange[] => {
   const normalized = ranges
     .flatMap((range) => {
       if (
@@ -3153,17 +3845,23 @@ const normalizeSourceRanges = (ranges: SilenceRange[], sourceDurationSeconds: nu
         return [];
       }
 
-      const startSeconds = Math.max(0, Math.min(sourceDurationSeconds, range.startSeconds));
-      const endSeconds = Math.max(0, Math.min(sourceDurationSeconds, range.endSeconds));
+      const startSeconds = Math.max(
+        0,
+        Math.min(sourceDurationSeconds, range.startSeconds),
+      );
+      const endSeconds = Math.max(
+        0,
+        Math.min(sourceDurationSeconds, range.endSeconds),
+      );
 
-      return endSeconds > startSeconds ? [{startSeconds, endSeconds}] : [];
+      return endSeconds > startSeconds ? [{ startSeconds, endSeconds }] : [];
     })
     .sort((left, right) => left.startSeconds - right.startSeconds);
 
   return normalized.reduce<SilenceRange[]>((merged, range) => {
     const previous = merged[merged.length - 1];
     if (!previous || range.startSeconds > previous.endSeconds) {
-      merged.push({...range});
+      merged.push({ ...range });
       return merged;
     }
 
@@ -3216,7 +3914,10 @@ const createSynchronizedLinkedSegments = (
   compactDuration: number;
 } => {
   const timelineSegments = createTimelineSourceSegments(videoClip, ranges, fps);
-  const compactDuration = timelineSegments.reduce((total, segment) => total + segment.duration, 0);
+  const compactDuration = timelineSegments.reduce(
+    (total, segment) => total + segment.duration,
+    0,
+  );
 
   return {
     videoSegments: timelineSegments.map<TimelineClip>((segment, index) => ({
@@ -3248,11 +3949,15 @@ export const removeSilenceFromLinkedVideo = (
   const videoClip = clips.find(
     (clip) =>
       clip.id === videoClipId &&
-      (clip.track === "main" || clip.track === "upper" || clip.track === "cutout") &&
+      (clip.track === "main" ||
+        clip.track === "upper" ||
+        clip.track === "cutout") &&
       Boolean(clip.src),
   );
   const speed = videoClip?.speed ?? 1;
-  const linkedAudio = videoClip ? getReciprocalLinkedAudio(clips, videoClip) : undefined;
+  const linkedAudio = videoClip
+    ? getReciprocalLinkedAudio(clips, videoClip)
+    : undefined;
 
   if (
     !videoClip ||
@@ -3294,13 +3999,14 @@ export const removeSilenceFromLinkedVideo = (
     });
   }
 
-  const {videoSegments, audioSegments, compactDuration} = createSynchronizedLinkedSegments(
-    videoClip,
-    linkedAudio,
-    speechRanges,
-    fps,
-    "speech",
-  );
+  const { videoSegments, audioSegments, compactDuration } =
+    createSynchronizedLinkedSegments(
+      videoClip,
+      linkedAudio,
+      speechRanges,
+      fps,
+      "speech",
+    );
   const removedFrames = videoClip.duration - compactDuration;
   if (removedFrames <= 0) {
     return clips;
@@ -3310,7 +4016,11 @@ export const removeSilenceFromLinkedVideo = (
   const selectedEnd = videoClip.start + videoClip.duration;
   const rippleIds = new Set<string>();
   clips.forEach((clip) => {
-    if (clip.id === videoClip.id || getVideoLayer(clip) !== selectedLayer || clip.start < selectedEnd) {
+    if (
+      clip.id === videoClip.id ||
+      getVideoLayer(clip) !== selectedLayer ||
+      clip.start < selectedEnd
+    ) {
       return;
     }
 
@@ -3336,7 +4046,7 @@ export const removeSilenceFromLinkedVideo = (
       return audioSegments;
     }
     if (rippleIds.has(clip.id)) {
-      return [{...clip, start: clip.start - removedFrames}];
+      return [{ ...clip, start: clip.start - removedFrames }];
     }
     return [clip];
   });
@@ -3351,10 +4061,16 @@ export const keepDominantVoiceInLinkedVideo = (
   fps: number,
 ): TimelineClip[] => {
   const videoClip = clips.find(
-    (clip) => clip.id === videoClipId && clip.track === "main" && clip.mediaType !== "image" && Boolean(clip.src),
+    (clip) =>
+      clip.id === videoClipId &&
+      clip.track === "main" &&
+      clip.mediaType !== "image" &&
+      Boolean(clip.src),
   );
   const speed = videoClip?.speed ?? 1;
-  const linkedAudio = videoClip ? getReciprocalLinkedAudio(clips, videoClip) : undefined;
+  const linkedAudio = videoClip
+    ? getReciprocalLinkedAudio(clips, videoClip)
+    : undefined;
 
   if (
     !videoClip ||
@@ -3378,13 +4094,14 @@ export const keepDominantVoiceInLinkedVideo = (
     return clips;
   }
 
-  const {videoSegments, audioSegments, compactDuration} = createSynchronizedLinkedSegments(
-    videoClip,
-    linkedAudio,
-    retainedRanges,
-    fps,
-    "dominant",
-  );
+  const { videoSegments, audioSegments, compactDuration } =
+    createSynchronizedLinkedSegments(
+      videoClip,
+      linkedAudio,
+      retainedRanges,
+      fps,
+      "dominant",
+    );
   const removedFrames = videoClip.duration - compactDuration;
   if (videoSegments.length === 0 || removedFrames <= 0) {
     return clips;
@@ -3405,8 +4122,12 @@ export const keepDominantVoiceInLinkedVideo = (
     if (clip.id === linkedAudio.id) {
       return audioSegments;
     }
-    if (clip.track === "main" && clip.mediaType !== "image" && clip.start >= selectedEnd) {
-      return [{...clip, start: clip.start - removedFrames}];
+    if (
+      clip.track === "main" &&
+      clip.mediaType !== "image" &&
+      clip.start >= selectedEnd
+    ) {
+      return [{ ...clip, start: clip.start - removedFrames }];
     }
     return [clip];
   });
@@ -3414,7 +4135,10 @@ export const keepDominantVoiceInLinkedVideo = (
   return nextClips;
 };
 
-export const moveClipToMainTrack = (clips: TimelineClip[], clipId: string): TimelineClip[] => {
+export const moveClipToMainTrack = (
+  clips: TimelineClip[],
+  clipId: string,
+): TimelineClip[] => {
   const mainTrackEnd = clips
     .filter((clip) => clip.track === "main")
     .reduce((end, clip) => Math.max(end, clip.start + clip.duration), 0);
@@ -3441,13 +4165,19 @@ export const moveOverlayClip = (
   targetLane: number,
   timelineDuration: number,
 ): TimelineClip[] => {
-  const target = clips.find((clip) => clip.id === clipId && clip.track === "upper");
+  const target = clips.find(
+    (clip) => clip.id === clipId && clip.track === "upper",
+  );
 
   if (!target) {
     return clips;
   }
 
-  const start = clampTimelineStart(targetStart, target.duration, timelineDuration);
+  const start = clampTimelineStart(
+    targetStart,
+    target.duration,
+    timelineDuration,
+  );
   let overlayLane = Math.max(0, targetLane);
 
   while (
@@ -3470,7 +4200,11 @@ export const moveOverlayClip = (
 
   return normalizeTimelineTransitions(
     clips.map((clip) =>
-      clip.id === clipId ? {...clip, start, overlayLane} : clip.id === linkedAudio?.id ? {...clip, start} : clip,
+      clip.id === clipId
+        ? { ...clip, start, overlayLane }
+        : clip.id === linkedAudio?.id
+          ? { ...clip, start }
+          : clip,
     ),
   );
 };
@@ -3490,14 +4224,23 @@ export const getDraggedClipStart = ({
   return Math.max(0, originalStart + frameDelta);
 };
 
-export const canDropClipOnMainTrack = (clips: TimelineClip[], clipId: string, targetTrack: TrackName): boolean => {
+export const canDropClipOnMainTrack = (
+  clips: TimelineClip[],
+  clipId: string,
+  targetTrack: TrackName,
+): boolean => {
   const draggedClip = clips.find((clip) => clip.id === clipId);
 
   return draggedClip?.track === "upper" && targetTrack === "main";
 };
 
-export const splitFirstClipOnTrack = (clips: TimelineClip[], track: TrackName): TimelineClip[] => {
-  const clipToSplit = clips.find((clip) => clip.track === track && clip.duration > 1);
+export const splitFirstClipOnTrack = (
+  clips: TimelineClip[],
+  track: TrackName,
+): TimelineClip[] => {
+  const clipToSplit = clips.find(
+    (clip) => clip.track === track && clip.duration > 1,
+  );
 
   if (!clipToSplit) {
     return clips;
@@ -3531,16 +4274,23 @@ export const splitFirstClipOnTrack = (clips: TimelineClip[], track: TrackName): 
   return normalizeTimelineTransitions(splitClips);
 };
 
-export const splitClipOnTrackAtFrame = (clips: TimelineClip[], track: TrackName, frame: number): TimelineClip[] => {
+export const splitClipOnTrackAtFrame = (
+  clips: TimelineClip[],
+  track: TrackName,
+  frame: number,
+): TimelineClip[] => {
   const clipToSplit = clips.find(
-    (clip) => clip.track === track && frame > clip.start && frame < clip.start + clip.duration,
+    (clip) =>
+      clip.track === track &&
+      frame > clip.start &&
+      frame < clip.start + clip.duration,
   );
 
   if (!clipToSplit) {
     return clips;
   }
 
-  const splitIds = new Map<string, {firstId: string; secondId: string}>();
+  const splitIds = new Map<string, { firstId: string; secondId: string }>();
   splitIds.set(clipToSplit.id, {
     firstId: `${clipToSplit.id}-a`,
     secondId: `${clipToSplit.id}-b`,
@@ -3568,7 +4318,9 @@ export const splitClipOnTrackAtFrame = (clips: TimelineClip[], track: TrackName,
         label: clip.label,
         start: frame,
         duration: clipSecondDuration,
-        sourceStart: (clip.sourceStart ?? 0) + clipFirstDuration * Math.max(0.01, clip.speed ?? 1),
+        sourceStart:
+          (clip.sourceStart ?? 0) +
+          clipFirstDuration * Math.max(0.01, clip.speed ?? 1),
       },
     ];
   });
@@ -3576,7 +4328,10 @@ export const splitClipOnTrackAtFrame = (clips: TimelineClip[], track: TrackName,
   return normalizeTimelineTransitions(splitClips);
 };
 
-export const replaceFirstClipOnTrack = (clips: TimelineClip[], track: TrackName): TimelineClip[] => {
+export const replaceFirstClipOnTrack = (
+  clips: TimelineClip[],
+  track: TrackName,
+): TimelineClip[] => {
   const clipToReplace = clips.find((clip) => clip.track === track);
 
   if (!clipToReplace) {
@@ -3617,7 +4372,10 @@ export const addOverlayClip = (clips: TimelineClip[]): TimelineClip[] => {
   ];
 };
 
-export const hideFirstClipOnTrack = (clips: TimelineClip[], track: TrackName): TimelineClip[] => {
+export const hideFirstClipOnTrack = (
+  clips: TimelineClip[],
+  track: TrackName,
+): TimelineClip[] => {
   const clipToHide = clips.find((clip) => clip.track === track && !clip.hidden);
 
   if (!clipToHide) {
@@ -3636,7 +4394,9 @@ export const hideFirstClipOnTrack = (clips: TimelineClip[], track: TrackName): T
   });
 };
 
-export const addTranscriptCaptions = (clips: TimelineClip[]): TimelineClip[] => {
+export const addTranscriptCaptions = (
+  clips: TimelineClip[],
+): TimelineClip[] => {
   const hasCaptions = clips.some((clip) => clip.track === "caption");
 
   if (hasCaptions) {
@@ -3664,7 +4424,11 @@ export const addTranscriptCaptions = (clips: TimelineClip[]): TimelineClip[] => 
   ];
 };
 
-export const changeFirstClipSpeed = (clips: TimelineClip[], track: TrackName, speed: number): TimelineClip[] => {
+export const changeFirstClipSpeed = (
+  clips: TimelineClip[],
+  track: TrackName,
+  speed: number,
+): TimelineClip[] => {
   const clipToChange = clips.find((clip) => clip.track === track);
 
   if (!clipToChange || speed <= 0) {
@@ -3680,14 +4444,21 @@ export const changeFirstClipSpeed = (clips: TimelineClip[], track: TrackName, sp
       return {
         ...clip,
         label: `${clip.label.replace(/ \d+(\.\d+)?x$/, "")} ${speed}x`,
-        duration: Math.max(1, Math.round((clip.duration * (clip.speed ?? 1)) / speed)),
+        duration: Math.max(
+          1,
+          Math.round((clip.duration * (clip.speed ?? 1)) / speed),
+        ),
         speed,
       };
     }),
   );
 };
 
-export const setTrackVolume = (clips: TimelineClip[], track: TrackName, volume: number): TimelineClip[] => {
+export const setTrackVolume = (
+  clips: TimelineClip[],
+  track: TrackName,
+  volume: number,
+): TimelineClip[] => {
   const clipToAdjust = clips.find((clip) => clip.track === track);
 
   if (!clipToAdjust || volume < 0) {
@@ -3721,17 +4492,32 @@ export const reconcileClipSourceDuration = (
   const normalizedSourceDuration = Math.max(1, Math.round(sourceDuration));
   let changed = false;
   const reconciled = clips.map((clip) => {
-    if (clip.src !== src || !["main", "upper", "cutout", "audio"].includes(clip.track)) {
+    if (
+      clip.src !== src ||
+      !["main", "upper", "cutout", "audio"].includes(clip.track)
+    ) {
       return clip;
     }
 
     const sourceStart = Math.max(0, clip.sourceStart ?? 0);
-    const speed = Number.isFinite(clip.speed) && (clip.speed ?? 0) > 0 ? (clip.speed ?? 1) : 1;
-    const availableSourceFrames = Math.max(1, normalizedSourceDuration - sourceStart);
-    const maximumTimelineDuration = Math.max(1, Math.floor(availableSourceFrames / speed));
+    const speed =
+      Number.isFinite(clip.speed) && (clip.speed ?? 0) > 0
+        ? (clip.speed ?? 1)
+        : 1;
+    const availableSourceFrames = Math.max(
+      1,
+      normalizedSourceDuration - sourceStart,
+    );
+    const maximumTimelineDuration = Math.max(
+      1,
+      Math.floor(availableSourceFrames / speed),
+    );
     const duration = Math.min(clip.duration, maximumTimelineDuration);
 
-    if (duration === clip.duration && clip.sourceDuration === normalizedSourceDuration) {
+    if (
+      duration === clip.duration &&
+      clip.sourceDuration === normalizedSourceDuration
+    ) {
       return clip;
     }
 
@@ -3747,19 +4533,33 @@ export const reconcileClipSourceDuration = (
   return changed ? normalizeTimelineTransitions(reconciled) : clips;
 };
 
-export const setVideoLayerSpeed = (clips: TimelineClip[], videoLayer: number, speed: number): TimelineClip[] => {
-  if (!Number.isFinite(videoLayer) || !Number.isFinite(speed) || speed <= 0) return clips;
-  const updates = new Map<string, {start: number; duration: number; speed: number}>();
+export const setVideoLayerSpeed = (
+  clips: TimelineClip[],
+  videoLayer: number,
+  speed: number,
+): TimelineClip[] => {
+  if (!Number.isFinite(videoLayer) || !Number.isFinite(speed) || speed <= 0)
+    return clips;
+  const updates = new Map<
+    string,
+    { start: number; duration: number; speed: number }
+  >();
   const videos = clips
-    .map((clip, index) => ({clip, index}))
-    .filter(({clip}) => isVideoLayerControlTarget(clip, videoLayer))
-    .sort((left, right) => left.clip.start - right.clip.start || left.index - right.index);
+    .map((clip, index) => ({ clip, index }))
+    .filter(({ clip }) => isVideoLayerControlTarget(clip, videoLayer))
+    .sort(
+      (left, right) =>
+        left.clip.start - right.clip.start || left.index - right.index,
+    );
   let nextStart: number | undefined;
 
-  for (const {clip: video} of videos) {
+  for (const { clip: video } of videos) {
     const start = nextStart ?? video.start;
-    const duration = Math.max(1, Math.round((video.duration * (video.speed ?? 1)) / speed));
-    const update = {start, duration, speed};
+    const duration = Math.max(
+      1,
+      Math.round((video.duration * (video.speed ?? 1)) / speed),
+    );
+    const update = { start, duration, speed };
     updates.set(video.id, update);
     const linkedAudio = getReciprocalLinkedAudio(clips, video);
     if (linkedAudio) updates.set(linkedAudio.id, update);
@@ -3770,30 +4570,39 @@ export const setVideoLayerSpeed = (clips: TimelineClip[], videoLayer: number, sp
   return normalizeTimelineTransitions(
     clips.map((clip) => {
       const update = updates.get(clip.id);
-      return update ? {...clip, ...update} : clip;
+      return update ? { ...clip, ...update } : clip;
     }),
   );
 };
 
-export const setVideoLayerVolume = (clips: TimelineClip[], videoLayer: number, volume: number): TimelineClip[] => {
-  if (!Number.isFinite(videoLayer) || !Number.isFinite(volume) || volume < 0) return clips;
+export const setVideoLayerVolume = (
+  clips: TimelineClip[],
+  videoLayer: number,
+  volume: number,
+): TimelineClip[] => {
+  if (!Number.isFinite(videoLayer) || !Number.isFinite(volume) || volume < 0)
+    return clips;
   const targetIds = new Set<string>();
 
-  for (const video of clips.filter((clip) => isVideoLayerControlTarget(clip, videoLayer))) {
+  for (const video of clips.filter((clip) =>
+    isVideoLayerControlTarget(clip, videoLayer),
+  )) {
     targetIds.add(video.id);
     const linkedAudio = getReciprocalLinkedAudio(clips, video);
     if (linkedAudio) targetIds.add(linkedAudio.id);
   }
 
   if (targetIds.size === 0) return clips;
-  return clips.map((clip) => (targetIds.has(clip.id) ? {...clip, volume} : clip));
+  return clips.map((clip) =>
+    targetIds.has(clip.id) ? { ...clip, volume } : clip,
+  );
 };
 
 export const startVideoLayerControlHistoryGesture = (
   originalClips: TimelineClip[],
   videoLayer: number,
   property: VideoLayerControlHistoryGesture["property"],
-): VideoLayerControlHistoryGesture => ({property, videoLayer, originalClips});
+): VideoLayerControlHistoryGesture => ({ property, videoLayer, originalClips });
 
 export const previewVideoLayerControlHistoryGesture = (
   gesture: VideoLayerControlHistoryGesture,
@@ -3815,7 +4624,11 @@ export const finishVideoLayerControlHistoryGesture = (
         future: [],
       };
 
-export const setClipSpeedById = (clips: TimelineClip[], clipId: string | null, speed: number): TimelineClip[] => {
+export const setClipSpeedById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+  speed: number,
+): TimelineClip[] => {
   if (!clipId || speed <= 0) {
     return clips;
   }
@@ -3825,7 +4638,10 @@ export const setClipSpeedById = (clips: TimelineClip[], clipId: string | null, s
   const target = resolvePairOperationTarget(clips, selectedClip);
   const linkedAudio = getReciprocalLinkedAudio(clips, target);
   const targetIds = new Set([target.id, linkedAudio?.id]);
-  const duration = Math.max(1, Math.round((target.duration * (target.speed ?? 1)) / speed));
+  const duration = Math.max(
+    1,
+    Math.round((target.duration * (target.speed ?? 1)) / speed),
+  );
 
   return normalizeTimelineTransitions(
     clips.map((clip) => {
@@ -3842,7 +4658,11 @@ export const setClipSpeedById = (clips: TimelineClip[], clipId: string | null, s
   );
 };
 
-export const setClipVolumeById = (clips: TimelineClip[], clipId: string | null, volume: number): TimelineClip[] => {
+export const setClipVolumeById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+  volume: number,
+): TimelineClip[] => {
   if (!clipId || volume < 0) {
     return clips;
   }
@@ -3863,7 +4683,8 @@ export const setClipVolumeById = (clips: TimelineClip[], clipId: string | null, 
   );
 };
 
-const clampVisualIntensity = (value: number) => Math.min(100, Math.max(0, Math.round(value)));
+const clampVisualIntensity = (value: number) =>
+  Math.min(100, Math.max(0, Math.round(value)));
 
 const presetIntensity = (preset: string, current?: number) =>
   preset === "none" ? 0 : clampVisualIntensity(current ?? 100);
@@ -3878,7 +4699,10 @@ const updateVisualVideoClip = (
   }
 
   return clips.map((clip) => {
-    if (clip.id !== clipId || (clip.track !== "main" && clip.track !== "upper")) {
+    if (
+      clip.id !== clipId ||
+      (clip.track !== "main" && clip.track !== "upper")
+    ) {
       return clip;
     }
 
@@ -3894,13 +4718,21 @@ const updateVisualVideoClip = (
   });
 };
 
-export const setClipEffectById = (clips: TimelineClip[], clipId: string | null, effect: ClipEffect): TimelineClip[] =>
+export const setClipEffectById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+  effect: ClipEffect,
+): TimelineClip[] =>
   updateVisualVideoClip(clips, clipId, (visual) => ({
     ...visual,
     effect,
   }));
 
-export const setClipFilterById = (clips: TimelineClip[], clipId: string | null, filter: ClipFilter): TimelineClip[] =>
+export const setClipFilterById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+  filter: ClipFilter,
+): TimelineClip[] =>
   updateVisualVideoClip(clips, clipId, (visual) => ({
     ...visual,
     filter,
@@ -3926,7 +4758,9 @@ export const setClipFilterIntensityById = (
     filterIntensity: clampVisualIntensity(intensity),
   }));
 
-export const getClipVisualPresentation = (clip?: TimelineClip): ClipVisualPresentation => {
+export const getClipVisualPresentation = (
+  clip?: TimelineClip,
+): ClipVisualPresentation => {
   const visual = clip?.visual;
   const effect = visual?.effect ?? "none";
   const filter = visual?.filter ?? "none";
@@ -3949,7 +4783,10 @@ export const getClipVisualPresentation = (clip?: TimelineClip): ClipVisualPresen
     );
   }
   if (filter === "vivid") {
-    parts.push(`contrast(${1 + 0.2 * filterAmount})`, `saturate(${1 + 0.45 * filterAmount})`);
+    parts.push(
+      `contrast(${1 + 0.2 * filterAmount})`,
+      `saturate(${1 + 0.45 * filterAmount})`,
+    );
   }
   if (filter === "vintage") {
     parts.push(
@@ -3992,7 +4829,9 @@ export const getClipVisualPresentation = (clip?: TimelineClip): ClipVisualPresen
     parts.push(`invert(${effectAmount})`);
   }
   if (effect === "shadow") {
-    parts.push(`drop-shadow(0 ${8 * effectAmount}px ${18 * effectAmount}px rgba(0, 0, 0, ${0.65 * effectAmount}))`);
+    parts.push(
+      `drop-shadow(0 ${8 * effectAmount}px ${18 * effectAmount}px rgba(0, 0, 0, ${0.65 * effectAmount}))`,
+    );
   }
 
   return {
@@ -4009,7 +4848,8 @@ const neutralAnimationPresentation: ClipAnimationPresentation = {
   scale: 1,
 };
 
-const clampAnimationDuration = (duration: number) => Math.min(120, Math.max(6, Math.round(duration)));
+const clampAnimationDuration = (duration: number) =>
+  Math.min(120, Math.max(6, Math.round(duration)));
 
 const updateAnimationVideoClip = (
   clips: TimelineClip[],
@@ -4021,7 +4861,10 @@ const updateAnimationVideoClip = (
   }
 
   return clips.map((clip) => {
-    if (clip.id !== clipId || (clip.track !== "main" && clip.track !== "upper")) {
+    if (
+      clip.id !== clipId ||
+      (clip.track !== "main" && clip.track !== "upper")
+    ) {
       return clip;
     }
 
@@ -4109,11 +4952,22 @@ const easeProgress = (progress: number, easing: ClipAnimationEasing) => {
   return eased * eased * (3 - 2 * eased);
 };
 
-const shouldAnimateAtStart = (animation: ClipAnimationStyle, preset: ClipAnimationPreset) =>
-  animation.timing === "start" || animation.timing === "both" || preset.endsWith("-in") || preset === "pop";
+const shouldAnimateAtStart = (
+  animation: ClipAnimationStyle,
+  preset: ClipAnimationPreset,
+) =>
+  animation.timing === "start" ||
+  animation.timing === "both" ||
+  preset.endsWith("-in") ||
+  preset === "pop";
 
-const shouldAnimateAtEnd = (animation: ClipAnimationStyle, preset: ClipAnimationPreset) =>
-  animation.timing === "end" || animation.timing === "both" || preset.endsWith("-out");
+const shouldAnimateAtEnd = (
+  animation: ClipAnimationStyle,
+  preset: ClipAnimationPreset,
+) =>
+  animation.timing === "end" ||
+  animation.timing === "both" ||
+  preset.endsWith("-out");
 
 const applyAnimationPreset = (
   preset: ClipAnimationPreset,
@@ -4173,14 +5027,22 @@ export const getClipAnimationPresentation = (
   if (shouldAnimateAtStart(animation, preset)) {
     const rawProgress = (playheadFrame - clip.start) / duration;
     if (rawProgress >= 0 && rawProgress < 1) {
-      return applyAnimationPreset(preset, easeProgress(rawProgress, easing), "in");
+      return applyAnimationPreset(
+        preset,
+        easeProgress(rawProgress, easing),
+        "in",
+      );
     }
   }
 
   if (shouldAnimateAtEnd(animation, preset)) {
     const rawProgress = (clipEnd - playheadFrame) / duration;
     if (rawProgress >= 0 && rawProgress < 1) {
-      return applyAnimationPreset(preset, easeProgress(rawProgress, easing), "out");
+      return applyAnimationPreset(
+        preset,
+        easeProgress(rawProgress, easing),
+        "out",
+      );
     }
   }
 
@@ -4196,10 +5058,14 @@ export const setClipAdjustmentById = (
     return clips;
   }
 
-  const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
+  const clamp = (value: number, minimum: number, maximum: number) =>
+    Math.max(minimum, Math.min(maximum, value));
 
   return clips.map((clip) => {
-    if (clip.id !== clipId || (clip.track !== "main" && clip.track !== "upper")) {
+    if (
+      clip.id !== clipId ||
+      (clip.track !== "main" && clip.track !== "upper")
+    ) {
       return clip;
     }
 

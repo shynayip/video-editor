@@ -402,6 +402,20 @@ test("shows trim handles only for the selected clip", () => {
   );
 });
 
+test("lets text, stickers, cutouts, and captions resize to their real duration", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /targetClip\.track === "caption"[\s\S]*targetClip\.track === "text"[\s\S]*targetClip\.track === "sticker"[\s\S]*targetClip\.track === "cutout"[\s\S]*\? 1\s*:\s*15/,
+  );
+  assert.match(css, /\.timeline-clip\s*\{[^}]*min-width:\s*2px/s);
+});
+
 test("keeps linked audio internal and only reveals a row for recorded voiceover", () => {
   const compositionSource = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
@@ -1534,6 +1548,16 @@ test("keeps new video layer drop rows aligned to the same timeline lane origin",
     /\.timeline-track\s*\{[^}]*grid-template-columns:\s*calc\(var\(--timeline-origin\) - 10px\) 1fr[^}]*gap:\s*10px/s,
   );
   assert.doesNotMatch(newLayerRule, /grid-template-columns/);
+  assert.match(
+    component,
+    /new-video-layer-drop[^`]*\$\{isVideoPointerDrag \? "video-drag-active" : ""\}/,
+  );
+  assert.match(
+    css,
+    /\.new-video-layer-drop\.video-drag-active\s*\{[^}]*height:\s*22px[^}]*pointer-events:\s*auto/s,
+  );
+  assert.doesNotMatch(component, /timeline-drop-guide/);
+  assert.doesNotMatch(css, /\.timeline-drop-guide/);
 });
 test("clamps a stale playhead after project duration shrinks", () => {
   const source = readFileSync(
@@ -2050,7 +2074,7 @@ test("keeps controls and timeline left of a full-height right preview", () => {
   assert.match(css, /\.workspace\s*\{[^}]*display:\s*contents/s);
   assert.match(
     css,
-    /\.media-panel\s*\{[^}]*grid-column:\s*1[^}]*grid-row:\s*2/s,
+    /\.media-panel\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*2/s,
   );
   assert.match(
     css,
@@ -2058,11 +2082,11 @@ test("keeps controls and timeline left of a full-height right preview", () => {
   );
   assert.match(
     css,
-    /\.preview-panel\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*2\s*\/\s*4/s,
+    /\.preview-panel\s*\{[^}]*grid-column:\s*3[^}]*grid-row:\s*2\s*\/\s*4/s,
   );
   assert.match(
     css,
-    /\.timeline-panel\s*\{[^}]*grid-column:\s*1[^}]*grid-row:\s*3/s,
+    /\.timeline-panel\s*\{[^}]*grid-column:\s*1\s*\/\s*3[^}]*grid-row:\s*3/s,
   );
 });
 
@@ -2074,7 +2098,7 @@ test("lets the left workspace take the remaining width beside a height-driven pr
 
   assert.match(
     css,
-    /\.editor-shell\s*\{[^}]*grid-template-columns:\s*minmax\(620px,\s*1fr\)\s+calc\(\(100vh\s*-\s*48px\)\s*\*\s*9\s*\/\s*16\)/s,
+    /\.editor-shell\s*\{[^}]*grid-template-columns:[^;}]*clamp\(320px,\s*25vw,\s*380px\)[^;}]*minmax\(340px,\s*1fr\)[^;}]*calc\(\(100vh\s*-\s*48px\)\s*\*\s*9\s*\/\s*16\)/s,
   );
   assert.match(css, /\.editor-shell\s*\{[^}]*min-width:\s*1260px/s);
 });
@@ -2432,13 +2456,33 @@ test("renders non-draggable analyzing cards before replacing videos with scene c
   assert.match(source, /className="media-thumb is-analyzing"/);
   assert.match(source, /Detecting scenes\.\.\./);
   assert.match(source, /draggable=\{false\}/);
-  assert.match(source, /Scene \{mediaItem\.sceneIndex\}/);
+  assert.match(source, /\{mediaItem\.label\}/);
   assert.match(
     source,
     /const firstSuccessfulImport = results\.find[\s\S]*?setSelectedMediaId\(firstSuccessfulImport\.mediaId\)/,
   );
   assert.match(css, /\.media-thumb\.is-analyzing/);
   assert.match(css, /\.media-analysis-spinner/);
+});
+
+test("numbers separated and whole video imports by source group", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /const videoFileCount = selectedFiles\.filter/);
+  assert.match(source, /let videoGroupOffset = 0/);
+  assert.match(
+    source,
+    /mediaType === "video"\s*\? firstSourceGroupIndex \+ videoGroupOffset\+\+\s*:\s*undefined/,
+  );
+  assert.match(source, /label: `Scene \$\{sourceGroupIndex\}`/);
+  assert.match(source, /sourceLabel: uploadedMedia\.label \|\| file\.name/);
+  assert.match(
+    source,
+    /mediaItem\.sourceGroupIndex !== undefined[\s\S]*?\{mediaItem\.label\}/,
+  );
 });
 
 test("keeps detected scene duration when its gallery thumbnail loads", () => {
@@ -2618,7 +2662,7 @@ test("sizes the right preview column from available height without side padding"
 
   assert.match(
     css,
-    /\.editor-shell\s*\{[^}]*grid-template-columns:\s*minmax\(620px,\s*1fr\)\s+calc\(\(100vh\s*-\s*48px\)\s*\*\s*9\s*\/\s*16\)/s,
+    /\.editor-shell\s*\{[^}]*grid-template-columns:[^;}]*clamp\(320px,\s*25vw,\s*380px\)[^;}]*minmax\(340px,\s*1fr\)[^;}]*calc\(\(100vh\s*-\s*48px\)\s*\*\s*9\s*\/\s*16\)/s,
   );
   assert.match(css, /\.preview-panel\s*\{[^}]*padding:\s*0/s);
   assert.doesNotMatch(
@@ -2687,14 +2731,23 @@ test("lets the main Import button accept images and videos", () => {
   assert.match(css, /\.timeline-clip-video,\s*\.timeline-clip-image\s*\{/);
 });
 
-test("widens every tool library and auto-fits asset grids", () => {
+test("keeps editing controls readable beside auto-fitting asset grids", () => {
   const css = readFileSync(
     new URL("../src/index.css", import.meta.url),
     "utf8",
   );
 
-  assert.match(css, /\.media-panel\s*\{[^}]*width:\s*62%/s);
-  assert.match(css, /\.details-panel\s*\{[^}]*width:\s*38%/s);
+  assert.match(
+    css,
+    /\.editor-shell\s*\{[^}]*grid-template-columns:[^;}]*clamp\(320px,\s*25vw,\s*380px\)[^;}]*minmax\(340px,\s*1fr\)/s,
+  );
+  assert.match(css, /\.media-panel\s*\{[^}]*grid-column:\s*2[^}]*width:\s*100%/s);
+  assert.match(
+    css,
+    /\.details-panel\s*\{[^}]*grid-column:\s*1[^}]*width:\s*100%[^}]*min-width:\s*320px/s,
+  );
+  assert.match(css, /\.preview-panel\s*\{[^}]*grid-column:\s*3/s);
+  assert.match(css, /\.timeline-panel\s*\{[^}]*grid-column:\s*1\s*\/\s*3/s);
   assert.match(
     css,
     /\.media-grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(112px,\s*1fr\)\)/s,
@@ -2732,11 +2785,11 @@ test("keeps text and sticker tool libraries on the left", () => {
   );
   assert.match(
     css,
-    /\.workspace\.library-left-workspace \.media-panel\s*\{[^}]*justify-self:\s*start/s,
+    /\.workspace\.library-left-workspace \.media-panel\s*\{[^}]*grid-column:\s*1[^}]*justify-self:\s*start/s,
   );
   assert.match(
     css,
-    /\.workspace\.library-left-workspace \.details-panel\s*\{[^}]*justify-self:\s*end/s,
+    /\.workspace\.library-left-workspace \.details-panel\s*\{[^}]*grid-column:\s*2[^}]*justify-self:\s*end/s,
   );
 });
 

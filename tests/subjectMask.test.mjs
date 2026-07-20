@@ -60,6 +60,25 @@ test("uses overlap with the previous subject to keep a similarly sized subject",
   assert.equal(result.subject.bounds.right, 2);
 });
 
+test("keeps a nearby product component with the main person", () => {
+  const width = 12;
+  const height = 8;
+  const alpha = createAlpha(width, height, [
+    [4, 2, 255], [5, 2, 255], [6, 2, 255],
+    [4, 3, 255], [5, 3, 255], [6, 3, 255],
+    [4, 4, 255], [5, 4, 255], [6, 4, 255],
+    [4, 5, 255], [5, 5, 255], [6, 5, 255],
+    [8, 3, 255], [9, 3, 255], [8, 4, 255], [9, 4, 255],
+    [11, 0, 255], [11, 1, 255],
+  ]);
+
+  const result = selectPrimaryAlpha({alpha, width, height});
+
+  assert.equal(result.alpha[indexOf(5, 3, width)] > 0, true);
+  assert.equal(result.alpha[indexOf(8, 3, width)] > 0, true);
+  assert.equal(result.alpha[indexOf(11, 0, width)], 0);
+});
+
 test("retains connected soft edges while zeroing unrelated foreground", () => {
   const width = 7;
   const height = 5;

@@ -3,6 +3,9 @@ const confidenceMinimumCoverage = 0.015;
 const confidenceMaximumCoverage = 0.90;
 const confidenceMinimumOwnership = 0.65;
 const confidenceMaximumCenterDistance = 0.42;
+const companionMinimumCoverage = 0.001;
+const companionMaximumPrimaryRatio = 0.5;
+const companionMaximumDistance = 0.36;
 
 const neighborOffsets = [
   [-1, -1], [0, -1], [1, -1],
@@ -252,8 +255,28 @@ export const selectPrimaryAlpha = ({alpha, width, height, previousSubject}) => {
   const selected = scoredComponents.reduce((best, component) => (
     component.score > best.score ? component : best
   ));
+  const companionComponents = scoredComponents.filter((component) => {
+    if (component === selected) return false;
+    const areaRatio = component.area / totalPixels;
+    const distanceFromPrimary = Math.hypot(
+      component.centroidX - selected.centroidX,
+      component.centroidY - selected.centroidY,
+    );
+    const touchesFrameEdge = component.bounds.left === 0
+      || component.bounds.top === 0
+      || component.bounds.right === width - 1
+      || component.bounds.bottom === height - 1;
+
+    return areaRatio >= companionMinimumCoverage
+      && component.area <= selected.area * companionMaximumPrimaryRatio
+      && distanceFromPrimary <= companionMaximumDistance
+      && !touchesFrameEdge;
+  });
   const selectedMask = new Uint8Array(totalPixels);
   for (const index of selected.pixels) selectedMask[index] = 1;
+  for (const companion of companionComponents) {
+    for (const index of companion.pixels) selectedMask[index] = 1;
+  }
   includeConnectedSoftEdges(sourceAlpha, width, height, selectedMask);
 
   const selectedAlpha = new Uint8ClampedArray(totalPixels);

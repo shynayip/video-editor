@@ -61,6 +61,14 @@ const extractAlpha = (image) => {
   return alpha;
 };
 
+const hasForegroundAlpha = (image) => {
+  const alpha = extractAlpha(image);
+  for (const value of alpha) {
+    if (value > 0) return true;
+  }
+  return false;
+};
+
 const addRouteToSubject = (subject, route) => subject && {...subject, route};
 
 export const createSubjectCutoutEngine = ({
@@ -124,6 +132,16 @@ export const createSubjectCutoutEngine = ({
     try {
       const image = await pipeline(inputPath);
       throwIfAborted(signal);
+      // ONNX Runtime on some Windows CPU providers can complete fp16
+      // inference while silently returning an entirely empty alpha plane.
+      // Retry with the compatible model precision before accepting it.
+      if (entry.usesFp16 && route === "general" && !hasForegroundAlpha(image)) {
+        enableDtypeFallback(route, entry);
+        const {pipeline: fallbackPipeline} = await getPipeline(route, signal);
+        const fallbackImage = await fallbackPipeline(inputPath);
+        throwIfAborted(signal);
+        return fallbackImage;
+      }
       return image;
     } catch (error) {
       if (!entry.usesFp16 || !canRetryWithoutDtype(route, error, signal)) {

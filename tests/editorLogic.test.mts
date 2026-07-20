@@ -14,6 +14,7 @@ import {
   createRecordedAudioClip,
   createSceneMediaItems,
   getInitialNextSourceGroupIndex,
+  normalizeMediaSceneLabels,
   createImageMediaClip,
   createVideoMediaPair,
   createBackgroundMusicClip,
@@ -52,7 +53,6 @@ import {
   moveVideoClipToLayer,
   placeVideoPairInInsertedLayer,
   placeVideoPairOnLayer,
-  preventSingleLaneClipOverlaps,
   insertVideoPairOnLayerAtFrame,
   hasClipsOnTrack,
   findAvailableOverlayLane,
@@ -243,6 +243,41 @@ test("continues source groups from the persisted counter after deletion", () => 
   ];
 
   assert.equal(getInitialNextSourceGroupIndex(remainingItems, 4), 4);
+});
+
+test("normalizes grouped and whole-video scene labels after loading", () => {
+  const normalized = normalizeMediaSceneLabels([
+    {
+      id: "grouped",
+      label: "Old grouped label",
+      src: "/uploads/grouped.mp4",
+      duration: "00:02",
+      durationInFrames: 60,
+      kind: "public",
+      mediaType: "video",
+      sourceFileId: "source-1",
+      sourceGroupIndex: 1,
+      sceneIndex: 2,
+    },
+    {
+      id: "whole",
+      label: "Whole video.mp4",
+      src: "/uploads/whole.mp4",
+      duration: "00:05",
+      durationInFrames: 150,
+      kind: "public",
+      mediaType: "video",
+      sourceGroupIndex: 4,
+    },
+  ]);
+
+  assert.deepEqual(
+    normalized.map(({ label, sourceLabel }) => ({ label, sourceLabel })),
+    [
+      { label: "Scene 1.2", sourceLabel: "Old grouped label" },
+      { label: "Scene 4", sourceLabel: "Whole video.mp4" },
+    ],
+  );
 });
 
 test("splits one scene and renumbers only its source cards", () => {
@@ -1147,6 +1182,30 @@ test("undoes and redoes the latest timeline edit", () => {
   assert.deepEqual(afterRedo.present, edited);
   assert.deepEqual(afterRedo.past, [original]);
   assert.equal(afterRedo.future.length, 0);
+});
+
+test("keeps overlapping text, sticker, cutout, and caption clips unchanged", () => {
+  const tracks = ["text", "sticker", "cutout", "caption"] as const;
+  const overlapping = tracks.flatMap((track) => [
+    {
+      id: `${track}-first`,
+      label: "First",
+      track,
+      start: 20,
+      duration: 60,
+      color: "#fff",
+    },
+    {
+      id: `${track}-second`,
+      label: "Second",
+      track,
+      start: 40,
+      duration: 60,
+      color: "#fff",
+    },
+  ]);
+
+  assert.deepEqual(createTimelineHistory(overlapping).present, overlapping);
 });
 
 test("a new edit after undo clears redo history", () => {
@@ -4786,7 +4845,7 @@ test("returns the original array when moving a video clip is a true no-op", () =
   assert.strictEqual(moveVideoClipToLayer(clips, video.id, 2, 40), clips);
 });
 
-test("snaps a moved clip after an occupied clip without deleting either clip", () => {
+test("snaps a moved clip flush after the front video for a small overlap", () => {
   const [oldClip] = createVideoMediaPair({
     videoId: "old",
     audioId: "old-audio",
@@ -4806,20 +4865,20 @@ test("snaps a moved clip after an occupied clip without deleting either clip", (
     duration: 90,
   });
 
+  const clips = [oldClip, newClip, newAudio];
   const moved = moveVideoClipToLayer(
-    [oldClip, newClip, newAudio],
+    clips,
     newClip.id,
     0,
-    80,
+    119,
   );
 
-  assert.equal(moved.find((clip) => clip.id === oldClip.id)?.start, 0);
+  assert.notStrictEqual(moved, clips);
   assert.equal(moved.find((clip) => clip.id === newClip.id)?.start, 120);
   assert.equal(moved.find((clip) => clip.id === newAudio.id)?.start, 120);
-  assert.equal(moved.length, 3);
 });
 
-test("keeps a later clip behind the earlier clip when dragged across it", () => {
+test("restores a later clip when it is dragged across an earlier clip", () => {
   const [oldClip] = createVideoMediaPair({
     videoId: "old",
     audioId: "old-audio",
@@ -4839,11 +4898,65 @@ test("keeps a later clip behind the earlier clip when dragged across it", () => 
     duration: 60,
   });
 
-  const moved = moveVideoClipToLayer([oldClip, newClip], newClip.id, 0, 100);
+  const clips = [oldClip, newClip];
+  const moved = moveVideoClipToLayer(clips, newClip.id, 0, 100);
 
-  assert.equal(moved.find((clip) => clip.id === oldClip.id)?.start, 120);
-  assert.equal(moved.find((clip) => clip.id === newClip.id)?.start, 240);
-  assert.equal(moved.length, 2);
+  assert.strictEqual(moved, clips);
+  assert.equal(newClip.start, 300);
+});
+
+test("allows moving a video exactly beside another video", () => {
+  const [oldClip] = createVideoMediaPair({
+    videoId: "old",
+    audioId: "old-audio",
+    track: "main",
+    label: "Old",
+    src: "old.mp4",
+    start: 0,
+    duration: 120,
+  });
+  const [newClip] = createVideoMediaPair({
+    videoId: "new",
+    audioId: "new-audio",
+    track: "main",
+    label: "New",
+    src: "new.mp4",
+    start: 300,
+    duration: 60,
+  });
+
+  const moved = moveVideoClipToLayer([oldClip, newClip], newClip.id, 0, 120);
+
+  assert.equal(moved.find((clip) => clip.id === newClip.id)?.start, 120);
+});
+
+test("restores a video moved onto an occupied video layer", () => {
+  const [mainClip] = createVideoMediaPair({
+    videoId: "main",
+    audioId: "main-audio",
+    track: "main",
+    label: "Main",
+    src: "main.mp4",
+    start: 0,
+    duration: 120,
+  });
+  const [upperClip] = createVideoMediaPair({
+    videoId: "upper",
+    audioId: "upper-audio",
+    track: "upper",
+    label: "Upper",
+    src: "upper.mp4",
+    start: 180,
+    duration: 60,
+  });
+  upperClip.videoLayer = 1;
+  const clips = [mainClip, upperClip];
+
+  const moved = moveVideoClipToLayer(clips, upperClip.id, 0, 60);
+
+  assert.strictEqual(moved, clips);
+  assert.equal(upperClip.start, 180);
+  assert.equal(upperClip.videoLayer, 1);
 });
 
 test("does not create an empty narration clip", () => {
@@ -6592,75 +6705,6 @@ test("clamps a manual caption to the timeline end", () => {
   });
 
   assert.equal(caption?.duration, 10);
-});
-
-test("prevents captions, text, stickers, and cutouts from overlapping their own lanes", () => {
-  const tracks = ["caption", "text", "sticker", "cutout"] as const;
-  const clips = tracks.flatMap((track, trackIndex) => [
-    {
-      id: `${track}-first`,
-      label: "First",
-      track,
-      start: trackIndex * 100,
-      duration: 60,
-      color: "#fff",
-    },
-    {
-      id: `${track}-second`,
-      label: "Second",
-      track,
-      start: trackIndex * 100 + 36,
-      duration: 40,
-      color: "#fff",
-    },
-  ]);
-
-  const result = preventSingleLaneClipOverlaps(clips);
-
-  for (const track of tracks) {
-    const lane = result.filter((clip) => clip.track === track);
-    assert.equal(lane[0].start + lane[0].duration, lane[1].start);
-  }
-});
-
-test("separates clips added at the same frame and keeps cutout audio synchronized", () => {
-  const result = preventSingleLaneClipOverlaps([
-    {
-      id: "cutout-first",
-      label: "First",
-      track: "cutout",
-      start: 30,
-      duration: 90,
-      color: "#fff",
-    },
-    {
-      id: "cutout-second",
-      label: "Second",
-      track: "cutout",
-      start: 30,
-      duration: 45,
-      color: "#fff",
-      linkedClipId: "cutout-audio",
-    },
-    {
-      id: "cutout-audio",
-      label: "Second audio",
-      track: "audio",
-      start: 30,
-      duration: 45,
-      color: "#fff",
-      linkedClipId: "cutout-second",
-    },
-  ]);
-
-  assert.deepEqual(
-    result.map(({ id, start, duration }) => ({ id, start, duration })),
-    [
-      { id: "cutout-first", start: 30, duration: 1 },
-      { id: "cutout-second", start: 31, duration: 45 },
-      { id: "cutout-audio", start: 31, duration: 45 },
-    ],
-  );
 });
 
 test("creates generated captions from transcript segments on the selected source clip", () => {

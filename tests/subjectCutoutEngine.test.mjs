@@ -176,6 +176,24 @@ test("retries unsupported general fp16 inference once without dtype", async () =
   assert.deepEqual(calls, [{dtype: "fp16"}, {}]);
 });
 
+test("retries a silently empty general fp16 matte without dtype", async () => {
+  const calls = [];
+  const {engine} = createEngineHarness({
+    pipelineFactory: async (_task, _modelId, options) => {
+      calls.push(options);
+      return async () => createImage(
+        options.dtype === "fp16" ? emptyMatte() : opaqueCentralSubject(),
+      );
+    },
+  });
+
+  const result = await engine.process("photo.png", {mode: "image"});
+
+  assert.equal(result.route, "general");
+  assert.ok(result.alpha.some((value) => value > 0));
+  assert.deepEqual(calls, [{dtype: "fp16"}, {}]);
+});
+
 test("does not retry a cancellation reported by general initialization", async () => {
   const calls = [];
   const {engine} = createEngineHarness({

@@ -323,6 +323,24 @@ export const getInitialNextSourceGroupIndex = (
     ) + 1,
   );
 
+export const normalizeMediaSceneLabels = (
+  mediaItems: SavedMediaItem[],
+): SavedMediaItem[] =>
+  mediaItems.map((item) => {
+    if (item.sourceGroupIndex === undefined || item.mediaType !== "video") {
+      return item;
+    }
+
+    const sourceLabel = item.sourceLabel ?? item.label;
+    const label = item.sourceFileId
+      ? `Scene ${item.sourceGroupIndex}.${item.sceneIndex ?? 1}`
+      : `Scene ${item.sourceGroupIndex}`;
+
+    return item.label === label && item.sourceLabel === sourceLabel
+      ? item
+      : { ...item, label, sourceLabel };
+  });
+
 export type ClipEffect =
   | "none"
   | "blur"
@@ -437,6 +455,7 @@ export type TimelineClip = {
   linkedClipId?: string;
   overlayLane?: number;
   videoLayer?: number;
+  timelineRowOrder?: number;
   transition?: ClipTransitionStyle;
   sticker?: StickerTransform;
   cutout?: CutoutTransform;
@@ -446,78 +465,6 @@ export type TimelineClip = {
   visual?: ClipVisualStyle;
   animation?: ClipAnimationStyle;
   adjustment?: ClipAdjustment;
-};
-
-const singleItemTimelineTracks = new Set<TrackName>([
-  "caption",
-  "text",
-  "sticker",
-  "cutout",
-]);
-
-export const preventSingleLaneClipOverlaps = (
-  clips: TimelineClip[],
-): TimelineClip[] => {
-  const updates = new Map<string, Pick<TimelineClip, "start" | "duration">>();
-
-  for (const track of singleItemTimelineTracks) {
-    const ordered = clips
-      .map((clip, index) => ({ clip, index }))
-      .filter(({ clip }) => clip.track === track)
-      .sort(
-        (left, right) =>
-          left.clip.start - right.clip.start || left.index - right.index,
-      )
-      .map(({ clip }) => ({
-        clip,
-        start: clip.start,
-        duration: clip.duration,
-      }));
-
-    for (let index = 1; index < ordered.length; index += 1) {
-      const previous = ordered[index - 1];
-      const current = ordered[index];
-
-      if (current.start <= previous.start) {
-        current.start = previous.start + 1;
-      }
-
-      const availableDuration = current.start - previous.start;
-      if (previous.duration > availableDuration) {
-        previous.duration = Math.max(1, availableDuration);
-      }
-    }
-
-    for (const item of ordered) {
-      if (
-        item.start !== item.clip.start ||
-        item.duration !== item.clip.duration
-      ) {
-        updates.set(item.clip.id, {
-          start: item.start,
-          duration: item.duration,
-        });
-      }
-    }
-  }
-
-  if (updates.size === 0) return clips;
-
-  const linkedAudioUpdates = new Map<
-    string,
-    Pick<TimelineClip, "start" | "duration">
-  >();
-  for (const clip of clips) {
-    const update = updates.get(clip.id);
-    if (update && clip.track === "cutout" && clip.linkedClipId) {
-      linkedAudioUpdates.set(clip.linkedClipId, update);
-    }
-  }
-
-  return clips.map((clip) => {
-    const update = updates.get(clip.id) ?? linkedAudioUpdates.get(clip.id);
-    return update ? { ...clip, ...update } : clip;
-  });
 };
 
 export const getTimelineDuration = (clips: TimelineClip[]): number =>
@@ -845,7 +792,7 @@ export const createTimelineHistory = (
   present: TimelineClip[],
 ): TimelineHistoryState => ({
   past: [],
-  present: preventSingleLaneClipOverlaps(present),
+  present,
   future: [],
 });
 
@@ -3301,48 +3248,6 @@ const getSnappedVideoStart = (
   return start;
 };
 
-const getOrderPreservingVideoStart = (
-  clips: TimelineClip[],
-  target: TimelineClip,
-  videoLayer: number,
-  proposedStart: number,
-  timelineBoundary?: number,
-): number => {
-  const ordered = clips
-    .filter((clip) => getVideoLayer(clip) === videoLayer)
-    .sort(
-      (first, second) =>
-        first.start - second.start || first.id.localeCompare(second.id),
-    );
-  const targetIndex = ordered.findIndex((clip) => clip.id === target.id);
-  if (targetIndex < 0) {
-    return getSnappedVideoStart(
-      clips,
-      target.id,
-      videoLayer,
-      proposedStart,
-      target.duration,
-    );
-  }
-
-  const previous = ordered[targetIndex - 1];
-  const next = ordered[targetIndex + 1];
-  const minimumStart = previous ? previous.start + previous.duration : 0;
-  const boundaryMaximum =
-    timelineBoundary === undefined
-      ? Number.POSITIVE_INFINITY
-      : Math.max(0, timelineBoundary - target.duration);
-  const maximumStart = next
-    ? Math.min(boundaryMaximum, next.start - target.duration)
-    : boundaryMaximum;
-  const roundedStart = Math.max(0, Math.round(proposedStart));
-
-  if (maximumStart < minimumStart) {
-    return minimumStart;
-  }
-  return Math.max(minimumStart, Math.min(maximumStart, roundedStart));
-};
-
 export const getVideoClipDragPreviewStart = (
   clips: TimelineClip[],
   clipId: string,
@@ -3354,15 +3259,56 @@ export const getVideoClipDragPreviewStart = (
   );
   if (!target) return Math.max(0, Math.round(proposedStart));
 
-  const videoLayer = getVideoLayer(target);
-  if (videoLayer === null) return Math.max(0, Math.round(proposedStart));
-  return getOrderPreservingVideoStart(
-    clips,
-    target,
-    videoLayer,
-    proposedStart,
-    timelineBoundary,
+  return timelineBoundary === undefined
+    ? Math.max(0, Math.round(proposedStart))
+    : clampTimelineStart(proposedStart, target.duration, timelineBoundary);
+};
+
+const maximumAccidentalVideoOverlapFrames = 15;
+
+const resolveVideoLayerCollision = (
+  clips: TimelineClip[],
+  clipId: string,
+  videoLayer: number,
+  start: number,
+  duration: number,
+): number | null => {
+  const end = start + duration;
+  const collisions = clips.filter(
+    (clip) =>
+      clip.id !== clipId &&
+      getVideoLayer(clip) === videoLayer &&
+      start < clip.start + clip.duration &&
+      end > clip.start,
   );
+  if (collisions.length === 0) return start;
+  if (collisions.length !== 1) return null;
+
+  const collision = collisions[0];
+  const overlap =
+    Math.min(end, collision.start + collision.duration) -
+    Math.max(start, collision.start);
+  if (overlap > maximumAccidentalVideoOverlapFrames) return null;
+
+  const snappedStart =
+    start >= collision.start
+      ? collision.start + collision.duration
+      : collision.start - duration;
+  if (snappedStart < 0) return null;
+
+  const hasSecondaryCollision = clips.some(
+    (clip) =>
+      clip.id !== clipId &&
+      clip.id !== collision.id &&
+      getVideoLayer(clip) === videoLayer &&
+      clipRangesOverlap(
+        snappedStart,
+        duration,
+        clip.start,
+        clip.duration,
+      ),
+  );
+  return hasSecondaryCollision ? null : snappedStart;
 };
 
 export const placeVideoPairOnLayer = (
@@ -3459,22 +3405,14 @@ export const moveVideoClipToLayer = (
       ? Math.max(0, Math.round(targetStart))
       : clampTimelineStart(targetStart, target.duration, timelineBoundary);
   const currentLayer = getVideoLayer(target);
-  const start =
-    currentLayer === videoLayer
-      ? getOrderPreservingVideoStart(
-          clips,
-          target,
-          videoLayer,
-          proposedStart,
-          timelineBoundary,
-        )
-      : getSnappedVideoStart(
-          clips,
-          target.id,
-          videoLayer,
-          proposedStart,
-          target.duration,
-        );
+  const start = resolveVideoLayerCollision(
+    clips,
+    target.id,
+    videoLayer,
+    proposedStart,
+    target.duration,
+  );
+  if (start === null) return clips;
   const linkedAudio = getReciprocalLinkedAudio(clips, target);
 
   if (start === target.start && videoLayer === currentLayer) {

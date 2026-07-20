@@ -136,8 +136,37 @@ test("distinguishes rapid adjacent speakers inside one non-silence region", asyn
   assert.equal(result.analyzedSpeechSeconds, 4.5);
 });
 
+test("clamps speaker windows to the decoded audio duration", async () => {
+  const analyzedRanges = [];
+  const detector = createDominantVoiceDetector({
+    extractAudioImpl: async () => "C:/temp/selected.f32le",
+    findCandidateSpeechImpl: async () => [
+      {startSeconds: 0, endSeconds: 2},
+      {startSeconds: 2, endSeconds: 8},
+    ],
+    loadAudioImpl: async () => new Float32Array(16000 * 3),
+    createEmbeddingImpl: async (audio, range) => {
+      analyzedRanges.push({audioLength: audio.length, range});
+      return [1, 0];
+    },
+    makeTempDirectoryImpl: async () => "C:/temp/dominant-clamp-job",
+    removeDirectoryImpl: async () => undefined,
+  });
+
+  const result = await detector.detect({
+    inputPath: "C:/media/shorter-than-metadata.mp4",
+    durationSeconds: 8,
+  });
+
+  assert.ok(analyzedRanges.every(({audioLength}) => audioLength > 0));
+  assert.equal(analyzedRanges.at(-1).range.analysisEndSeconds, 3);
+  assert.deepEqual(result.ranges, [{startSeconds: 0, endSeconds: 3}]);
+  assert.equal(result.analyzedSpeechSeconds, 3);
+});
+
 test("reads FFmpeg f32le output without invoking the browser-only audio loader", async () => {
-  const samples = new Float32Array([0.25, -0.5, 0.75]);
+  const samples = new Float32Array(16000 * 2);
+  samples.set([0.25, -0.5, 0.75]);
   const ffmpegCalls = [];
   const readFilePaths = [];
   let embeddingAudio;

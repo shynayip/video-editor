@@ -15,6 +15,10 @@ const minimumDominantSpeechSeconds = 1.2;
 const minimumDominantRatio = 0.45;
 const sampleRate = 16000;
 const secondsEpsilon = 1e-6;
+const preferredAnalysisWindowSeconds = 1.5;
+const maximumAnalysisWindowSeconds = 5;
+const analysisWindowOverlapRatio = 0.25;
+const maximumAnalysisWindows = 256;
 const execFileAsync = promisify(execFile);
 
 const roundSeconds = (value) => Math.round(value * 1e6) / 1e6;
@@ -23,6 +27,21 @@ const throwIfAborted = (signal) => {
   if (signal?.aborted) {
     throw new RuntimeDOMException("The operation was aborted.", "AbortError");
   }
+};
+
+const awaitWithAbort = (promise, signal) => {
+  if (!signal) return promise;
+  throwIfAborted(signal);
+
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      reject(new RuntimeDOMException("The operation was aborted.", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, {once: true});
+    Promise.resolve(promise).then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", abort);
+    });
+  });
 };
 
 const cleanupTempDirectory = async ({
@@ -66,8 +85,8 @@ const complementSilenceRanges = (silenceRanges, durationSeconds) => {
   return candidates;
 };
 
-const getCandidateSpeechWindows = (ranges, durationSeconds) =>
-  (Array.isArray(ranges) ? ranges : []).flatMap((range) => {
+export const createCandidateSpeechWindows = (ranges, durationSeconds) => {
+  const validRanges = (Array.isArray(ranges) ? ranges : []).flatMap((range) => {
     const startSeconds = Math.max(0, Number(range?.startSeconds));
     const endSeconds = Math.min(durationSeconds, Number(range?.endSeconds));
 
@@ -81,6 +100,77 @@ const getCandidateSpeechWindows = (ranges, durationSeconds) =>
 
     return [{startSeconds, endSeconds}];
   });
+
+  const totalSpeechSeconds = validRanges.reduce(
+    (total, range) => total + range.endSeconds - range.startSeconds,
+    0,
+  );
+  if (totalSpeechSeconds <= 0) return [];
+
+  const preferredStep =
+    preferredAnalysisWindowSeconds * (1 - analysisWindowOverlapRatio);
+  const preferredCount = validRanges.reduce(
+    (total, range) =>
+      total + (range.endSeconds - range.startSeconds > 3
+        ? Math.max(1, Math.ceil((range.endSeconds - range.startSeconds) / preferredStep))
+        : 1),
+    0,
+  );
+  const analysisWindowSeconds = Math.min(
+    maximumAnalysisWindowSeconds,
+    Math.max(
+      preferredAnalysisWindowSeconds,
+      totalSpeechSeconds /
+        Math.max(1, maximumAnalysisWindows * (1 - analysisWindowOverlapRatio)),
+    ),
+  );
+  const countScale = Math.min(1, maximumAnalysisWindows / preferredCount);
+  const windows = [];
+
+  for (const range of validRanges) {
+    const rangeDuration = range.endSeconds - range.startSeconds;
+    const preferredRangeCount = rangeDuration > 3
+      ? Math.max(1, Math.ceil(rangeDuration / preferredStep))
+      : 1;
+    const windowCount = Math.max(1, Math.floor(preferredRangeCount * countScale));
+    const centers = Array.from({length: windowCount}, (_, index) => {
+      if (windowCount === 1) return (range.startSeconds + range.endSeconds) / 2;
+      const halfWindow = Math.min(analysisWindowSeconds, rangeDuration) / 2;
+      const firstCenter = range.startSeconds + halfWindow;
+      return Math.min(
+        range.endSeconds - halfWindow,
+        firstCenter + index * preferredStep,
+      );
+    });
+
+    centers.forEach((center, index) => {
+      const previousCenter = centers[index - 1];
+      const nextCenter = centers[index + 1];
+      const ownershipStart = previousCenter === undefined
+        ? range.startSeconds
+        : (previousCenter + center) / 2;
+      const ownershipEnd = nextCenter === undefined
+        ? range.endSeconds
+        : (center + nextCenter) / 2;
+      const halfWindow = Math.min(analysisWindowSeconds, rangeDuration) / 2;
+      const analysisStart = windowCount === 1
+        ? range.startSeconds
+        : Math.max(range.startSeconds, center - halfWindow);
+      const analysisEnd = windowCount === 1
+        ? range.endSeconds
+        : Math.min(range.endSeconds, center + halfWindow);
+
+      windows.push({
+        startSeconds: roundSeconds(ownershipStart),
+        endSeconds: roundSeconds(ownershipEnd),
+        analysisStartSeconds: roundSeconds(analysisStart),
+        analysisEndSeconds: roundSeconds(analysisEnd),
+      });
+    });
+  }
+
+  return windows;
+};
 
 const defaultExtractAudio = async ({
   inputPath,
@@ -138,10 +228,14 @@ const loadEmbeddingRuntime = () => {
 
 const defaultLoadAudio = async (audioPath, _runtime, readFileImpl) => {
   const audioBuffer = await readFileImpl(audioPath);
-  const sampleBytes = audioBuffer.buffer.slice(
-    audioBuffer.byteOffset,
-    audioBuffer.byteOffset + audioBuffer.byteLength,
-  );
+  const sampleBytes =
+    audioBuffer.byteOffset === 0 &&
+    audioBuffer.byteLength === audioBuffer.buffer.byteLength
+      ? audioBuffer.buffer
+      : audioBuffer.buffer.slice(
+          audioBuffer.byteOffset,
+          audioBuffer.byteOffset + audioBuffer.byteLength,
+        );
 
   if (sampleBytes.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) {
     throw new Error("FFmpeg produced an invalid f32le audio stream.");
@@ -287,7 +381,7 @@ export const createDominantVoiceDetector = ({
       });
       throwIfAborted(signal);
 
-      const candidateSpeech = getCandidateSpeechWindows(
+      let candidateSpeech = createCandidateSpeechWindows(
         await findCandidateSpeechImpl({
           inputPath,
           ffmpegPath: selectedFfmpegPath,
@@ -304,19 +398,64 @@ export const createDominantVoiceDetector = ({
         throw new Error("No candidate speech was found.");
       }
 
-      const requiresRuntime = createEmbeddingImpl === defaultCreateEmbedding;
-      const runtime = requiresRuntime ? await loadEmbeddingRuntimeImpl() : undefined;
+      const requiresRuntime =
+        createEmbeddingImpl === defaultCreateEmbedding ||
+        (loadEmbeddingRuntimeImpl !== loadEmbeddingRuntime &&
+          loadAudioImpl !== defaultLoadAudio);
+      const runtime = requiresRuntime
+        ? await awaitWithAbort(loadEmbeddingRuntimeImpl(), signal)
+        : undefined;
+      throwIfAborted(signal);
       const audio = await loadAudioImpl(audioPath, runtime, readFileImpl);
+      const decodedDurationSeconds = audio.length / sampleRate;
+      const analysisDurationSeconds = Math.min(
+        durationSeconds,
+        decodedDurationSeconds,
+      );
+      candidateSpeech = candidateSpeech.flatMap((range) => {
+        const startSeconds = Math.min(range.startSeconds, analysisDurationSeconds);
+        const endSeconds = Math.min(range.endSeconds, analysisDurationSeconds);
+        const analysisStartSeconds = Math.min(
+          range.analysisStartSeconds,
+          analysisDurationSeconds,
+        );
+        const analysisEndSeconds = Math.min(
+          range.analysisEndSeconds,
+          analysisDurationSeconds,
+        );
+
+        if (
+          endSeconds - startSeconds <= secondsEpsilon ||
+          analysisEndSeconds - analysisStartSeconds <= secondsEpsilon
+        ) {
+          return [];
+        }
+
+        return [{
+          ...range,
+          startSeconds: roundSeconds(startSeconds),
+          endSeconds: roundSeconds(endSeconds),
+          analysisStartSeconds: roundSeconds(analysisStartSeconds),
+          analysisEndSeconds: roundSeconds(analysisEndSeconds),
+        }];
+      });
+
+      if (candidateSpeech.length === 0) {
+        throw new Error("No candidate speech was found in the decoded audio.");
+      }
       const windows = [];
 
       for (const range of candidateSpeech) {
         throwIfAborted(signal);
-        const startSample = Math.floor(range.startSeconds * sampleRate);
-        const endSample = Math.ceil(range.endSeconds * sampleRate);
-        const embedding = await createEmbeddingImpl(
-          audio.slice(startSample, endSample),
-          range,
-          runtime,
+        const startSample = Math.floor(range.analysisStartSeconds * sampleRate);
+        const endSample = Math.ceil(range.analysisEndSeconds * sampleRate);
+        const embedding = await awaitWithAbort(
+          createEmbeddingImpl(
+            audio.subarray(startSample, endSample),
+            range,
+            runtime,
+          ),
+          signal,
         );
         throwIfAborted(signal);
 
@@ -364,7 +503,7 @@ export const createDominantVoiceDetector = ({
 
       return {
         ranges: normalizeDominantVoiceRanges(dominantCluster.windows, {
-          durationSeconds,
+          durationSeconds: analysisDurationSeconds,
         }),
         dominantSpeechSeconds,
         analyzedSpeechSeconds,

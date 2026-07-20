@@ -1,0 +1,629 @@
+﻿diff --git a/video-editor/server/backgroundRemoval.mjs b/video-editor/server/backgroundRemoval.mjs
+index 416fa4d..134813b 100644
+--- a/video-editor/server/backgroundRemoval.mjs
++++ b/video-editor/server/backgroundRemoval.mjs
+@@ -1,12 +1,11 @@
+ import {execFile} from "node:child_process";
+ import {randomUUID} from "node:crypto";
+-import {mkdir, mkdtemp, readdir, rename, rm} from "node:fs/promises";
++import {copyFile, mkdir, mkdtemp, readdir, rename, rm} from "node:fs/promises";
+ import {tmpdir} from "node:os";
+ import {join} from "node:path";
+ import {promisify} from "node:util";
+ 
+ import ffmpegPath from "ffmpeg-static";
+-import ffprobeStatic from "ffprobe-static";
+ 
+ const execFileAsync = promisify(execFile);
+ const RuntimeDOMException = globalThis.DOMException;
+@@ -21,28 +20,6 @@ const defaultPipelineFactory = async (task, selectedModelId, options) => {
+ const defaultRunFfmpeg = (args, options) =>
+   execFileAsync(ffmpegPath, args, options);
+ 
+-const defaultGetVideoFps = async (inputPath, {signal} = {}) => {
+-  const {stdout} = await execFileAsync(
+-    ffprobeStatic.path,
+-    [
+-      "-v", "error",
+-      "-select_streams", "v:0",
+-      "-show_entries", "stream=avg_frame_rate",
+-      "-of", "default=nw=1:nk=1",
+-      inputPath,
+-    ],
+-    {signal},
+-  );
+-  const fps = String(stdout).trim();
+-  const [numerator, denominator = "1"] = fps.split("/");
+-
+-  if (!(Number(numerator) > 0) || !(Number(denominator) > 0)) {
+-    throw new Error("Unable to determine the source video frame rate.");
+-  }
+-
+-  return fps;
+-};
+-
+ const throwIfAborted = (signal) => {
+   if (signal?.aborted) {
+     throw new RuntimeDOMException("The operation was aborted.", "AbortError");
+@@ -68,27 +45,34 @@ const getResultMetadata = (mediaKind) => mediaKind === "image"
+ export const createBackgroundRemovalProcessor = ({
+   pipelineFactory = defaultPipelineFactory,
+   runFfmpeg = defaultRunFfmpeg,
+-  getVideoFpsImpl = defaultGetVideoFps,
++  getVideoFpsImpl: _getVideoFpsImpl,
+   makeDirectoryImpl = mkdir,
+   makeTempDirectoryImpl = mkdtemp,
+   readDirectoryImpl = readdir,
+   removeDirectoryImpl = rm,
+   renameFileImpl = rename,
+ } = {}) => {
+-  let pipelinePromise = null;
+-
+-  const loadPipeline = () => {
+-    if (!pipelinePromise) {
+-      pipelinePromise = Promise.resolve().then(() => pipelineFactory(
+-        "background-removal",
+-        modelId,
+-        {dtype: "fp16"},
+-      )).catch((error) => {
+-        pipelinePromise = null;
+-        throw error;
+-      });
++  const pipelinePromises = new Map();
++
++  const loadPipeline = (mediaKind) => {
++    const cachedPipelinePromise = pipelinePromises.get(mediaKind);
++    if (cachedPipelinePromise) {
++      return cachedPipelinePromise;
+     }
+ 
++    const [selectedModelId, options] = mediaKind === "video"
++      ? ["Xenova/modnet", {dtype: "q4"}]
++      : [modelId, {dtype: "fp16"}];
++    const pipelinePromise = Promise.resolve().then(() => pipelineFactory(
++      "background-removal",
++      selectedModelId,
++      options,
++    )).catch((error) => {
++      pipelinePromises.delete(mediaKind);
++      throw error;
++    });
++
++    pipelinePromises.set(mediaKind, pipelinePromise);
+     return pipelinePromise;
+   };
+ 
+@@ -122,7 +106,7 @@ export const createBackgroundRemovalProcessor = ({
+ 
+       try {
+         if (mediaKind === "image") {
+-          const removeBackground = await loadPipeline();
++          const removeBackground = await loadPipeline(mediaKind);
+           throwIfAborted(signal);
+           const image = await removeBackground(inputPath);
+           throwIfAborted(signal);
+@@ -139,7 +123,6 @@ export const createBackgroundRemovalProcessor = ({
+         const processedFramesDirectory = join(tempDirectory, "processed-frames");
+         await makeDirectoryImpl(sourceFramesDirectory, {recursive: true});
+         await makeDirectoryImpl(processedFramesDirectory, {recursive: true});
+-        const sourceFps = await getVideoFpsImpl(inputPath, {signal});
+         const sourceFramePattern = join(
+           sourceFramesDirectory,
+           "frame-%08d.png",
+@@ -150,6 +133,7 @@ export const createBackgroundRemovalProcessor = ({
+           "-t", String(durationSeconds),
+           "-i", inputPath,
+           "-map", "0:v:0",
++          "-vf", "fps=10",
+           "-vsync", "0",
+           sourceFramePattern,
+         ], {signal});
+@@ -163,7 +147,8 @@ export const createBackgroundRemovalProcessor = ({
+           throw new Error("FFmpeg did not extract any video frames.");
+         }
+ 
+-        const removeBackground = await loadPipeline();
++        const removeBackground = await loadPipeline(mediaKind);
++        const outputDurationSeconds = Math.ceil(Number(durationSeconds) * 10) / 10;
+         for (const [index, frameName] of frameNames.entries()) {
+           throwIfAborted(signal);
+           const image = await removeBackground(
+@@ -174,12 +159,29 @@ export const createBackgroundRemovalProcessor = ({
+           onProgress?.(10 + Math.round(((index + 1) / frameNames.length) * 80));
+         }
+ 
++        const targetFrameCount = Math.max(
++          frameNames.length,
++          Math.ceil(Number(durationSeconds) * 10),
++        );
++        const lastFrameName = frameNames.at(-1);
++        if (lastFrameName && targetFrameCount > frameNames.length) {
++          for (let frameIndex = frameNames.length; frameIndex < targetFrameCount; frameIndex += 1) {
++            throwIfAborted(signal);
++            const paddedFrameName = `frame-${String(frameIndex + 1).padStart(8, "0")}.png`;
++            await copyFile(
++              join(processedFramesDirectory, lastFrameName),
++              join(processedFramesDirectory, paddedFrameName),
++            );
++          }
++        }
++
+         throwIfAborted(signal);
+         const temporaryOutputPath = join(tempDirectory, "output.webm");
+         await runFfmpeg([
+           "-y",
+-          "-framerate", String(sourceFps),
++          "-framerate", "10",
+           "-i", join(processedFramesDirectory, "frame-%08d.png"),
++          "-t", String(outputDurationSeconds),
+           "-c:v", "libvpx-vp9",
+           "-pix_fmt", "yuva420p",
+           "-auto-alt-ref", "0",
+diff --git a/video-editor/tests/backgroundRemoval.test.mjs b/video-editor/tests/backgroundRemoval.test.mjs
+index e53de08..c2ca4a3 100644
+--- a/video-editor/tests/backgroundRemoval.test.mjs
++++ b/video-editor/tests/backgroundRemoval.test.mjs
+@@ -1,10 +1,19 @@
+ import assert from "node:assert/strict";
+-import {basename, join} from "node:path";
++import {execFile} from "node:child_process";
++import {mkdir, mkdtemp, rm, copyFile, writeFile} from "node:fs/promises";
++import {basename, dirname, join} from "node:path";
++import {tmpdir} from "node:os";
++import {promisify} from "node:util";
+ import test from "node:test";
+ 
++import ffmpegPath from "ffmpeg-static";
++import ffprobeStatic from "ffprobe-static";
++
+ import {createBackgroundRemovalProcessor} from "../server/backgroundRemoval.mjs";
+ 
+ const AbortControllerCtor = globalThis.AbortController;
++const DOMExceptionCtor = globalThis.DOMException;
++const execFileAsync = promisify(execFile);
+ 
+ const createFilesystemHarness = ({
+   frameNames = [],
+@@ -38,6 +47,34 @@ const createFilesystemHarness = ({
+   };
+ };
+ 
++const probeDurationSeconds = async (inputPath) => {
++  const {stdout} = await execFileAsync(ffprobeStatic.path, [
++    "-v", "error",
++    "-show_entries", "format=duration",
++    "-of", "default=nw=1:nk=1",
++    inputPath,
++  ]);
++
++  return Number(String(stdout).trim());
++};
++
++const makeSyntheticVideo = async (outputPath, durationSeconds) => {
++  await execFileAsync(ffmpegPath, [
++    "-y",
++    "-f", "lavfi",
++    "-i", `color=c=white:s=64x64:r=30:d=${durationSeconds}`,
++    "-c:v", "libvpx-vp9",
++    "-pix_fmt", "yuv420p",
++    "-an",
++    outputPath,
++  ]);
++};
++
++const writePlaceholderFile = async (outputPath, contents) => {
++  await mkdir(dirname(outputPath), {recursive: true});
++  await writeFile(outputPath, contents);
++};
++
+ test("reuses one model promise and writes transparent image results as PNG", async () => {
+   const pipelineFactoryCalls = [];
+   const processedInputs = [];
+@@ -109,40 +146,73 @@ test("reuses one model promise and writes transparent image results as PNG", asy
+   ]);
+ });
+ 
+-test("processes video frames sequentially in filename order and preserves source fps", async () => {
+-  const frameOrder = [];
+-  const savedPaths = [];
++test("keeps separate cached pipelines and uses the fast 10 fps video path", async () => {
++  const pipelineFactoryCalls = [];
++  const imageInputs = [];
++  const videoFrameOrder = [];
++  const imageSavedPaths = [];
++  const videoSavedPaths = [];
+   const ffmpegCalls = [];
+   const progressValues = [];
+   let activePipelineCalls = 0;
+   let maximumActivePipelineCalls = 0;
+   const filesystem = createFilesystemHarness({
+     frameNames: ["frame-00000002.png", "ignore.txt", "frame-00000001.png"],
+-    tempDirectories: ["C:/temp/video-job"],
++    tempDirectories: [
++      "C:/temp/image-job",
++      "C:/temp/video-job-1",
++      "C:/temp/video-job-2",
++    ],
+   });
+   const processor = createBackgroundRemovalProcessor({
+-    pipelineFactory: async () => async (inputPath) => {
+-      activePipelineCalls += 1;
+-      maximumActivePipelineCalls = Math.max(
+-        maximumActivePipelineCalls,
+-        activePipelineCalls,
+-      );
+-      frameOrder.push(basename(inputPath));
+-      await Promise.resolve();
+-      activePipelineCalls -= 1;
+-      return {
+-        save: async (outputPath) => savedPaths.push(outputPath),
++    pipelineFactory: async (...args) => {
++      pipelineFactoryCalls.push(args);
++      const selectedModelId = args[1];
++
++      return async (inputPath) => {
++        activePipelineCalls += 1;
++        maximumActivePipelineCalls = Math.max(
++          maximumActivePipelineCalls,
++          activePipelineCalls,
++        );
++
++        if (selectedModelId === "onnx-community/BiRefNet_lite-ONNX") {
++          imageInputs.push(inputPath);
++          await Promise.resolve();
++          activePipelineCalls -= 1;
++          return {
++            save: async (outputPath) => {
++              imageSavedPaths.push(outputPath);
++              await writePlaceholderFile(outputPath, "image");
++            },
++          };
++        }
++
++        videoFrameOrder.push(basename(inputPath));
++        await Promise.resolve();
++        activePipelineCalls -= 1;
++        return {
++          save: async (outputPath) => {
++            videoSavedPaths.push(outputPath);
++            await writePlaceholderFile(outputPath, "frame");
++          },
++        };
+       };
+     },
+     runFfmpeg: async (args, options) => {
+       ffmpegCalls.push({args, options});
+     },
+-    getVideoFpsImpl: async () => "30000/1001",
+     ...filesystem.helpers,
+   });
+   const abortController = new AbortControllerCtor();
+ 
+-  const result = await processor.process({
++  const imageResult = await processor.process({
++    inputPath: "C:/media/person.jpg",
++    mediaKind: "image",
++    outputDirectory: "C:/output",
++  });
++
++  const firstVideoResult = await processor.process({
+     inputPath: "C:/media/source.mp4",
+     mediaKind: "video",
+     startSeconds: 2.5,
+@@ -152,24 +222,59 @@ test("processes video frames sequentially in filename order and preserves source
+     signal: abortController.signal,
+   });
+ 
+-  assert.deepEqual(frameOrder, [
++  const secondVideoResult = await processor.process({
++    inputPath: "C:/media/source-2.mp4",
++    mediaKind: "video",
++    startSeconds: 0,
++    durationSeconds: 2,
++    outputDirectory: "C:/output",
++    signal: abortController.signal,
++  });
++
++  assert.deepEqual(pipelineFactoryCalls, [
++    [
++      "background-removal",
++      "onnx-community/BiRefNet_lite-ONNX",
++      {dtype: "fp16"},
++    ],
++    [
++      "background-removal",
++      "Xenova/modnet",
++      {dtype: "q4"},
++    ],
++  ]);
++  assert.deepEqual(imageInputs, ["C:/media/person.jpg"]);
++  assert.equal(maximumActivePipelineCalls, 1);
++  assert.equal(imageSavedPaths.length, 1);
++  assert.deepEqual(imageSavedPaths[0], join("C:/temp/image-job", "output.png"));
++  assert.deepEqual(videoFrameOrder, [
++    "frame-00000001.png",
++    "frame-00000002.png",
+     "frame-00000001.png",
+     "frame-00000002.png",
+   ]);
+-  assert.equal(maximumActivePipelineCalls, 1);
+-  assert.deepEqual(savedPaths.map((savedPath) => basename(savedPath)), frameOrder);
+-  assert.equal(ffmpegCalls.length, 2);
+-  assert.deepEqual(ffmpegCalls[0].args.slice(0, 10), [
++  assert.deepEqual(videoSavedPaths.map((savedPath) => basename(savedPath)), [
++    "frame-00000001.png",
++    "frame-00000002.png",
++    "frame-00000001.png",
++    "frame-00000002.png",
++  ]);
++  assert.equal(ffmpegCalls.length, 4);
++  assert.deepEqual(ffmpegCalls[0].args.slice(0, 13), [
+     "-y", "-ss", "2.5", "-t", "4.25", "-i", "C:/media/source.mp4",
+-    "-map", "0:v:0", "-vsync",
++    "-map", "0:v:0", "-vf", "fps=10", "-vsync", "0",
+   ]);
+   assert.equal(ffmpegCalls[0].args.at(-1).endsWith("frame-%08d.png"), true);
+   assert.deepEqual(ffmpegCalls[0].options, {signal: abortController.signal});
+-  assert.equal(
+-    ffmpegCalls[1].args[ffmpegCalls[1].args.indexOf("-framerate") + 1],
+-    "30000/1001",
+-  );
+-  assert.equal(ffmpegCalls[1].args.includes("libvpx-vp9"), true);
++  assert.deepEqual(ffmpegCalls[1].args.slice(
++    ffmpegCalls[1].args.indexOf("-framerate"),
++    ffmpegCalls[1].args.indexOf("-framerate") + 8,
++  ), [
++    "-framerate", "10",
++    "-i", join("C:/temp/video-job-1", "processed-frames", "frame-%08d.png"),
++    "-t", "4.3",
++    "-c:v", "libvpx-vp9",
++  ]);
+   assert.equal(ffmpegCalls[1].args.includes("yuva420p"), true);
+   assert.deepEqual(
+     ffmpegCalls[1].args.slice(
+@@ -180,17 +285,234 @@ test("processes video frames sequentially in filename order and preserves source
+   );
+   assert.equal(ffmpegCalls[1].args.includes("-an"), true);
+   assert.deepEqual(ffmpegCalls[1].options, {signal: abortController.signal});
+-  assert.deepEqual([result.extension, result.mimeType], [
++  assert.deepEqual([imageResult.extension, imageResult.mimeType], [
++    ".png",
++    "image/png",
++  ]);
++  assert.deepEqual([firstVideoResult.extension, firstVideoResult.mimeType], [
+     ".webm",
+     "video/webm",
+   ]);
+-  assert.equal(result.outputPath.endsWith(".webm"), true);
++  assert.deepEqual([secondVideoResult.extension, secondVideoResult.mimeType], [
++    ".webm",
++    "video/webm",
++  ]);
++  assert.equal(firstVideoResult.outputPath.endsWith(".webm"), true);
++  assert.equal(secondVideoResult.outputPath.endsWith(".webm"), true);
+   assert.equal(progressValues[0], 0);
+   assert.equal(progressValues.at(-1), 100);
+   assert.equal(progressValues.every((value) => value >= 0 && value <= 100), true);
+   assert.deepEqual(progressValues, [...progressValues].sort((a, b) => a - b));
++  assert.deepEqual(filesystem.calls.removeDirectory, [
++    {
++      directory: "C:/temp/image-job",
++      options: {recursive: true, force: true},
++    },
++    {
++      directory: "C:/temp/video-job-1",
++      options: {recursive: true, force: true},
++    },
++    {
++      directory: "C:/temp/video-job-2",
++      options: {recursive: true, force: true},
++    },
++  ]);
++});
++
++test("pads the encoded video so it is never shorter than the requested duration", async () => {
++  const workingDirectory = await mkdtemp(join(tmpdir(), "background-removal-integration-"));
++  const inputPath = join(workingDirectory, "input.webm");
++  const outputDirectory = join(workingDirectory, "output");
++  const requestedDurationSeconds = 0.83;
++
++  await makeSyntheticVideo(inputPath, 1.2);
++
++  const processor = createBackgroundRemovalProcessor({
++    pipelineFactory: async () => async (framePath) => ({
++      save: async (outputPath) => copyFile(framePath, outputPath),
++    }),
++  });
++
++  const result = await processor.process({
++    inputPath,
++    mediaKind: "video",
++    startSeconds: 0,
++    durationSeconds: requestedDurationSeconds,
++    outputDirectory,
++  });
++
++  const durationSeconds = await probeDurationSeconds(result.outputPath);
++
++  assert.equal(result.extension, ".webm");
++  assert.equal(result.mimeType, "video/webm");
++  assert.equal(durationSeconds >= requestedDurationSeconds, true);
++  assert.equal(durationSeconds <= requestedDurationSeconds + 0.1, true);
++
++  await rm(workingDirectory, {recursive: true, force: true});
++});
++
++test("retries a failed video pipeline init without evicting the image cache", async () => {
++  const pipelineFactoryCalls = [];
++  const imageInputs = [];
++  const videoInputs = [];
++  const filesystem = createFilesystemHarness({
++    frameNames: ["frame-00000001.png"],
++    tempDirectories: [
++      "C:/temp/cache-image-1",
++      "C:/temp/cache-video-fail",
++      "C:/temp/cache-video-retry",
++      "C:/temp/cache-image-2",
++    ],
++  });
++  let videoInitAttempts = 0;
++  const processor = createBackgroundRemovalProcessor({
++    pipelineFactory: async (...args) => {
++      pipelineFactoryCalls.push(args);
++      const modelId = args[1];
++
++      if (modelId === "onnx-community/BiRefNet_lite-ONNX") {
++        return async (inputPath) => ({
++          save: async (outputPath) => {
++            imageInputs.push(inputPath);
++            await writePlaceholderFile(outputPath, "image");
++          },
++        });
++      }
++
++      videoInitAttempts += 1;
++      if (videoInitAttempts === 1) {
++        throw new Error("video init failed");
++      }
++
++      return async (inputPath) => ({
++        save: async (outputPath) => {
++          videoInputs.push(inputPath);
++          await writePlaceholderFile(outputPath, "frame");
++        },
++      });
++    },
++    runFfmpeg: async () => {},
++    ...filesystem.helpers,
++  });
++
++  await processor.process({
++    inputPath: "C:/media/image-one.png",
++    mediaKind: "image",
++    outputDirectory: "C:/output",
++  });
++
++  await assert.rejects(
++    processor.process({
++      inputPath: "C:/media/video-one.mp4",
++      mediaKind: "video",
++      startSeconds: 0,
++      durationSeconds: 1,
++      outputDirectory: "C:/output",
++    }),
++    /video init failed/,
++  );
++
++  await processor.process({
++    inputPath: "C:/media/video-two.mp4",
++    mediaKind: "video",
++    startSeconds: 0,
++    durationSeconds: 1,
++    outputDirectory: "C:/output",
++  });
++
++  await processor.process({
++    inputPath: "C:/media/image-two.png",
++    mediaKind: "image",
++    outputDirectory: "C:/output",
++  });
++
++  assert.deepEqual(pipelineFactoryCalls, [
++    [
++      "background-removal",
++      "onnx-community/BiRefNet_lite-ONNX",
++      {dtype: "fp16"},
++    ],
++    [
++      "background-removal",
++      "Xenova/modnet",
++      {dtype: "q4"},
++    ],
++    [
++      "background-removal",
++      "Xenova/modnet",
++      {dtype: "q4"},
++    ],
++  ]);
++  assert.deepEqual(imageInputs, [
++    "C:/media/image-one.png",
++    "C:/media/image-two.png",
++  ]);
++  assert.deepEqual(videoInputs, [
++    join("C:/temp/cache-video-retry", "source-frames", "frame-00000001.png"),
++  ]);
++  assert.deepEqual(filesystem.calls.removeDirectory, [
++    {
++      directory: "C:/temp/cache-image-1",
++      options: {recursive: true, force: true},
++    },
++    {
++      directory: "C:/temp/cache-video-fail",
++      options: {recursive: true, force: true},
++    },
++    {
++      directory: "C:/temp/cache-video-retry",
++      options: {recursive: true, force: true},
++    },
++    {
++      directory: "C:/temp/cache-image-2",
++      options: {recursive: true, force: true},
++    },
++  ]);
++});
++
++test("aborts during encode and still cleans up the temporary directory", async () => {
++  const abortController = new AbortControllerCtor();
++  const filesystem = createFilesystemHarness({
++    frameNames: ["frame-00000001.png"],
++    tempDirectories: ["C:/temp/encode-abort-job"],
++  });
++  let runCount = 0;
++  const processor = createBackgroundRemovalProcessor({
++    pipelineFactory: async () => async () => ({
++      save: async (outputPath) => {
++        await writePlaceholderFile(outputPath, "frame");
++      },
++    }),
++    runFfmpeg: async (_args, options) => {
++      runCount += 1;
++      if (runCount === 2) {
++        queueMicrotask(() => abortController.abort());
++        await new Promise((_, reject) => {
++          options.signal.addEventListener("abort", () => {
++            reject(new DOMExceptionCtor("The operation was aborted.", "AbortError"));
++          }, {once: true});
++        });
++      }
++    },
++    ...filesystem.helpers,
++  });
++
++  await assert.rejects(
++    processor.process({
++      inputPath: "C:/media/video.mp4",
++      mediaKind: "video",
++      startSeconds: 0,
++      durationSeconds: 1,
++      outputDirectory: "C:/output",
++      signal: abortController.signal,
++    }),
++    (error) => error?.name === "AbortError",
++  );
++
++  assert.equal(runCount, 2);
++  assert.deepEqual(filesystem.calls.renameFile, []);
+   assert.deepEqual(filesystem.calls.removeDirectory, [{
+-    directory: "C:/temp/video-job",
++    directory: "C:/temp/encode-abort-job",
+     options: {recursive: true, force: true},
+   }]);
+ });
+@@ -208,7 +530,6 @@ test("aborts between video frames and removes temporary files", async () => {
+       return {save: async () => assert.fail("aborted frames must not be saved")};
+     },
+     runFfmpeg: async (args) => ffmpegCalls.push(args),
+-    getVideoFpsImpl: async () => "24/1",
+     ...filesystem.helpers,
+   });
+ 

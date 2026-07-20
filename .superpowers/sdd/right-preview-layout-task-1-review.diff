@@ -1,0 +1,111 @@
+﻿diff --git a/video-editor/src/index.css b/video-editor/src/index.css
+index 145b0d6..05b67f3 100644
+--- a/video-editor/src/index.css
++++ b/video-editor/src/index.css
+@@ -971,7 +971,7 @@ button {
+   grid-column: 2;
+   grid-row: 2 / 4;
+   display: grid;
+-  place-items: stretch center;
++  place-items: stretch stretch;
+   container-type: size;
+   min-width: 0;
+   min-height: 0;
+@@ -987,29 +987,26 @@ button {
+   position: relative;
+   display: grid;
+   grid-template-rows: minmax(0, 1fr) auto;
+-  width: min(100%, calc(100cqh * 9 / 16));
++  width: 100%;
++  min-width: 0;
+   height: 100%;
+   padding-top: 0;
+ }
+ 
+ .preview-shell:has(.canvas-rotate-handle) {
+-  width: min(100%, calc((100cqh - 30px) * 9 / 16));
+   padding-top: 30px;
+ }
+ 
+-.preview-shell:has(.media-preview-controls) {
+-  width: min(100%, calc((100cqh - 50px) * 9 / 16));
+-}
+-
+ .preview-window {
+   position: relative;
+   width: 100%;
+-  max-height: 100%;
+-  align-self: center;
+-  aspect-ratio: 9 / 16;
+-  overflow: hidden;
+-  background: #020617;
+-  border: 1px solid #334155;
++  height: 100%;
++  min-height: 0;
++  max-height: none;
++  align-self: stretch;
++  overflow: hidden;
++  background: #020617;
++  border: 1px solid #334155;
+   border-radius: 8px;
+   box-shadow: 0 20px 52px rgba(0, 0, 0, 0.38);
+ }
+@@ -1257,7 +1254,7 @@ button {
+ }
+ 
+ .preview-video {
+-  object-fit: cover;
++  object-fit: contain;
+ }
+ 
+ .preview-overlay-layer,
+@@ -1270,7 +1267,7 @@ button {
+ }
+ 
+ .preview-overlay-video {
+-  object-fit: cover;
++  object-fit: contain;
+ }
+ 
+ .preview-sticker {
+diff --git a/video-editor/tests/playhead-ui.test.mts b/video-editor/tests/playhead-ui.test.mts
+index c16a0a9..6696527 100644
+--- a/video-editor/tests/playhead-ui.test.mts
++++ b/video-editor/tests/playhead-ui.test.mts
+@@ -1807,8 +1807,10 @@ test("gives the standalone preview most of the editor height", () => {
+   );
+   assert.match(css, /\.preview-panel\s*\{[^}]*min-height:\s*0/s);
+   assert.match(css, /\.preview-panel\s*\{[^}]*grid-row:\s*2\s*\/\s*4/s);
++  assert.match(css, /\.preview-panel\s*\{[^}]*place-items:\s*stretch\s+stretch/s);
++  assert.match(css, /\.preview-shell\s*\{[^}]*width:\s*100%/s);
+   assert.match(css, /\.preview-shell\s*\{[^}]*height:\s*100%/s);
+-  assert.match(css, /\.preview-window\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/s);
++  assert.match(css, /\.preview-window\s*\{[^}]*height:\s*100%/s);
+ });
+ 
+ test("keeps compact timeline controls aligned to the left", () => {
+@@ -2215,8 +2217,22 @@ test("shows a floating drag preview only for gallery media", () => {
+ test("fills the middle preview frame with imported videos", () => {
+   const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+ 
+-  assert.match(css, /\.preview-video\s*\{[^}]*object-fit:\s*cover/s);
+-  assert.match(css, /\.preview-overlay-video\s*\{[^}]*object-fit:\s*cover/s);
++  assert.match(css, /\.preview-video\s*\{[^}]*object-fit:\s*contain/s);
++  assert.match(css, /\.preview-overlay-video\s*\{[^}]*object-fit:\s*contain/s);
++});
++
++test("uses the full right workspace instead of a fixed 9:16 preview shell width", () => {
++  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
++
++  assert.doesNotMatch(css, /\.preview-shell\s*\{[^}]*100cqh\s*\*\s*9\s*\/\s*16/s);
++  assert.doesNotMatch(
++    css,
++    /\.preview-shell:has\(\.canvas-rotate-handle\)\s*\{[^}]*100cqh\s*-\s*30px/s,
++  );
++  assert.doesNotMatch(
++    css,
++    /\.preview-shell:has\(\.media-preview-controls\)\s*\{[^}]*100cqh\s*-\s*50px/s,
++  );
+ });
+ 
+ test("reveals a protected delete control for each imported media item", () => {

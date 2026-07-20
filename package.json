@@ -1,0 +1,50 @@
+{
+  "name": "video-editor",
+  "version": "1.0.0",
+  "description": "My Remotion video",
+  "repository": {},
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "@remotion/cli": "4.0.489",
+    "@remotion/media": "4.0.489",
+    "@remotion/tailwind-v4": "4.0.489",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0",
+    "multer": "^2.2.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.489",
+    "tailwindcss": "4.0.0"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.489",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@types/web": "0.0.166",
+    "concurrently": "^10.0.3",
+    "eslint": "9.19.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3",
+    "vite": "^8.1.4"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "studio": "remotion studio",
+    "caption-server": "node server/transcriptionServer.mjs",
+    "dev:caption": "concurrently -k -n WEB,API \"npm run web:frontend\" \"npm run web:api\"",
+    "test:transcription": "node --test tests/transcriptionLogic.test.mjs",
+    "web:frontend": "vite",
+    "web:api": "node server/transcriptionServer.mjs",
+    "web": "concurrently -k -n WEB,API \"npm run web:frontend\" \"npm run web:api\"",
+    "build": "remotion bundle",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src server tests/transcriptionLogic.test.mjs && tsc"
+  },
+  "sideEffects": [
+    "*.css"
+  ]
+}

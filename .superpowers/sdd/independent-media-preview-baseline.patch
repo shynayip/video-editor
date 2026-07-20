@@ -1,0 +1,3449 @@
+diff --git a/video-editor/server/transcriptionServer.mjs b/video-editor/server/transcriptionServer.mjs
+index 94eae35..b70db40 100644
+--- a/video-editor/server/transcriptionServer.mjs
++++ b/video-editor/server/transcriptionServer.mjs
+@@ -27,7 +27,8 @@ import {detectSilenceInMedia} from "./silenceDetection.mjs";
+ dotenv.config({quiet: true});
+ 
+ const execFileAsync = promisify(execFile);
+-const defaultMaxFileSizeBytes = 100 * 1024 * 1024;
++const defaultMaxFileSizeBytes = 2 * 1024 * 1024 * 1024;
++const defaultMaxMediaFileSizeBytes = 2 * 1024 * 1024 * 1024;
+ const defaultMaxTrimDurationSeconds = 6 * 60 * 60;
+ const cleanupOptions = {recursive: true, force: true};
+ const allowedBrowserOrigins = new Set([
+@@ -177,6 +178,8 @@ export const createTranscriptionApp = ({
+   renderMediaImpl = renderMedia,
+   getRenderBinariesDirectoryImpl = prepareRemotionRenderBinaries,
+   maxFileSizeBytes = defaultMaxFileSizeBytes,
++  maxMediaFileSizeBytes = defaultMaxMediaFileSizeBytes,
++  mediaUploadDirectory = resolve(runtimeProcess.cwd(), "public", "uploads"),
+   maxTrimDurationSeconds = defaultMaxTrimDurationSeconds,
+   allowOriginlessRequests = runtimeProcess.env.NODE_ENV === "test",
+   makeTempDirectory = (prefix) => mkdtemp(prefix),
+@@ -194,6 +197,25 @@ export const createTranscriptionApp = ({
+     storage: multer.memoryStorage(),
+     limits: {fileSize: maxFileSizeBytes},
+   });
++  const mediaUpload = multer({
++    storage: multer.diskStorage({
++      destination: (_req, _file, callback) => {
++        callback(null, mediaUploadDirectory);
++      },
++      filename: (_req, file, callback) => {
++        callback(null, toStoredMediaName(file.originalname));
++      },
++    }),
++    limits: {fileSize: maxMediaFileSizeBytes},
++  });
++  const ensureMediaUploadDirectory = async (_req, _res, next) => {
++    try {
++      await makeDirectoryImpl(mediaUploadDirectory, {recursive: true});
++      next();
++    } catch (error) {
++      next(error);
++    }
++  };
+ 
+   app.use("/api", (req, res, next) => {
+     const policyError = validateLocalRequest(req, {allowOriginlessRequests});
+@@ -363,7 +385,11 @@ export const createTranscriptionApp = ({
+     }
+   });
+ 
+-  app.post("/api/media", upload.single("file"), async (req, res) => {
++  app.post(
++    "/api/media",
++    ensureMediaUploadDirectory,
++    mediaUpload.single("file"),
++    async (req, res) => {
+     if (!req.file) {
+       return sendError(res, 400, "missing_file", "No media file was uploaded.");
+     }
+@@ -373,6 +399,7 @@ export const createTranscriptionApp = ({
+       !req.file.mimetype.startsWith("audio/") &&
+       !req.file.mimetype.startsWith("image/")
+     ) {
++      await removeDirectoryImpl(req.file.path, {force: true});
+       return sendError(
+         res,
+         400,
+@@ -381,19 +408,13 @@ export const createTranscriptionApp = ({
+       );
+     }
+ 
+-    const uploadDirectory = resolve(runtimeProcess.cwd(), "public", "uploads");
+-    const storedName = toStoredMediaName(req.file.originalname);
+-    const storedPath = join(uploadDirectory, storedName);
+-
+-    await mkdir(uploadDirectory, {recursive: true});
+-    await writeFileImpl(storedPath, req.file.buffer);
+-
+     return res.json({
+-      src: `uploads/${storedName}`,
+-      label: req.file.originalname || storedName,
++      src: `uploads/${req.file.filename}`,
++      label: req.file.originalname || req.file.filename,
+       mimeType: req.file.mimetype,
+     });
+-  });
++    },
++  );
+ 
+   app.post("/api/export", async (req, res) => {
+     const project = req.body?.project;
+@@ -463,13 +484,16 @@ export const createTranscriptionApp = ({
+     }
+   });
+ 
+-  app.use((error, _req, res, next) => {
++  app.use((error, req, res, next) => {
+     if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
++      const isMediaImport = req.originalUrl === "/api/media";
+       return sendError(
+         res,
+         400,
+         "file_too_large",
+-        "Uploaded media must be 100 MB or smaller.",
++        isMediaImport
++          ? "Imported files must be 2 GB or smaller."
++          : "Transcript media must be 2 GB or smaller.",
+       );
+     }
+ 
+diff --git a/video-editor/src/Composition.tsx b/video-editor/src/Composition.tsx
+index 5b2e814..222fab6 100644
+--- a/video-editor/src/Composition.tsx
++++ b/video-editor/src/Composition.tsx
+@@ -1,4 +1,4 @@
+-import { CalculateMetadataFunction, Composition, staticFile } from "remotion";
++import { CalculateMetadataFunction, Composition, Img, staticFile } from "remotion";
+ import {
+   CSSProperties,
+   Fragment,
+@@ -16,6 +16,7 @@ import {
+   appendStickerClip,
+   applyTimelineHistoryEdit,
+   clampPlayheadFrame,
++  createImageMediaClip,
+   createVideoMediaPair,
+   createBackgroundMusicClip,
+   createCutoutImageClip,
+@@ -42,6 +43,9 @@ import {
+   getClipSourceTime,
+   getDraggedClipStart,
+   getContextualAudioClips,
++  getCaptionPosition,
++  getResizedCaptionFontSize,
++  getMaximumFittingCaptionFontSize,
+   getExpandedTimelineBoundary,
+   getIndependentPlaybackAudioClips,
+   getPlaybackAudioClips,
+@@ -56,23 +60,30 @@ import {
+   formatTimelineClock,
+   hasClipsOnTrack,
+   moveTextClip,
++  moveCaptionOverlay,
+   moveTextOverlay,
+   moveCutoutClip,
+   getNextVideoLayer,
++  getClipAnimationPreviewFrame,
+   getVideoLayer,
+   moveVideoClipToLayer,
+   placeVideoPairInInsertedLayer,
+   placeVideoPairOnLayer,
+   parseSavedEditorProject,
+   removeBackgroundPixels,
++  removeUnusedMediaItem,
+   replaceGeneratedCaptionBatch,
++  removeBrowserOnlySavedMedia,
+   removeSilenceFromLinkedVideo,
++  replaceClipMediaById,
+   redoTimelineHistory,
+   resizeTextOverlayById,
++  resizeCaptionOverlayById,
+   setClipEffectById,
+   setClipFilterById,
+   setClipSpeedById,
+   setClipVolumeById,
++  setCutoutChromaKeyById,
+   setTextRotationById,
+   setTextStyleById,
+   resetCutoutMask,
+@@ -80,7 +91,6 @@ import {
+   shouldMovePlayheadDuringScrub,
+   shouldMuteVideoNativeAudio,
+   splitClipByIdAtFrame,
+-  splitClipOnTrackAtFrame,
+   ClipAnimationEasing,
+   ClipAnimationPreset,
+   ClipAnimationTiming,
+@@ -89,6 +99,7 @@ import {
+   TextEffect,
+   CaptionStyle,
+   ClipAdjustment,
++  CutoutTransform,
+   CutoutMaskStroke,
+   SavedEditorProject,
+   TimelineClip,
+@@ -111,6 +122,7 @@ type MediaItem = {
+   duration: string;
+   durationInFrames: number;
+   kind: "local" | "public";
++  mediaType?: "video" | "image";
+ };
+ 
+ type UploadedMediaResponse = {
+@@ -121,6 +133,7 @@ type UploadedMediaResponse = {
+ 
+ const fps = 30;
+ const defaultMediaDurationInFrames = 16 * fps;
++const defaultImageDurationInFrames = 5 * fps;
+ const remotionRegistrationFallbackInFrames = 24 * 60 * 60 * fps;
+ const timelineScale = 1.15;
+ const timelineOrigin = 148;
+@@ -329,6 +342,23 @@ const resolveMediaSource = (src: string) => {
+   return /^(blob:|data:|https?:)/.test(src) ? src : staticFile(src);
+ };
+ 
++const imageExtensionPattern = /\.(avif|gif|jpe?g|png|svg|webp)$/i;
++
++const isImageSource = (src?: string) =>
++  imageExtensionPattern.test((src ?? "").split(/[?#]/)[0] ?? "");
++
++const getMediaFileType = (file: File): "video" | "image" | null => {
++  if (file.type.startsWith("video/")) return "video";
++  if (file.type.startsWith("image/")) return "image";
++  return null;
++};
++
++const getMediaItemType = (mediaItem: Pick<MediaItem, "mediaType" | "src">) =>
++  mediaItem.mediaType ?? (isImageSource(mediaItem.src) ? "image" : "video");
++
++const isImageClip = (clip?: Pick<TimelineClip, "mediaType" | "src">) =>
++  clip?.mediaType === "image" || (!clip?.mediaType && isImageSource(clip?.src));
++
+ const durationToFrames = (durationInSeconds: number) => {
+   if (!Number.isFinite(durationInSeconds) || durationInSeconds <= 0) {
+     return defaultMediaDurationInFrames;
+@@ -569,6 +599,7 @@ const setClipAnimationById = (
+       ...defaultClipAnimation,
+       ...clip.animation,
+       preset,
++      timing: preset.endsWith("-out") ? "end" : "start",
+     },
+   }));
+ 
+@@ -797,6 +828,24 @@ const getClipFrameStyle = (
+   };
+ };
+ 
++const getCutoutChromaKeyStyle = (
++  source?: Pick<TimelineClip, "chromaKey" | "cutout"> | CutoutTransform,
++): CSSProperties => {
++  const chromaKey = source && "cutout" in source
++    ? source.chromaKey ?? source.cutout?.chromaKey
++    : (source as CutoutTransform | undefined)?.chromaKey;
++  switch (chromaKey) {
++    case "green":
++      return {filter: "url(#cutout-chroma-green)"};
++    case "white":
++      return {filter: "url(#cutout-chroma-white)"};
++    case "black":
++      return {filter: "url(#cutout-chroma-black)"};
++    default:
++      return {};
++  }
++};
++
+ type StickerItem = {
+   id: string;
+   label: string;
+@@ -826,6 +875,7 @@ const initialMediaItems: MediaItem[] = [
+     duration: "00:16",
+     durationInFrames: defaultMediaDurationInFrames,
+     kind: "public",
++    mediaType: "video",
+   },
+   {
+     id: "media-screen-recording",
+@@ -834,6 +884,7 @@ const initialMediaItems: MediaItem[] = [
+     duration: "Saved clip",
+     durationInFrames: defaultMediaDurationInFrames,
+     kind: "public",
++    mediaType: "video",
+   },
+ ];
+ 
+@@ -851,9 +902,27 @@ const readBrowserSavedProject = (): SavedEditorProject | null => {
+     return null;
+   }
+ 
+-  return parseSavedEditorProject(
++  const savedProject = parseSavedEditorProject(
+     window.localStorage.getItem(savedProjectStorageKey),
+   );
++
++  if (!savedProject) {
++    return null;
++  }
++
++  const cleanedProject = removeBrowserOnlySavedMedia(savedProject);
++
++  return cleanedProject.clips.length > 0 || cleanedProject.mediaItems.length > 0
++    ? cleanedProject
++    : null;
++};
++
++const persistProjectToStorage = (project: SavedEditorProject) => {
++  if (typeof window === "undefined") {
++    return;
++  }
++
++  window.localStorage.setItem(savedProjectStorageKey, JSON.stringify(project));
+ };
+ 
+ const uploadMediaFile = async (file: File): Promise<UploadedMediaResponse> => {
+@@ -866,8 +935,10 @@ const uploadMediaFile = async (file: File): Promise<UploadedMediaResponse> => {
+   });
+ 
+   if (!response.ok) {
+-    const message = await response.text();
+-    throw new Error(message || "Import failed.");
++    const payload = await response.json() as {
++      error?: {message?: string};
++    };
++    throw new Error(payload.error?.message || "Import failed.");
+   }
+ 
+   return response.json() as Promise<UploadedMediaResponse>;
+@@ -977,6 +1048,15 @@ type TextPreviewDrag = {
+   halfHeightPercent: number;
+ };
+ 
++type CaptionPreviewDrag = {
++  clipId: string;
++  startX: number;
++  startY: number;
++  originalClips: TimelineClip[];
++  halfWidthPercent: number;
++  halfHeightPercent: number;
++};
++
+ type CutoutMaskDrag = {
+   clipId: string;
+   mode: CutoutMaskStroke["mode"];
+@@ -995,6 +1075,18 @@ type TextResizeDrag = {
+   originalClips: TimelineClip[];
+ };
+ 
++type CaptionResizeDrag = {
++  clipId: string;
++  startX: number;
++  startY: number;
++  startFontSize: number;
++  maximumFontSize: number;
++  measureBounds: (fontSize: number) => {width: number; height: number};
++  previewWidth: number;
++  previewHeight: number;
++  originalClips: TimelineClip[];
++};
++
+ type TextRotateDrag = {
+   clipId: string;
+   centerX: number;
+@@ -1110,7 +1202,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+   const [mediaItems, setMediaItems] = useState<MediaItem[]>(
+     initialProject?.mediaItems ?? initialMediaItems,
+   );
+-  const [selectedMediaId, setSelectedMediaId] = useState(
++  const [selectedMediaId, setSelectedMediaId] = useState<string | null>(
+     initialProject?.selectedMediaId ??
+     initialProject?.mediaItems[0]?.id ??
+     initialMediaItems[0].id,
+@@ -1164,8 +1256,12 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     useState<TextTimelineDrag | null>(null);
+   const [textPreviewDrag, setTextPreviewDrag] =
+     useState<TextPreviewDrag | null>(null);
++  const [captionPreviewDrag, setCaptionPreviewDrag] =
++    useState<CaptionPreviewDrag | null>(null);
+   const [textResizeDrag, setTextResizeDrag] =
+     useState<TextResizeDrag | null>(null);
++  const [captionResizeDrag, setCaptionResizeDrag] =
++    useState<CaptionResizeDrag | null>(null);
+   const [textRotateDrag, setTextRotateDrag] =
+     useState<TextRotateDrag | null>(null);
+   const [cropInputMode, setCropInputMode] = useState<"sliders" | "manual">(
+@@ -1245,6 +1341,14 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     clipControlTarget?.track === "cutout" && clipControlTarget.cutout
+       ? clipControlTarget
+       : null;
++  const selectedVideoBackgroundTarget =
++    clipControlTarget?.src &&
++    !isImageClip(clipControlTarget) &&
++    (clipControlTarget.track === "main" ||
++      clipControlTarget.track === "upper" ||
++      clipControlTarget.track === "cutout")
++      ? clipControlTarget
++      : null;
+   const activeCutoutAtPlayhead = clips.find(
+     (clip) =>
+       clip.track === "cutout" &&
+@@ -1347,6 +1451,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     "caption",
+     playheadFrame,
+   ).filter((clip) => clip.caption);
++  const selectedActiveCaptionClip = activeCaptionClips.find(
++    (clip) => clip.id === selectedClipId,
++  );
+   const transcriptClips = useMemo(
+     () => clips
+       .filter((clip) =>
+@@ -1420,6 +1527,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+           id: selectedMedia.id,
+           label: selectedMedia.label,
+           src: selectedMedia.src,
++          mediaType: getMediaItemType(selectedMedia),
+           start: 0,
+           speed: mainClipSpeed,
+           volume: mainClipVolume,
+@@ -1520,6 +1628,18 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     setPreviewMode("media");
+   };
+ 
++  const deleteMediaItem = (mediaId: string) => {
++    const result = removeUnusedMediaItem({
++      mediaItems,
++      selectedMediaId,
++      mediaId,
++    });
++
++    setMediaItems(result.mediaItems);
++    setSelectedMediaId(result.selectedMediaId);
++    setProjectStatus(result.message);
++  };
++
+   const openVisualTool = (
+     tool: "animations" | "effects" | "filters" | "adjustment",
+   ) => {
+@@ -1581,7 +1701,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     try {
+       const nextProject = getCurrentSavedProject();
+       const serializedProject = JSON.stringify(nextProject, null, 2);
+-      window.localStorage.setItem(savedProjectStorageKey, serializedProject);
++      persistProjectToStorage(nextProject);
+       downloadBrowserFile(
+         new Blob([serializedProject], {type: "application/json"}),
+         `video-editor-project-${Date.now()}.json`,
+@@ -1596,16 +1716,17 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     }
+   }, [getCurrentSavedProject]);
+ 
++  useEffect(() => {
++    persistProjectToStorage(getCurrentSavedProject());
++  }, [getCurrentSavedProject]);
++
+   const exportProjectVideo = useCallback(async () => {
+     if (isExporting) {
+       return;
+     }
+ 
+     const nextProject = getCurrentSavedProject();
+-    window.localStorage.setItem(
+-      savedProjectStorageKey,
+-      JSON.stringify(nextProject),
+-    );
++    persistProjectToStorage(nextProject);
+ 
+     if (
+       nextProject.clips.some((clip) => isBrowserOnlySource(clip.src)) ||
+@@ -1696,6 +1817,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+       setClipAnimationById(currentClips, clipControlTarget?.id ?? null, preset),
+     );
+     setPreviewMode("timeline");
++    if (clipControlTarget) {
++      setPlayheadFrame(getClipAnimationPreviewFrame(clipControlTarget, preset));
++      setIsPreviewPlaying(preset !== "none");
++    }
+   };
+ 
+   const updateSelectedAnimationTiming = (timing: ClipAnimationTiming) => {
+@@ -1792,21 +1917,34 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+   };
+ 
+   const splitSelectedTrackClip = () => {
+-    commitClipChange((currentClips) => {
+-      if (selectedClipId) {
+-        return splitClipByIdAtFrame(
+-          currentClips,
+-          selectedClipId,
+-          playheadFrame,
++    const targetClip = selectedClipId
++      ? clips.find((clip) => clip.id === selectedClipId)
++      : clips.find(
++          (clip) =>
++            clip.track === selectedTrack &&
++            playheadFrame > clip.start &&
++            playheadFrame < clip.start + clip.duration,
+         );
+-      }
+ 
+-      return splitClipOnTrackAtFrame(
+-        currentClips,
+-        selectedTrack,
+-        playheadFrame,
+-      );
+-    });
++    if (!targetClip) {
++      setProjectStatus("Select a clip and move the red playhead inside it");
++      return;
++    }
++
++    const nextClips = splitClipByIdAtFrame(
++      clips,
++      targetClip.id,
++      playheadFrame,
++    );
++    if (nextClips === clips) {
++      setProjectStatus("Move the red playhead inside the selected clip");
++      return;
++    }
++
++    commitClipChange(() => nextClips);
++    setSelectedClipId(`${targetClip.id}-b`);
++    setSelectedTrack(targetClip.track);
++    setProjectStatus("Clip split at the red playhead");
+   };
+ 
+   const splitSelectedCutoutAtPlayhead = () => {
+@@ -2049,6 +2187,26 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     }
+   };
+ 
++  const setSelectedCutoutChromaKey = (
++    chromaKey: NonNullable<CutoutTransform["chromaKey"]>,
++  ) => {
++    if (
++      !selectedVideoBackgroundTarget
++    ) {
++      setProjectStatus("Select a main, overlay, or cutout video first.");
++      return;
++    }
++
++    commitClipChange((currentClips) =>
++      setCutoutChromaKeyById(currentClips, selectedVideoBackgroundTarget.id, chromaKey),
++    );
++    setProjectStatus(
++      chromaKey === "none"
++        ? "Video background removal turned off."
++        : `${chromaKey[0].toUpperCase()}${chromaKey.slice(1)} video background removal applied.`,
++    );
++  };
++
+   const addTextAtPlayhead = () => {
+     const content = textDraft.trim();
+     if (!content) return;
+@@ -2748,6 +2906,28 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     });
+   };
+ 
++  const startCaptionPreviewDrag = (
++    event: PointerEvent<HTMLElement>,
++    clip: TimelineClip,
++  ) => {
++    const previewBounds = previewWindowRef.current?.getBoundingClientRect();
++    if (!previewBounds || !clip.caption) return;
++
++    event.preventDefault();
++    event.stopPropagation();
++    event.currentTarget.setPointerCapture(event.pointerId);
++    const captionBounds = event.currentTarget.getBoundingClientRect();
++    selectTimelineClip(clip);
++    setCaptionPreviewDrag({
++      clipId: clip.id,
++      startX: event.clientX,
++      startY: event.clientY,
++      originalClips: clips,
++      halfWidthPercent: (captionBounds.width / previewBounds.width) * 50,
++      halfHeightPercent: (captionBounds.height / previewBounds.height) * 50,
++    });
++  };
++
+   const startCutoutInteraction = (
+     event: PointerEvent<HTMLElement>,
+     clip: TimelineClip,
+@@ -2900,6 +3080,58 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     });
+   };
+ 
++  const startCaptionResizeDrag = (
++    event: PointerEvent<HTMLElement>,
++    clip: TimelineClip,
++  ) => {
++    const previewBounds = previewWindowRef.current?.getBoundingClientRect();
++    const captionElement = previewWindowRef.current?.querySelector<HTMLElement>(
++      ".selected-preview-caption",
++    );
++    const captionBounds = captionElement?.getBoundingClientRect();
++    if (!clip.caption || !previewBounds || !captionBounds || !captionElement) return;
++
++    const measureBounds = (fontSize: number) => {
++      if (Math.round(fontSize) === Math.round(clip.caption!.fontSize)) {
++        return {width: captionBounds.width, height: captionBounds.height};
++      }
++      const clone = captionElement.cloneNode(true) as HTMLElement;
++      clone.querySelector(".caption-resize-handle")?.remove();
++      clone.style.visibility = "hidden";
++      clone.style.pointerEvents = "none";
++      clone.style.left = "0";
++      clone.style.top = "0";
++      clone.style.translate = "none";
++      clone.style.fontSize = `${fontSize}px`;
++      previewWindowRef.current?.append(clone);
++      const measured = clone.getBoundingClientRect();
++      clone.remove();
++      return {width: measured.width, height: measured.height};
++    };
++    const maximumFontSize = getMaximumFittingCaptionFontSize({
++      requestedFontSize: 160,
++      previewWidth: previewBounds.width,
++      previewHeight: previewBounds.height,
++      measure: measureBounds,
++    });
++
++    event.preventDefault();
++    event.stopPropagation();
++    event.currentTarget.setPointerCapture(event.pointerId);
++    selectTimelineClip(clip);
++    setCaptionResizeDrag({
++      clipId: clip.id,
++      startX: event.clientX,
++      startY: event.clientY,
++      startFontSize: clip.caption.fontSize,
++      maximumFontSize,
++      measureBounds,
++      previewWidth: previewBounds.width,
++      previewHeight: previewBounds.height,
++      originalClips: clips,
++    });
++  };
++
+   const startTextRotateDrag = (
+     event: PointerEvent<HTMLButtonElement>,
+     clip: TimelineClip,
+@@ -2951,31 +3183,94 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     });
+   };
+ 
+-  const placeMediaOnVideoLayer = useCallback((
++  const createMediaTimelineClips = useCallback((
+     mediaItem: MediaItem,
+     videoLayer: number,
+     startFrame: number,
+   ) => {
+     const timestamp = Date.now();
+     const videoId = `video-${timestamp}-${mediaItem.id}`;
++    const label = mediaItem.label.replace(/\.[^.]+$/, "");
++    const duration = Math.max(1, mediaItem.durationInFrames);
++
++    if (getMediaItemType(mediaItem) === "image") {
++      const track = videoLayer === 0 ? "main" : "upper";
++      return {
++        videoId,
++        clips: [
++          createImageMediaClip({
++            id: videoId,
++            track,
++            label,
++            src: mediaItem.src,
++            start: Math.max(0, startFrame),
++            duration,
++          }),
++        ] as TimelineClip[],
++      };
++    }
++
+     const audioId = `video-audio-${timestamp}-${mediaItem.id}`;
+-    const pair = createVideoMediaPair({
++    return {
++      videoId,
++      clips: createVideoMediaPair({
+         videoId,
+         audioId,
+         track: videoLayer === 0 ? "main" : "upper",
+-        label: mediaItem.label.replace(/\.[^.]+$/, ""),
++        label,
+         src: mediaItem.src,
+         start: Math.max(0, startFrame),
+         duration: mediaItem.durationInFrames,
++      }) as TimelineClip[],
++    };
++  }, []);
++
++  const recoverUnavailableVideo = useCallback((clipId: string) => {
++    setTimelineHistory((currentHistory) => {
++      const unavailableClip = currentHistory.present.find(
++        (clip) => clip.id === clipId,
++      );
++      const replacement = [selectedMedia, ...mediaItems].find(
++        (mediaItem) =>
++          mediaItem?.mediaType !== "image" &&
++          mediaItem?.src &&
++          mediaItem.src !== unavailableClip?.src,
++      );
++
++      if (!unavailableClip || !replacement) {
++        setProjectStatus("This timeline video file is unavailable. Import it again to reconnect the clip.");
++        return currentHistory;
++      }
++
++      const nextClips = replaceClipMediaById(
++        currentHistory.present,
++        clipId,
++        replacement,
++      );
++      setProjectStatus(`Reconnected the missing clip to ${replacement.label}.`);
++      return {...currentHistory, present: nextClips};
+     });
++  }, [mediaItems, selectedMedia]);
++
++  const placeMediaOnVideoLayer = useCallback((
++    mediaItem: MediaItem,
++    videoLayer: number,
++    startFrame: number,
++  ) => {
++    const mediaTiming = {duration: mediaItem.durationInFrames};
++    const {videoId, clips: mediaClips} = createMediaTimelineClips(
++      {...mediaItem, durationInFrames: mediaTiming.duration},
++      videoLayer,
++      startFrame,
++    );
+ 
+     commitClipChange((currentClips) =>
+-      placeVideoPairOnLayer(currentClips, pair, videoLayer, startFrame),
++      placeVideoPairOnLayer(currentClips, mediaClips, videoLayer, startFrame),
+     );
+     setSelectedClipId(videoId);
+     setSelectedTrack(videoLayer === 0 ? "main" : "upper");
+-    setIsAudioTrackVisible(true);
+-  }, [commitClipChange]);
++    setIsAudioTrackVisible(getMediaItemType(mediaItem) === "video");
++  }, [commitClipChange, createMediaTimelineClips]);
+ 
+   const togglePreviewPlayback = () => {
+     if (!isPreviewPlaying) {
+@@ -3049,7 +3344,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+   ) => {
+     const input = event.currentTarget;
+     const selectedFiles = Array.from(event.currentTarget.files ?? []).filter(
+-      (file) => file.type.startsWith("video/"),
++      (file) => getMediaFileType(file) !== null,
+     );
+ 
+     if (selectedFiles.length === 0) {
+@@ -3061,10 +3356,17 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     try {
+       const newMediaItems = await Promise.all(
+         selectedFiles.map(async (file, index) => {
++          const mediaType = getMediaFileType(file);
++          if (!mediaType) {
++            throw new Error(`${file.name} is not an image or video file.`);
++          }
++
+           const previewSrc = URL.createObjectURL(file);
+           try {
+             const [durationInFrames, uploadedMedia] = await Promise.all([
+-              readVideoDurationInFrames(previewSrc),
++              mediaType === "video"
++                ? readVideoDurationInFrames(previewSrc)
++                : Promise.resolve(defaultImageDurationInFrames),
+               uploadMediaFile(file),
+             ]);
+             return {
+@@ -3074,6 +3376,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+               duration: formatMediaDuration(durationInFrames),
+               durationInFrames,
+               kind: "public" as const,
++              mediaType,
+             };
+           } finally {
+             URL.revokeObjectURL(previewSrc);
+@@ -3085,7 +3388,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+       setSelectedMediaId(newMediaItems[0].id);
+       setIsPreviewPlaying(false);
+       setPreviewMode("media");
+-      setProjectStatus("Media imported");
++      setProjectStatus("Media imported and saved");
+     } catch (error) {
+       setProjectStatus(
+         error instanceof Error ? `Import failed: ${error.message}` : "Import failed.",
+@@ -3295,30 +3598,23 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+ 
+           if (mediaItem) {
+             if (target?.kind === "insert-layer") {
+-              const timestamp = Date.now();
+-              const videoId = `video-${timestamp}-${mediaItem.id}`;
+-              const audioId = `video-audio-${timestamp}-${mediaItem.id}`;
+-              const pair = createVideoMediaPair({
+-                videoId,
+-                audioId,
+-                track: targetVideoLayer === 0 ? "main" : "upper",
+-                label: mediaItem.label.replace(/\.[^.]+$/, ""),
+-                src: mediaItem.src,
+-                start: Math.max(0, pointerFrame),
+-                duration: mediaItem.durationInFrames,
+-              });
++              const {videoId, clips: mediaClips} = createMediaTimelineClips(
++                mediaItem,
++                targetVideoLayer,
++                pointerFrame,
++              );
+ 
+               commitClipChange((currentClips) =>
+                 placeVideoPairInInsertedLayer(
+                   currentClips,
+-                  pair,
++                  mediaClips,
+                   targetVideoLayer,
+                   pointerFrame,
+                 ),
+               );
+               setSelectedClipId(videoId);
+               setSelectedTrack(targetVideoLayer === 0 ? "main" : "upper");
+-              setIsAudioTrackVisible(true);
++              setIsAudioTrackVisible(getMediaItemType(mediaItem) === "video");
+             } else {
+               placeMediaOnVideoLayer(mediaItem, targetVideoLayer, pointerFrame);
+             }
+@@ -3361,6 +3657,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+   }, [
+     clips,
+     commitClipChange,
++    createMediaTimelineClips,
+     getPointerTimelineFrame,
+     getVideoDropTargetFromElement,
+     mediaItems,
+@@ -3681,6 +3978,64 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     };
+   }, [textPreviewDrag]);
+ 
++  useEffect(() => {
++    if (!captionPreviewDrag) return;
++
++    const originalCaption = captionPreviewDrag.originalClips.find(
++      (clip) => clip.id === captionPreviewDrag.clipId,
++    )?.caption;
++    if (!originalCaption) return;
++
++    const originalPosition = getCaptionPosition(originalCaption);
++
++    const handlePointerMove = (event: globalThis.PointerEvent) => {
++      const bounds = previewWindowRef.current?.getBoundingClientRect();
++      if (!bounds) return;
++
++      const x =
++        originalPosition.x +
++        ((event.clientX - captionPreviewDrag.startX) / bounds.width) * 100;
++      const y =
++        originalPosition.y +
++        ((event.clientY - captionPreviewDrag.startY) / bounds.height) * 100;
++
++      setTimelineHistory((currentHistory) => ({
++        ...currentHistory,
++        present: moveCaptionOverlay(
++          captionPreviewDrag.originalClips,
++          captionPreviewDrag.clipId,
++          {x, y},
++          {
++            halfWidthPercent: captionPreviewDrag.halfWidthPercent,
++            halfHeightPercent: captionPreviewDrag.halfHeightPercent,
++          },
++        ),
++      }));
++    };
++
++    const finishDrag = () => {
++      setTimelineHistory((currentHistory) =>
++        currentHistory.present === captionPreviewDrag.originalClips
++          ? currentHistory
++          : {
++              past: [...currentHistory.past, captionPreviewDrag.originalClips],
++              present: currentHistory.present,
++              future: [],
++            },
++      );
++      setCaptionPreviewDrag(null);
++    };
++
++    window.addEventListener("pointermove", handlePointerMove);
++    window.addEventListener("pointerup", finishDrag, {once: true});
++    window.addEventListener("pointercancel", finishDrag, {once: true});
++    return () => {
++      window.removeEventListener("pointermove", handlePointerMove);
++      window.removeEventListener("pointerup", finishDrag);
++      window.removeEventListener("pointercancel", finishDrag);
++    };
++  }, [captionPreviewDrag]);
++
+   useEffect(() => {
+     if (!textResizeDrag) return;
+ 
+@@ -3724,6 +4079,62 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     };
+   }, [textResizeDrag]);
+ 
++  useEffect(() => {
++    if (!captionResizeDrag) return;
++
++    const handlePointerMove = (event: globalThis.PointerEvent) => {
++      const requestedFontSize = getResizedCaptionFontSize({
++        startFontSize: captionResizeDrag.startFontSize,
++        startX: captionResizeDrag.startX,
++        startY: captionResizeDrag.startY,
++        pointerX: event.clientX,
++        pointerY: event.clientY,
++      });
++      const fittedFontSize = Math.min(
++        requestedFontSize,
++        captionResizeDrag.maximumFontSize,
++      );
++      const measuredBounds = captionResizeDrag.measureBounds(fittedFontSize);
++      setTimelineHistory((currentHistory) => ({
++        ...currentHistory,
++        present: resizeCaptionOverlayById(
++          captionResizeDrag.originalClips,
++          captionResizeDrag.clipId,
++          requestedFontSize,
++          {
++            halfWidthPercent:
++              (measuredBounds.width / captionResizeDrag.previewWidth) * 50,
++            halfHeightPercent:
++              (measuredBounds.height / captionResizeDrag.previewHeight) * 50,
++            maximumFontSize: captionResizeDrag.maximumFontSize,
++          },
++        ),
++      }));
++    };
++
++    const finishResize = () => {
++      setTimelineHistory((currentHistory) =>
++        currentHistory.present === captionResizeDrag.originalClips
++          ? currentHistory
++          : {
++              past: [...currentHistory.past, captionResizeDrag.originalClips],
++              present: currentHistory.present,
++              future: [],
++            },
++      );
++      setCaptionResizeDrag(null);
++    };
++
++    window.addEventListener("pointermove", handlePointerMove);
++    window.addEventListener("pointerup", finishResize, {once: true});
++    window.addEventListener("pointercancel", finishResize, {once: true});
++    return () => {
++      window.removeEventListener("pointermove", handlePointerMove);
++      window.removeEventListener("pointerup", finishResize);
++      window.removeEventListener("pointercancel", finishResize);
++    };
++  }, [captionResizeDrag]);
++
+   useEffect(() => {
+     if (!textRotateDrag) return;
+ 
+@@ -3962,7 +4373,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+       return;
+     }
+ 
+-    void video.play();
++    void video.play().catch(() => undefined);
+   }, [
+     isPreviewPlaying,
+     playheadFrame,
+@@ -4005,6 +4416,28 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+ 
+   return (
+     <main className="editor-shell">
++      <svg className="chroma-key-defs" aria-hidden="true" focusable="false">
++        <defs>
++          <filter id="cutout-chroma-green" colorInterpolationFilters="sRGB">
++            <feColorMatrix
++              type="matrix"
++              values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 1 -1.15 1 0 0"
++            />
++          </filter>
++          <filter id="cutout-chroma-white" colorInterpolationFilters="sRGB">
++            <feColorMatrix
++              type="matrix"
++              values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 -1 -1 -1 0 2.85"
++            />
++          </filter>
++          <filter id="cutout-chroma-black" colorInterpolationFilters="sRGB">
++            <feColorMatrix
++              type="matrix"
++              values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 1 1 1 0 0"
++            />
++          </filter>
++        </defs>
++      </svg>
+       <section className="topbar">
+         <div className="brand">Video Editor</div>
+         <nav className="tool-tabs" aria-label="Editing tools">
+@@ -4089,7 +4522,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+         </div>
+       </section>
+ 
+-      <section className="workspace">
++      <section className={`workspace ${activeTool === "cutout" ? "cutout-workspace" : ""}`}>
+         <aside className="media-panel">
+           <div className="media-library">
+             {activeTool === "media" ? <>
+@@ -4113,7 +4546,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                 ref={fileInputRef}
+                 className="hidden-file-input"
+                 type="file"
+-                accept="video/*"
++                accept="image/*,video/*"
+                 multiple
+                 onChange={importMediaFromGallery}
+               />
+@@ -4124,45 +4557,74 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+ 
+             <div className="media-grid" aria-label="Imported media">
+               {mediaItems.map((mediaItem) => (
+-                <button
++                <div
+                   className={`media-thumb ${
+                     selectedMediaId === mediaItem.id ? "selected-media" : ""
+                   }`}
+                   key={mediaItem.id}
+-                  type="button"
+-                  onPointerDown={(event) => {
+-                    startMediaDrag(event, mediaItem);
+-                  }}
+-                  onClick={() => chooseMedia(mediaItem)}
+                 >
+-                  <span className="added-chip">Added</span>
+-                  {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
+-                  <video
+-                    className="media-thumb-video"
+-                    src={resolveMediaSource(mediaItem.src)}
+-                    muted
+-                    playsInline
+-                    preload="metadata"
+-                    onLoadedMetadata={(event) => {
+-                      const durationInFrames = durationToFrames(
+-                        event.currentTarget.duration,
+-                      );
+-                      setMediaItems((currentItems) =>
+-                        currentItems.map((item) =>
+-                          item.id === mediaItem.id
+-                            ? {
+-                                ...item,
+-                                durationInFrames,
+-                                duration: formatMediaDuration(durationInFrames),
+-                              }
+-                            : item,
+-                        ),
+-                      );
++                  <button
++                    className="media-thumb-select"
++                    type="button"
++                    onPointerDown={(event) => {
++                      startMediaDrag(event, mediaItem);
+                     }}
+-                  />
+-                  <span className="media-duration">{mediaItem.duration}</span>
+-                  <strong>{mediaItem.label}</strong>
+-                </button>
++                    onClick={() => chooseMedia(mediaItem)}
++                  >
++                    <span className="added-chip">Added</span>
++                  {getMediaItemType(mediaItem) === "image" ? (
++                    <Img
++                      className="media-thumb-image"
++                      src={resolveMediaSource(mediaItem.src)}
++                    />
++                  ) : (
++                    // eslint-disable-next-line @remotion/warn-native-media-tag
++                    <video
++                      className="media-thumb-video"
++                      src={resolveMediaSource(mediaItem.src)}
++                      muted
++                      playsInline
++                      preload="metadata"
++                      onLoadedMetadata={(event) => {
++                        const durationInFrames = durationToFrames(
++                          event.currentTarget.duration,
++                        );
++                        setMediaItems((currentItems) =>
++                          currentItems.map((item) =>
++                            item.id === mediaItem.id
++                              ? {
++                                  ...item,
++                                  durationInFrames,
++                                  duration: formatMediaDuration(durationInFrames),
++                                  mediaType: "video",
++                                }
++                              : item,
++                          ),
++                        );
++                      }}
++                    />
++                  )}
++                    <span className="media-duration">{mediaItem.duration}</span>
++                    <strong>{mediaItem.label}</strong>
++                  </button>
++                  <button
++                    aria-label={`Delete ${mediaItem.label}`}
++                    title={`Delete ${mediaItem.label}`}
++                    className="media-delete-button"
++                    type="button"
++                    onPointerDown={(event) => {
++                      event.preventDefault();
++                      event.stopPropagation();
++                    }}
++                    onClick={(event) => {
++                      event.preventDefault();
++                      event.stopPropagation();
++                      deleteMediaItem(mediaItem.id);
++                    }}
++                  >
++                    <span aria-hidden="true">&#128465;</span>
++                  </button>
++                </div>
+               ))}
+             </div>
+             </> : activeTool === "cutout" ? (
+@@ -4223,7 +4685,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                       disabled={!selectedCutoutClip || cutoutBrushMode === "move"}
+                     />
+                   </label>
+-                  <div className="cutout-action-row">
++                  <div className="cutout-action-row cutout-video-key-row">
+                     <button
+                       type="button"
+                       className="secondary-action-button"
+@@ -4234,6 +4696,38 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                         isAutoCutoutLoading
+                       }
+                     >{isAutoCutoutLoading ? "Working..." : "Auto image"}</button>
++                    <button
++                      type="button"
++                      className={`secondary-action-button ${(selectedVideoBackgroundTarget?.chromaKey ?? selectedVideoBackgroundTarget?.cutout?.chromaKey ?? "none") === "none" ? "selected-option" : ""}`}
++                      aria-label="Turn off video background removal"
++                      title="Turn off video background removal"
++                      onClick={() => setSelectedCutoutChromaKey("none")}
++                      disabled={!selectedVideoBackgroundTarget}
++                    >Off</button>
++                    <button
++                      type="button"
++                      className={`secondary-action-button ${(selectedVideoBackgroundTarget?.chromaKey ?? selectedVideoBackgroundTarget?.cutout?.chromaKey) === "green" ? "selected-option" : ""}`}
++                      aria-label="Remove green video background"
++                      title="Remove green video background"
++                      onClick={() => setSelectedCutoutChromaKey("green")}
++                      disabled={!selectedVideoBackgroundTarget}
++                    >Green</button>
++                    <button
++                      type="button"
++                      className={`secondary-action-button ${(selectedVideoBackgroundTarget?.chromaKey ?? selectedVideoBackgroundTarget?.cutout?.chromaKey) === "white" ? "selected-option" : ""}`}
++                      aria-label="Remove white video background"
++                      title="Remove white video background"
++                      onClick={() => setSelectedCutoutChromaKey("white")}
++                      disabled={!selectedVideoBackgroundTarget}
++                    >White</button>
++                    <button
++                      type="button"
++                      className={`secondary-action-button ${(selectedVideoBackgroundTarget?.chromaKey ?? selectedVideoBackgroundTarget?.cutout?.chromaKey) === "black" ? "selected-option" : ""}`}
++                      aria-label="Remove black video background"
++                      title="Remove black video background"
++                      onClick={() => setSelectedCutoutChromaKey("black")}
++                      disabled={!selectedVideoBackgroundTarget}
++                    >Black</button>
+                     <button
+                       type="button"
+                       className="icon-tool-button"
+@@ -4896,6 +5390,23 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+               <>
+                 {isTimelinePreview ? (
+                   activeVideoLayers.map((videoClip, index) => {
++                    if (isImageClip(videoClip)) {
++                      return (
++                        <Img
++                          key={videoClip.id}
++                          className="preview-image preview-layer-image"
++                          data-video-layer={getVideoLayer(videoClip)}
++                          src={resolveMediaSource(videoClip.src ?? "")}
++                          style={{
++                            ...getClipFrameStyle(videoClip, playheadFrame),
++                            ...getClipAdjustmentStyle(videoClip),
++                            ...getCutoutChromaKeyStyle(videoClip),
++                            zIndex: index + 1,
++                          }}
++                        />
++                      );
++                    }
++
+                     const videoMuted =
+                       (videoClip.volume ?? 1) === 0 ||
+                       shouldMuteVideoNativeAudio(
+@@ -4913,6 +5424,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                         src={resolveMediaSource(videoClip.src ?? "")}
+                         muted={videoMuted}
+                         playsInline
++                        onError={() => recoverUnavailableVideo(videoClip.id)}
+                         style={{
+                           ...getClipFrameStyle(videoClip, playheadFrame),
+                           ...getClipAdjustmentStyle(videoClip),
+@@ -4934,7 +5446,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                             video.currentTime = desiredTime;
+                           }
+                           if (isPreviewPlaying) {
+-                            void video.play();
++                            void video.play().catch(() => undefined);
+                           } else {
+                             video.pause();
+                           }
+@@ -4942,6 +5454,15 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                       />
+                     );
+                   })
++                ) : previewSource?.src && isImageClip(previewSource) ? (
++                  <Img
++                    className="preview-image"
++                    src={resolveMediaSource(previewSource.src)}
++                    style={{
++                      ...getClipFrameStyle(undefined, playheadFrame),
++                      ...getClipAdjustmentStyle(),
++                    }}
++                  />
+                 ) : (
+                   // eslint-disable-next-line @remotion/warn-native-media-tag
+                   <video
+@@ -4974,7 +5495,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                           audio.currentTime = desiredTime;
+                         }
+                         if (isPreviewPlaying) {
+-                          void audio.play();
++                          void audio.play().catch(() => undefined);
+                         } else {
+                           audio.pause();
+                         }
+@@ -5050,7 +5571,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                             muted
+                             playsInline
+                             draggable={false}
+-                            style={maskStyle}
++                            style={{
++                              ...maskStyle,
++                              ...getCutoutChromaKeyStyle(transform),
++                            }}
+                             ref={(video) => {
+                               if (!video) return;
+                               video.playbackRate = cutoutClip.speed ?? 1;
+@@ -5062,7 +5586,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                                 video.currentTime = desiredTime;
+                               }
+                               if (isPreviewPlaying) {
+-                                void video.play();
++                                void video.play().catch(() => undefined);
+                               } else {
+                                 video.pause();
+                               }
+@@ -5166,6 +5690,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                         return null;
+                       }
+ 
++                      const captionPosition = getCaptionPosition(caption);
++
+                       return (
+                         <button
+                           aria-label={`Select caption: ${caption.content}`}
+@@ -5177,7 +5703,8 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                           key={captionClip.id}
+                           type="button"
+                           style={{
+-                            bottom: `${20 + captionIndex * 54}px`,
++                            left: `${captionPosition.x}%`,
++                            top: `${captionPosition.y}%`,
+                             color: caption.textColor,
+                             fontSize: `${caption.fontSize}px`,
+                             background: caption.backgroundEnabled
+@@ -5185,12 +5712,24 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                               : "transparent",
+                             zIndex: 24 + captionIndex,
+                           }}
++                          onPointerDown={(event) =>
++                            startCaptionPreviewDrag(event, captionClip)}
+                           onClick={() => selectTimelineClip(captionClip)}
+                         >
+                           {caption.content}
+                         </button>
+                       );
+                     })}
++                    {selectedActiveCaptionClip ? (
++                      <button
++                        aria-label="Resize selected caption"
++                        className="caption-resize-handle caption-resize-handle-canvas"
++                        type="button"
++                        title="Drag to resize caption"
++                        onPointerDown={(event) =>
++                          startCaptionResizeDrag(event, selectedActiveCaptionClip)}
++                      />
++                    ) : null}
+                   </div>
+                 ) : null}
+                 {isTimelinePreview
+@@ -5831,15 +6370,23 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                     ) : null}
+                     {clip.src && (clip.track === "main" || clip.track === "upper") ? (
+                       <>
+-                        {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
+-                        <video
+-                          className="timeline-clip-video"
+-                          src={resolveMediaSource(clip.src)}
+-                          muted
+-                          playsInline
+-                          preload="metadata"
+-                          style={getClipFrameStyle(clip, playheadFrame)}
+-                        />
++                        {isImageClip(clip) ? (
++                          <Img
++                            className="timeline-clip-image"
++                            src={resolveMediaSource(clip.src)}
++                            style={getClipFrameStyle(clip, playheadFrame)}
++                          />
++                        ) : (
++                          // eslint-disable-next-line @remotion/warn-native-media-tag
++                          <video
++                            className="timeline-clip-video"
++                            src={resolveMediaSource(clip.src)}
++                            muted
++                            playsInline
++                            preload="metadata"
++                            style={getClipFrameStyle(clip, playheadFrame)}
++                          />
++                        )}
+                         <div className="timeline-clip-filmstrip" />
+                       </>
+                     ) : null}
+@@ -5852,6 +6399,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                           muted
+                           playsInline
+                           preload="metadata"
++                          style={getCutoutChromaKeyStyle(clip.cutout)}
+                         />
+                       ) : (
+                         // eslint-disable-next-line @remotion/warn-native-media-tag
+@@ -5939,7 +6487,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+         </div>
+       </section>
+ 
+-      {pointerDrag ? (
++      {pointerDrag?.type === "media" ? (
+         <div
+           className="drag-preview"
+           style={{
+diff --git a/video-editor/src/editorLogic.ts b/video-editor/src/editorLogic.ts
+index 42160b4..564f908 100644
+--- a/video-editor/src/editorLogic.ts
++++ b/video-editor/src/editorLogic.ts
+@@ -16,6 +16,8 @@ export type CaptionStyle = {
+ 
+ export type CaptionOverlay = CaptionStyle & {
+   content: string;
++  x?: number;
++  y?: number;
+   sourceClipId?: string;
+   generationId?: string;
+ };
+@@ -55,6 +57,7 @@ export type TextOverlay = {
+ 
+ export type CutoutTransform = StickerTransform & {
+   mediaKind: "image" | "video";
++  chromaKey?: "none" | "green" | "white" | "black";
+   maskStrokes?: CutoutMaskStroke[];
+   originalSrc?: string;
+ };
+@@ -89,6 +92,7 @@ export type SavedMediaItem = {
+   duration: string;
+   durationInFrames: number;
+   kind: "local" | "public";
++  mediaType?: "video" | "image";
+ };
+ 
+ export type SavedEditorProject = {
+@@ -185,6 +189,7 @@ export type TimelineClip = {
+   duration: number;
+   color: string;
+   src?: string;
++  mediaType?: "video" | "image";
+   hidden?: boolean;
+   speed?: number;
+   volume?: number;
+@@ -194,6 +199,7 @@ export type TimelineClip = {
+   videoLayer?: number;
+   sticker?: StickerTransform;
+   cutout?: CutoutTransform;
++  chromaKey?: NonNullable<CutoutTransform["chromaKey"]>;
+   text?: TextOverlay;
+   caption?: CaptionOverlay;
+   visual?: ClipVisualStyle;
+@@ -564,6 +570,30 @@ export const createVideoMediaPair = (
+   return [video, audio];
+ };
+ 
++export const createImageMediaClip = (options: {
++  id: string;
++  track: "main" | "upper";
++  label: string;
++  src: string;
++  start: number;
++  duration: number;
++  overlayLane?: number;
++}): TimelineClip => ({
++  id: options.id,
++  label: options.label,
++  track: options.track,
++  start: options.start,
++  duration: options.duration,
++  color: options.track === "main" ? "#0891b2" : "#7c3aed",
++  src: options.src,
++  speed: 1,
++  volume: 1,
++  mediaType: "image",
++  ...(options.track === "upper"
++    ? {overlayLane: options.overlayLane ?? 0}
++    : {}),
++});
++
+ export const createMainMediaPair = (options: {
+   mainId: string;
+   audioId: string;
+@@ -748,6 +778,41 @@ export const appendCutoutMaskStroke = (
+   return changed ? nextClips : clips;
+ };
+ 
++export const setCutoutChromaKeyById = (
++  clips: TimelineClip[],
++  clipId: string,
++  chromaKey: NonNullable<CutoutTransform["chromaKey"]>,
++): TimelineClip[] => {
++  let changed = false;
++  const nextClips = clips.map((clip) => {
++    const isVideoTrack =
++      clip.track === "main" || clip.track === "upper" || clip.track === "cutout";
++    const isVideo =
++      clip.cutout?.mediaKind === "video" ||
++      clip.mediaType === "video" ||
++      (isVideoTrack &&
++        Boolean(clip.src) &&
++        clip.mediaType !== "image" &&
++        clip.cutout?.mediaKind !== "image");
++    if (clip.id !== clipId || !isVideo) {
++      return clip;
++    }
++
++    if ((clip.cutout?.chromaKey ?? clip.chromaKey ?? "none") === chromaKey) {
++      return clip;
++    }
++
++    changed = true;
++    return {
++      ...clip,
++      chromaKey,
++      ...(clip.cutout ? {cutout: {...clip.cutout, chromaKey}} : {}),
++    };
++  });
++
++  return changed ? nextClips : clips;
++};
++
+ export const resetCutoutMask = (
+   clips: TimelineClip[],
+   clipId: string,
+@@ -917,6 +982,168 @@ export const removeBackgroundPixels = (
+     if (y + 1 < height) enqueueEnclosedBackground(pixelIndex + width);
+   }
+ 
++  visited.fill(0);
++  const isBrightNeutralPixel = (pixelIndex: number) => {
++    const index = pixelIndex * 4;
++    if (output[index + 3] === 0) return false;
++    const red = output[index];
++    const green = output[index + 1];
++    const blue = output[index + 2];
++    const brightest = Math.max(red, green, blue);
++    const darkest = Math.min(red, green, blue);
++
++    return darkest >= 236 && brightest - darkest <= 18;
++  };
++  const minimumBrightRegionSize = Math.max(6, Math.floor(pixelCount * 0.03));
++
++  for (let startPixel = 0; startPixel < pixelCount; startPixel += 1) {
++    if (visited[startPixel] || !isBrightNeutralPixel(startPixel)) {
++      continue;
++    }
++
++    queueStart = 0;
++    queueEnd = 0;
++    visited[startPixel] = 1;
++    queue[queueEnd] = startPixel;
++    queueEnd += 1;
++
++    while (queueStart < queueEnd) {
++      const pixelIndex = queue[queueStart];
++      queueStart += 1;
++      const x = pixelIndex % width;
++      const y = Math.floor(pixelIndex / width);
++      const neighbors = [
++        x > 0 ? pixelIndex - 1 : -1,
++        x + 1 < width ? pixelIndex + 1 : -1,
++        y > 0 ? pixelIndex - width : -1,
++        y + 1 < height ? pixelIndex + width : -1,
++      ];
++
++      for (const neighbor of neighbors) {
++        if (
++          neighbor >= 0 &&
++          !visited[neighbor] &&
++          isBrightNeutralPixel(neighbor)
++        ) {
++          visited[neighbor] = 1;
++          queue[queueEnd] = neighbor;
++          queueEnd += 1;
++        }
++      }
++    }
++
++    if (queueEnd >= minimumBrightRegionSize) {
++      for (let index = 0; index < queueEnd; index += 1) {
++        output[queue[index] * 4 + 3] = 0;
++      }
++    }
++  }
++
++  visited.fill(0);
++  type OpaqueComponent = {
++    pixels: number[];
++    minX: number;
++    maxX: number;
++    minY: number;
++    maxY: number;
++  };
++  const components: OpaqueComponent[] = [];
++
++  for (let startPixel = 0; startPixel < pixelCount; startPixel += 1) {
++    if (visited[startPixel] || output[startPixel * 4 + 3] === 0) {
++      continue;
++    }
++
++    queueStart = 0;
++    queueEnd = 0;
++    visited[startPixel] = 1;
++    queue[queueEnd] = startPixel;
++    queueEnd += 1;
++    const pixelsInComponent: number[] = [];
++    let minX = width;
++    let maxX = 0;
++    let minY = height;
++    let maxY = 0;
++
++    while (queueStart < queueEnd) {
++      const pixelIndex = queue[queueStart];
++      queueStart += 1;
++      pixelsInComponent.push(pixelIndex);
++      const x = pixelIndex % width;
++      const y = Math.floor(pixelIndex / width);
++      minX = Math.min(minX, x);
++      maxX = Math.max(maxX, x);
++      minY = Math.min(minY, y);
++      maxY = Math.max(maxY, y);
++      const neighbors = [
++        x > 0 ? pixelIndex - 1 : -1,
++        x + 1 < width ? pixelIndex + 1 : -1,
++        y > 0 ? pixelIndex - width : -1,
++        y + 1 < height ? pixelIndex + width : -1,
++      ];
++
++      for (const neighbor of neighbors) {
++        if (
++          neighbor >= 0 &&
++          !visited[neighbor] &&
++          output[neighbor * 4 + 3] > 0
++        ) {
++          visited[neighbor] = 1;
++          queue[queueEnd] = neighbor;
++          queueEnd += 1;
++        }
++      }
++    }
++
++    components.push({pixels: pixelsInComponent, minX, maxX, minY, maxY});
++  }
++
++  if (components.length > 1) {
++    const centerLeft = width * 0.28;
++    const centerRight = width * 0.72;
++    const centerTop = height * 0.12;
++    const centerBottom = height * 0.88;
++    const intersectsFocusArea = (component: OpaqueComponent) =>
++      component.maxX >= centerLeft &&
++      component.minX <= centerRight &&
++      component.maxY >= centerTop &&
++      component.minY <= centerBottom;
++    const focusedComponents = components.filter(intersectsFocusArea);
++    const subjectComponents =
++      focusedComponents.length > 0
++        ? focusedComponents
++        : [
++            components.reduce((largest, component) =>
++              component.pixels.length > largest.pixels.length ? component : largest,
++            ),
++          ];
++    const largestSubjectSize = Math.max(
++      ...subjectComponents.map((component) => component.pixels.length),
++    );
++    const minimumCompanionSize = Math.max(
++      4,
++      Math.floor(largestSubjectSize * 0.35),
++    );
++    const keepComponents = new Set(
++      components.filter(
++        (component) =>
++          subjectComponents.includes(component) ||
++          (intersectsFocusArea(component) &&
++            component.pixels.length >= minimumCompanionSize),
++      ),
++    );
++
++    for (const component of components) {
++      if (keepComponents.has(component)) {
++        continue;
++      }
++
++      for (const pixelIndex of component.pixels) {
++        output[pixelIndex * 4 + 3] = 0;
++      }
++    }
++  }
++
+   return output;
+ };
+ 
+@@ -1062,6 +1289,67 @@ export const createSavedEditorProject = ({
+   selectedMediaId,
+ });
+ 
++export const removeUnusedMediaItem = ({
++  mediaItems,
++  selectedMediaId,
++  mediaId,
++}: {
++  mediaItems: SavedMediaItem[];
++  selectedMediaId: string | null;
++  mediaId: string;
++}): {
++  outcome: "removed" | "blocked" | "unchanged";
++  mediaItems: SavedMediaItem[];
++  selectedMediaId: string | null;
++  message: string;
++} => {
++  const mediaItem = mediaItems.find((item) => item.id === mediaId);
++
++  if (!mediaItem) {
++    return {
++      outcome: "unchanged",
++      mediaItems,
++      selectedMediaId,
++      message: "Imported media was not found.",
++    };
++  }
++
++  const nextMediaItems = mediaItems.filter((item) => item.id !== mediaId);
++
++  return {
++    outcome: "removed",
++    mediaItems: nextMediaItems,
++    selectedMediaId:
++      selectedMediaId === mediaId
++        ? (nextMediaItems[0]?.id ?? null)
++        : selectedMediaId,
++    message: `${mediaItem.label} removed from imported media.`,
++  };
++};
++
++const isBrowserOnlySavedSource = (src?: string) => src?.startsWith("blob:") ?? false;
++
++export const removeBrowserOnlySavedMedia = (
++  project: SavedEditorProject,
++): SavedEditorProject => {
++  const mediaItems = project.mediaItems.filter(
++    (mediaItem) => !isBrowserOnlySavedSource(mediaItem.src),
++  );
++  const clips = project.clips.filter((clip) => !isBrowserOnlySavedSource(clip.src));
++  const selectedMediaId = mediaItems.some(
++    (mediaItem) => mediaItem.id === project.selectedMediaId,
++  )
++    ? project.selectedMediaId
++    : (mediaItems[0]?.id ?? null);
++
++  return {
++    ...project,
++    clips,
++    mediaItems,
++    selectedMediaId,
++  };
++};
++
+ export const parseSavedEditorProject = (
+   value: string | null,
+ ): SavedEditorProject | null => {
+@@ -1168,6 +1456,54 @@ export const moveTextOverlay = (
+   );
+ };
+ 
++export const getCaptionPosition = (caption: CaptionOverlay) => ({
++  x: caption.x ?? 50,
++  y: caption.y ?? 82,
++});
++
++type CaptionPosition = {x: number; y: number};
++
++type CaptionPositionBounds = {
++  halfWidthPercent: number;
++  halfHeightPercent: number;
++};
++
++export const moveCaptionOverlay = (
++  clips: TimelineClip[],
++  clipId: string | null,
++  position: CaptionPosition,
++  bounds: CaptionPositionBounds,
++): TimelineClip[] => {
++  let changed = false;
++  const nextClips = clips.map((clip) => {
++    if (clip.id !== clipId || clip.track !== "caption" || !clip.caption) {
++      return clip;
++    }
++
++    const halfWidth = Math.max(0, Math.min(50, bounds.halfWidthPercent));
++    const halfHeight = Math.max(0, Math.min(50, bounds.halfHeightPercent));
++    const x = Math.max(halfWidth, Math.min(100 - halfWidth, position.x));
++    const y = Math.max(halfHeight, Math.min(100 - halfHeight, position.y));
++    const currentPosition = getCaptionPosition(clip.caption);
++
++    if (x === currentPosition.x && y === currentPosition.y) {
++      return clip;
++    }
++
++    changed = true;
++
++    return {
++      ...clip,
++      caption: {
++        ...clip.caption,
++        x,
++        y,
++      },
++    };
++  });
++
++  return changed ? nextClips : clips;
++};
+ export const createManualCaptionClip = ({
+   id,
+   content,
+@@ -1293,6 +1629,100 @@ export const replaceGeneratedCaptionBatch = (
+   ...generated,
+ ];
+ 
++export const resizeCaptionOverlayById = (
++  clips: TimelineClip[],
++  clipId: string | null,
++  fontSize: number,
++  bounds?: CaptionPositionBounds & {
++    maximumFontSize?: number;
++    referenceFontSize?: number;
++  },
++): TimelineClip[] => {
++  let changed = false;
++  const nextClips = clips.map((clip) => {
++    if (clip.id !== clipId || clip.track !== "caption" || !clip.caption) {
++      return clip;
++    }
++
++    const maximumFontSize = Math.max(
++      12,
++      Math.min(160, Math.round(bounds?.maximumFontSize ?? 160)),
++    );
++    const nextFontSize = Math.max(
++      12,
++      Math.min(maximumFontSize, Math.round(fontSize)),
++    );
++    if (nextFontSize === clip.caption.fontSize) {
++      return clip;
++    }
++
++    const currentPosition = getCaptionPosition(clip.caption);
++    const growthScale = bounds?.maximumFontSize === undefined && bounds?.referenceFontSize
++      ? Math.max(1, nextFontSize / Math.max(1, bounds.referenceFontSize))
++      : 1;
++    const halfWidth = bounds
++      ? Math.max(0, Math.min(50, bounds.halfWidthPercent * growthScale))
++      : 0;
++    const halfHeight = bounds
++      ? Math.max(0, Math.min(50, bounds.halfHeightPercent * growthScale))
++      : 0;
++    const x = Math.max(
++      halfWidth,
++      Math.min(100 - halfWidth, currentPosition.x),
++    );
++    const y = Math.max(
++      halfHeight,
++      Math.min(100 - halfHeight, currentPosition.y),
++    );
++
++    changed = true;
++
++    return {
++      ...clip,
++      caption: {
++        ...clip.caption,
++        fontSize: nextFontSize,
++        x,
++        y,
++      },
++    };
++  });
++
++  return changed ? nextClips : clips;
++};
++
++export const getResizedCaptionFontSize = getResizedTextFontSize;
++
++export const getMaximumFittingCaptionFontSize = ({
++  requestedFontSize,
++  previewWidth,
++  previewHeight,
++  measure,
++}: {
++  requestedFontSize: number;
++  previewWidth: number;
++  previewHeight: number;
++  measure: (fontSize: number) => {width: number; height: number};
++}): number => {
++  const upperLimit = Math.max(12, Math.min(160, Math.round(requestedFontSize)));
++  if (previewWidth <= 0 || previewHeight <= 0) return 12;
++
++  let largestFittingSize = 12;
++  for (let fontSize = 12; fontSize <= upperLimit; fontSize += 1) {
++    const measured = measure(fontSize);
++    if (
++      Number.isFinite(measured.width) &&
++      Number.isFinite(measured.height) &&
++      measured.width <= previewWidth &&
++      measured.height <= previewHeight
++    ) {
++      largestFittingSize = fontSize;
++    }
++  }
++
++  return largestFittingSize;
++};
++
+ export const getActiveClipAtFrame = (
+   clips: TimelineClip[],
+   track: TrackName,
+@@ -1568,6 +1998,43 @@ export const replaceVideoLayerRange = (
+   return clips.filter((clip) => !replacedIds.has(clip.id));
+ };
+ 
++const getSnappedVideoStart = (
++  clips: TimelineClip[],
++  clipId: string,
++  videoLayer: number,
++  proposedStart: number,
++  duration: number,
++): number => {
++  const occupied = clips
++    .filter(
++      (clip) => clip.id !== clipId && getVideoLayer(clip) === videoLayer,
++    )
++    .sort((first, second) => first.start - second.start);
++  let start = Math.max(0, Math.round(proposedStart));
++  const firstCollision = occupied.find((clip) =>
++    clipRangesOverlap(start, duration, clip.start, clip.duration),
++  );
++
++  if (!firstCollision) {
++    return start;
++  }
++
++  const dropAfter =
++    start + duration / 2 >= firstCollision.start + firstCollision.duration / 2;
++  const scanOrder = dropAfter ? occupied : [...occupied].reverse();
++
++  for (const clip of scanOrder) {
++    if (!clipRangesOverlap(start, duration, clip.start, clip.duration)) {
++      continue;
++    }
++    start = dropAfter
++      ? clip.start + clip.duration
++      : Math.max(0, clip.start - duration);
++  }
++
++  return start;
++};
++
+ export const placeVideoPairOnLayer = (
+   clips: TimelineClip[],
+   pair: TimelineClip[],
+@@ -1579,16 +2046,17 @@ export const placeVideoPairOnLayer = (
+   );
+   if (!video) return clips;
+ 
+-  const clampedStart = Math.max(0, Math.round(start));
+-  const track: "main" | "upper" = videoLayer === 0 ? "main" : "upper";
+-  const remaining = replaceVideoLayerRange(clips, {
++  const clampedStart = getSnappedVideoStart(
++    clips,
++    video.id,
+     videoLayer,
+-    start: clampedStart,
+-    duration: video.duration,
+-  });
++    start,
++    video.duration,
++  );
++  const track: "main" | "upper" = videoLayer === 0 ? "main" : "upper";
+ 
+   return [
+-    ...remaining,
++    ...clips,
+     ...pair.map((clip) =>
+       clip.id === video.id
+         ? {
+@@ -1656,26 +2124,26 @@ export const moveVideoClipToLayer = (
+   );
+   if (!target) return clips;
+ 
+-  const start = timelineBoundary === undefined
++  const proposedStart = timelineBoundary === undefined
+     ? Math.max(0, Math.round(targetStart))
+     : clampTimelineStart(targetStart, target.duration, timelineBoundary);
++  const start = getSnappedVideoStart(
++    clips,
++    target.id,
++    videoLayer,
++    proposedStart,
++    target.duration,
++  );
+   const currentLayer = getVideoLayer(target);
+   const linkedAudio = getReciprocalLinkedAudio(clips, target);
+-  const remaining = replaceVideoLayerRange(clips, {
+-    videoLayer,
+-    start,
+-    duration: target.duration,
+-    excludeClipId: target.id,
+-  });
+-  const hasCollisions = remaining !== clips;
+ 
+-  if (start === target.start && videoLayer === currentLayer && !hasCollisions) {
++  if (start === target.start && videoLayer === currentLayer) {
+     return clips;
+   }
+ 
+   const track: "main" | "upper" = videoLayer === 0 ? "main" : "upper";
+ 
+-  return remaining.map((clip) =>
++  return clips.map((clip) =>
+     clip.id === target.id
+       ? {
+           ...clip,
+@@ -1962,14 +2430,19 @@ export const replaceClipMediaById = (
+   clipId: string,
+   media: { label: string; src: string },
+ ): TimelineClip[] => {
++  const target = clips.find((clip) => clip.id === clipId);
++  const linkedAudioId = target?.track === "audio"
++    ? undefined
++    : target?.linkedClipId;
++
+   return clips.map((clip) => {
+-    if (clip.id !== clipId) {
++    if (clip.id !== clipId && clip.id !== linkedAudioId) {
+       return clip;
+     }
+ 
+     return {
+       ...clip,
+-      label: media.label,
++      label: clip.id === linkedAudioId ? `${media.label} audio` : media.label,
+       src: media.src,
+     };
+   });
+@@ -2853,11 +3326,23 @@ export const setClipAnimationById = (
+   updateAnimationVideoClip(clips, clipId, (animation) => ({
+     ...animation,
+     preset,
+-    timing: animation.timing ?? "start",
++    timing: preset.endsWith("-out") ? "end" : "start",
+     duration: clampAnimationDuration(animation.duration ?? 30),
+     easing: animation.easing ?? "smooth",
+   }));
+ 
++export const getClipAnimationPreviewFrame = (
++  clip: TimelineClip,
++  preset: ClipAnimationPreset = clip.animation?.preset ?? "none",
++): number => {
++  if (!preset.endsWith("-out")) {
++    return clip.start;
++  }
++
++  const duration = clampAnimationDuration(clip.animation?.duration ?? 30);
++  return Math.max(clip.start, clip.start + clip.duration - duration);
++};
++
+ export const setClipAnimationTimingById = (
+   clips: TimelineClip[],
+   clipId: string | null,
+diff --git a/video-editor/src/index.css b/video-editor/src/index.css
+index 06b5614..e799745 100644
+--- a/video-editor/src/index.css
++++ b/video-editor/src/index.css
+@@ -141,6 +141,14 @@ button {
+   overflow-y: hidden;
+ }
+ 
++.workspace.cutout-workspace {
++  grid-template-columns: 0 clamp(390px, 30vw, 480px) minmax(520px, 1fr);
++}
++
++.workspace.cutout-workspace .details-panel {
++  display: none;
++}
++
+ .details-panel {
+   grid-area: settings;
+   min-height: 0;
+@@ -154,13 +162,13 @@ button {
+ 
+ .media-panel {
+   grid-area: media;
+-  display: grid;
+-  grid-template-columns: minmax(0, 1fr);
+-  min-width: 0;
+-  min-height: 0;
+-  background: #111821;
+-  border-right: 1px solid #26313c;
+-}
++  display: grid;
++  grid-template-columns: minmax(0, 1fr);
++  min-width: 0;
++  min-height: 0;
++  background: #111821;
++  border-right: 1px solid #26313c;
++}
+ 
+ .media-library {
+   min-width: 0;
+@@ -802,16 +810,58 @@ button {
+   cursor: grabbing;
+ }
+ 
+-.media-thumb.selected-media {
+-  outline: 2px solid #38d6c8;
+-}
+-
+-.media-thumb-video {
+-  width: 100%;
+-  height: 70px;
+-  display: block;
+-  object-fit: cover;
+-  background: #020617;
++.media-thumb.selected-media {
++  outline: 2px solid #38d6c8;
++}
++
++.media-thumb-select {
++  width: 100%;
++  height: 100%;
++  padding: 0;
++  border: 0;
++  background: transparent;
++  color: inherit;
++  cursor: pointer;
++  text-align: inherit;
++}
++
++.media-delete-button {
++  position: absolute;
++  right: 5px;
++  bottom: 5px;
++  z-index: 1;
++  display: grid;
++  width: 22px;
++  height: 22px;
++  place-items: center;
++  padding: 0;
++  border: 0;
++  border-radius: 4px;
++  background: #be123c;
++  color: #fff;
++  cursor: pointer;
++  opacity: 0;
++  pointer-events: none;
++}
++
++.media-thumb:hover .media-delete-button,
++.media-thumb:focus-within .media-delete-button {
++  opacity: 1;
++  pointer-events: auto;
++}
++
++.media-delete-button:focus-visible {
++  outline: 2px solid #f8fafc;
++  outline-offset: 2px;
++}
++
++.media-thumb-video,
++.media-thumb-image {
++  width: 100%;
++  height: 70px;
++  display: block;
++  object-fit: cover;
++  background: #020617;
+ }
+ 
+ .added-chip,
+@@ -848,10 +898,10 @@ button {
+ .preview-panel {
+   grid-area: preview;
+   display: grid;
+-  place-items: center;
+-  container-type: size;
+-  min-width: 0;
+-  min-height: 0;
++  place-items: center;
++  container-type: size;
++  min-width: 0;
++  min-height: 0;
+   padding: 14px 16px;
+   overflow: visible;
+   background:
+@@ -860,16 +910,16 @@ button {
+   background-size: 32px 32px;
+ }
+ 
+-.preview-shell {
+-  position: relative;
+-  width: min(100%, calc((100cqh - 38px) * 9 / 16));
+-  padding-top: 38px;
+-}
++.preview-shell {
++  position: relative;
++  width: min(100%, calc((100cqh - 38px) * 9 / 16));
++  padding-top: 38px;
++}
+ 
+ .preview-window {
+   position: relative;
+   width: 100%;
+-  aspect-ratio: 9 / 16;
++  aspect-ratio: 9 / 16;
+   overflow: hidden;
+   background: #020617;
+   border: 1px solid #334155;
+@@ -993,10 +1043,11 @@ button {
+   cursor: nwse-resize;
+ }
+ 
+-.preview-video {
+-  position: absolute;
+-  inset: 0;
+-  width: 100%;
++.preview-video,
++.preview-image {
++  position: absolute;
++  inset: 0;
++  width: 100%;
+   height: 100%;
+   display: block;
+   object-fit: cover;
+@@ -1004,16 +1055,25 @@ button {
+   background: #020617;
+   transform: none;
+   translate: none;
+-  rotate: 0deg;
+-}
+-
+-.preview-overlay-layer,
+-.preview-overlay-video {
+-  position: absolute;
+-  inset: 0;
+-  width: 100%;
+-  height: 100%;
+-}
++  rotate: 0deg;
++}
++
++.preview-video {
++  object-fit: cover;
++}
++
++.preview-overlay-layer,
++.preview-overlay-video,
++.preview-overlay-image {
++  position: absolute;
++  inset: 0;
++  width: 100%;
++  height: 100%;
++}
++
++.preview-overlay-video {
++  object-fit: cover;
++}
+ 
+ .preview-sticker {
+   position: absolute;
+@@ -1108,10 +1168,11 @@ button {
+   font-weight: 900;
+ }
+ 
+-.cutout-mode-control .selected-option {
+-  background: #2dd4bf;
+-  color: #061211;
+-}
++.cutout-mode-control .selected-option,
++.cutout-action-row .selected-option {
++  background: #2dd4bf;
++  color: #061211;
++}
+ 
+ .cutout-mode-control button:disabled,
+ .cutout-action-row button:disabled,
+@@ -1138,20 +1199,37 @@ button {
+   accent-color: #2dd4bf;
+ }
+ 
+-.cutout-action-row {
+-  display: grid;
+-  grid-template-columns: minmax(0, 1fr) 38px 38px;
+-  gap: 7px;
+-}
+-
+-.cutout-history-row {
+-  display: grid;
+-  grid-template-columns: repeat(2, 38px);
+-  gap: 7px;
+-}
++.cutout-action-row {
++  display: grid;
++  grid-template-columns: repeat(2, minmax(0, 1fr));
++  gap: 7px;
++}
++
++.cutout-video-key-row > .secondary-action-button:first-child {
++  grid-column: 1 / -1;
++}
++
++.cutout-video-key-row > .icon-tool-button {
++  width: 40px;
++  justify-self: start;
++}
+ 
+-.preview-cutout {
+-  position: absolute;
++.cutout-history-row {
++  display: grid;
++  grid-template-columns: repeat(2, 38px);
++  gap: 7px;
++}
++
++.chroma-key-defs {
++  position: absolute;
++  width: 0;
++  height: 0;
++  overflow: hidden;
++  pointer-events: none;
++}
++
++.preview-cutout {
++  position: absolute;
+   width: min(34%, 360px);
+   cursor: move;
+   user-select: none;
+@@ -1310,31 +1388,63 @@ button {
+   pointer-events: none;
+ }
+ 
+-.preview-caption {
+-  appearance: none;
+-  position: absolute;
+-  left: 50%;
+-  max-width: min(88%, 720px);
+-  padding: 8px 12px;
+-  border: 0;
+-  font-family: inherit;
+-  border-radius: 6px;
+-  translate: -50% 0;
+-  font-weight: 900;
+-  line-height: 1.15;
+-  overflow-wrap: anywhere;
+-  text-align: center;
+-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
+-  box-shadow: 0 10px 30px rgba(3, 7, 18, 0.3);
+-  pointer-events: auto;
+-  user-select: none;
+-  cursor: pointer;
+-}
+-
+-.selected-preview-caption {
+-  outline: 2px solid rgba(34, 211, 238, 0.85);
+-  outline-offset: 2px;
+-}
++.preview-caption {
++  appearance: none;
++  position: absolute;
++  max-width: min(88%, 720px);
++  padding: 8px 12px;
++  border: 0;
++  font-family: inherit;
++  border-radius: 6px;
++  translate: -50% -50%;
++  font-weight: 900;
++  line-height: 1.15;
++  overflow-wrap: anywhere;
++  text-align: center;
++  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
++  box-shadow: 0 10px 30px rgba(3, 7, 18, 0.3);
++  pointer-events: auto;
++  user-select: none;
++  cursor: move;
++  touch-action: none;
++}
++
++.selected-preview-caption {
++  outline: 2px solid rgba(34, 211, 238, 0.85);
++  outline-offset: 2px;
++}
++
++.caption-resize-handle {
++  position: absolute;
++  width: 16px;
++  height: 16px;
++  border: 2px solid #020617;
++  border-radius: 4px;
++  background: #f8fafc;
++  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.9);
++  cursor: nwse-resize;
++  touch-action: none;
++}
++
++.caption-resize-handle-canvas {
++  right: 12px;
++  bottom: 12px;
++  z-index: 80;
++  width: 32px;
++  height: 32px;
++  pointer-events: auto;
++}
++
++.caption-resize-handle::before {
++  content: "";
++  position: absolute;
++  right: 2px;
++  bottom: 2px;
++  width: 6px;
++  height: 6px;
++  border-right: 2px solid #0f172a;
++  border-bottom: 2px solid #0f172a;
++}
+ 
+ .preview-sticker img {
+   width: 100%;
+@@ -1446,9 +1556,8 @@ button {
+   font-weight: 900;
+ }
+ 
+-
+-.clip-controls,
+-.details-panel .clip-controls {
++.clip-controls,
++.details-panel .clip-controls {
+   display: grid;
+   gap: 9px;
+   padding-bottom: 16px;
+@@ -1845,10 +1954,11 @@ button {
+   background: rgba(3, 7, 18, 0.66);
+ }
+ 
+-.timeline-clip-video {
+-  position: absolute;
+-  inset: 0;
+-  width: 100%;
++.timeline-clip-video,
++.timeline-clip-image {
++  position: absolute;
++  inset: 0;
++  width: 100%;
+   height: 100%;
+   display: block;
+   object-fit: cover;
+diff --git a/video-editor/tests/caption-ui.test.mts b/video-editor/tests/caption-ui.test.mts
+index 13fada6..649be1d 100644
+--- a/video-editor/tests/caption-ui.test.mts
++++ b/video-editor/tests/caption-ui.test.mts
+@@ -85,6 +85,38 @@ test("renders preview captions as labeled keyboard-accessible buttons", () => {
+   assert.match(previewCaptions, /onClick=\{\(\) => selectTimelineClip\(captionClip\)\}/);
+ });
+ 
++test("keeps a selected caption resize control reachable on the preview canvas", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++  const css = readFileSync(
++    new URL("../src/index.css", import.meta.url),
++    "utf8",
++  );
++  const previewCaptions = source.slice(
++    source.indexOf('className="preview-caption-stack"'),
++    source.indexOf("activeStickerClips.map"),
++  );
++
++  assert.match(previewCaptions, /left: `\$\{captionPosition\.x\}%`/);
++  assert.match(previewCaptions, /top: `\$\{captionPosition\.y\}%`/);
++  assert.match(previewCaptions, /startCaptionPreviewDrag\(event, captionClip\)/);
++  assert.match(previewCaptions, /caption-resize-handle caption-resize-handle-canvas/);
++  assert.match(
++    previewCaptions,
++    /startCaptionResizeDrag\(event, selectedActiveCaptionClip\)/,
++  );
++  assert.match(
++    source,
++    /querySelector<HTMLElement>\(\s*"\.selected-preview-caption",?\s*\)/,
++  );
++  assert.match(
++    css,
++    /\.caption-resize-handle-canvas\s*\{[\s\S]*right:\s*12px;[\s\S]*bottom:\s*12px;/,
++  );
++});
++
+ test("starts the captions tool on a four-action launcher and supports returning with Back", () => {
+   const source = readFileSync(
+     new URL("../src/Composition.tsx", import.meta.url),
+diff --git a/video-editor/tests/editorLogic.test.mts b/video-editor/tests/editorLogic.test.mts
+index 291c99d..2bc2058 100644
+--- a/video-editor/tests/editorLogic.test.mts
++++ b/video-editor/tests/editorLogic.test.mts
+@@ -9,6 +9,7 @@ import {
+   changeFirstClipSpeed,
+   clampPlayheadFrame,
+   createRecordedAudioClip,
++  createImageMediaClip,
+   createVideoMediaPair,
+   createBackgroundMusicClip,
+   createCutoutImageClip,
+@@ -21,6 +22,7 @@ import {
+   deleteClipById,
+   duplicateClipById,
+   getClipSourceTime,
++  getClipAnimationPreviewFrame,
+   getContextualAudioClips,
+   getExpandedTimelineBoundary,
+   getStableTimelineFrameDelta,
+@@ -59,6 +61,7 @@ import {
+   replaceClipMediaById,
+   replaceGeneratedCaptionBatch,
+   replaceFirstClipOnTrack,
++  removeBrowserOnlySavedMedia,
+   removeSilenceFromLinkedVideo,
+   redoTimelineHistory,
+   setClipSpeedById,
+@@ -66,6 +69,8 @@ import {
+   toggleClipMuteById,
+   setClipEffectById,
+   setClipFilterById,
++  setClipAnimationById,
++  setCutoutChromaKeyById,
+   setTextStyleById,
+   setTextRotationById,
+   appendCutoutMaskStroke,
+@@ -74,8 +79,14 @@ import {
+   createCutoutRestoreMaskDataUrl,
+   resetCutoutMask,
+   removeBackgroundPixels,
++  removeUnusedMediaItem,
+   resizeTextOverlayById,
+   getResizedTextFontSize,
++  getCaptionPosition,
++  moveCaptionOverlay,
++  resizeCaptionOverlayById,
++  getResizedCaptionFontSize,
++  getMaximumFittingCaptionFontSize,
+   createWaveformBars,
+   splitClipOnTrackAtFrame,
+   splitClipByIdAtFrame,
+@@ -251,6 +262,52 @@ test("moves the playhead until pointer release even when the device omits button
+   );
+ });
+ 
++test("chooses the visible preview window for clip animations", () => {
++  const clip: TimelineClip = {
++    id: "animated",
++    label: "Animated",
++    track: "main",
++    start: 90,
++    duration: 300,
++    color: "#0891b2",
++    animation: {
++      preset: "fade-in",
++      timing: "start",
++      duration: 30,
++      easing: "smooth",
++    },
++  };
++
++  assert.equal(getClipAnimationPreviewFrame(clip, "fade-in"), 90);
++  assert.equal(getClipAnimationPreviewFrame(clip, "pop"), 90);
++  assert.equal(getClipAnimationPreviewFrame(clip, "fade-out"), 360);
++  assert.equal(getClipAnimationPreviewFrame(clip, "slide-out"), 360);
++  assert.equal(getClipAnimationPreviewFrame(clip, "none"), 90);
++});
++
++test("uses the matching timeline edge when an animation preset changes", () => {
++  const clip: TimelineClip = {
++    id: "animated",
++    label: "Animated",
++    track: "main",
++    start: 0,
++    duration: 300,
++    color: "#0891b2",
++    animation: {
++      preset: "fade-in",
++      timing: "start",
++      duration: 30,
++      easing: "smooth",
++    },
++  };
++
++  const fadedOut = setClipAnimationById([clip], clip.id, "fade-out");
++  assert.equal(fadedOut[0].animation?.timing, "end");
++
++  const fadedIn = setClipAnimationById(fadedOut, clip.id, "fade-in");
++  assert.equal(fadedIn[0].animation?.timing, "start");
++});
++
+ test("shows contextual audio only for main and audio selections", () => {
+   assert.equal(shouldShowAudioTrackForSelection("main"), true);
+   assert.equal(shouldShowAudioTrackForSelection("audio"), true);
+@@ -259,6 +316,31 @@ test("shows contextual audio only for main and audio selections", () => {
+   assert.equal(shouldShowAudioTrackForSelection("caption"), false);
+ });
+ 
++test("creates imported images as silent visual clips", () => {
++  const imageClip = createImageMediaClip({
++    id: "image-1",
++    track: "upper",
++    label: "Cover photo",
++    src: "uploads/cover.png",
++    start: 45,
++    duration: 150,
++  });
++
++  assert.deepEqual(imageClip, {
++    id: "image-1",
++    label: "Cover photo",
++    track: "upper",
++    start: 45,
++    duration: 150,
++    color: "#7c3aed",
++    src: "uploads/cover.png",
++    speed: 1,
++    volume: 1,
++    mediaType: "image",
++    overlayLane: 0,
++  });
++});
++
+ test("moves an upper clip to the end of the main track", () => {
+   const clips: TimelineClip[] = [
+     {
+@@ -1260,6 +1342,27 @@ test("duplicates a selected main video onto a new upper video layer", () => {
+   ]);
+ });
+ 
++test("reconnects a missing video and its linked audio to replacement media", () => {
++  const clips = createMainMediaPair({
++    mainId: "missing-video",
++    audioId: "missing-audio",
++    label: "Missing clip",
++    src: "missing.mp4",
++    start: 0,
++    duration: 480,
++  });
++
++  const replaced = replaceClipMediaById(clips, "missing-video", {
++    label: "Character clip",
++    src: "/uploads/character.mp4",
++  });
++
++  assert.equal(replaced[0]?.label, "Character clip");
++  assert.equal(replaced[0]?.src, "/uploads/character.mp4");
++  assert.equal(replaced[1]?.label, "Character clip audio");
++  assert.equal(replaced[1]?.src, "/uploads/character.mp4");
++});
++
+ test("duplicates an overlay video onto the next upper video layer", () => {
+   const clips: TimelineClip[] = [
+     {id: "upper", label: "Overlay", track: "upper", start: 30, duration: 60, color: "#7c3aed", src: "overlay.mp4", linkedClipId: "upper-audio", overlayLane: 2, videoLayer: 1},
+@@ -1876,7 +1979,7 @@ test("falls back to main audio when the top overlay audio is muted", () => {
+   );
+ });
+ 
+-test("replaces every overlapping clip and reciprocal audio only on the target video layer", () => {
++test("preserves occupied clips and snaps imported media after them on the target layer", () => {
+   const [firstMain, firstMainAudio] = createVideoMediaPair({
+     videoId: "main-a",
+     audioId: "main-audio-a",
+@@ -1922,10 +2025,10 @@ test("replaces every overlapping clip and reciprocal audio only on the target vi
+     90,
+   );
+ 
+-  assert.equal(result.some((clip) => clip.id === firstMain.id), false);
+-  assert.equal(result.some((clip) => clip.id === firstMainAudio.id), false);
+-  assert.equal(result.some((clip) => clip.id === secondMain.id), false);
+-  assert.equal(result.some((clip) => clip.id === secondMainAudio.id), false);
++  assert.strictEqual(result.find((clip) => clip.id === firstMain.id), firstMain);
++  assert.strictEqual(result.find((clip) => clip.id === firstMainAudio.id), firstMainAudio);
++  assert.strictEqual(result.find((clip) => clip.id === secondMain.id), secondMain);
++  assert.strictEqual(result.find((clip) => clip.id === secondMainAudio.id), secondMainAudio);
+   assert.strictEqual(result.find((clip) => clip.id === upper.id), upper);
+   assert.strictEqual(result.find((clip) => clip.id === upperAudio.id), upperAudio);
+   assert.deepEqual(
+@@ -1942,14 +2045,14 @@ test("replaces every overlapping clip and reciprocal audio only on the target vi
+       {
+         id: replacement.id,
+         track: "main",
+-        start: 90,
++        start: 220,
+         duration: 45,
+         videoLayer: undefined,
+       },
+       {
+         id: replacementAudio.id,
+         track: "audio",
+-        start: 90,
++        start: 220,
+         duration: 45,
+         videoLayer: undefined,
+       },
+@@ -2083,6 +2186,66 @@ test("returns the original array when moving a video clip is a true no-op", () =
+   assert.strictEqual(moveVideoClipToLayer(clips, video.id, 2, 40), clips);
+ });
+ 
++test("snaps a moved clip after an occupied clip without deleting either clip", () => {
++  const [oldClip] = createVideoMediaPair({
++    videoId: "old",
++    audioId: "old-audio",
++    track: "main",
++    label: "Old",
++    src: "old.mp4",
++    start: 0,
++    duration: 120,
++  });
++  const [newClip, newAudio] = createVideoMediaPair({
++    videoId: "new",
++    audioId: "new-audio",
++    track: "main",
++    label: "New",
++    src: "new.mp4",
++    start: 240,
++    duration: 90,
++  });
++
++  const moved = moveVideoClipToLayer(
++    [oldClip, newClip, newAudio],
++    newClip.id,
++    0,
++    80,
++  );
++
++  assert.equal(moved.find((clip) => clip.id === oldClip.id)?.start, 0);
++  assert.equal(moved.find((clip) => clip.id === newClip.id)?.start, 120);
++  assert.equal(moved.find((clip) => clip.id === newAudio.id)?.start, 120);
++  assert.equal(moved.length, 3);
++});
++
++test("snaps a moved clip before an occupied clip when dropped near its start", () => {
++  const [oldClip] = createVideoMediaPair({
++    videoId: "old",
++    audioId: "old-audio",
++    track: "main",
++    label: "Old",
++    src: "old.mp4",
++    start: 120,
++    duration: 120,
++  });
++  const [newClip] = createVideoMediaPair({
++    videoId: "new",
++    audioId: "new-audio",
++    track: "main",
++    label: "New",
++    src: "new.mp4",
++    start: 300,
++    duration: 60,
++  });
++
++  const moved = moveVideoClipToLayer([oldClip, newClip], newClip.id, 0, 100);
++
++  assert.equal(moved.find((clip) => clip.id === oldClip.id)?.start, 120);
++  assert.equal(moved.find((clip) => clip.id === newClip.id)?.start, 60);
++  assert.equal(moved.length, 2);
++});
++
+ test("does not create an empty narration clip", () => {
+   assert.equal(createRecordedAudioClip({
+     id: "voice-1",
+@@ -2298,6 +2461,58 @@ test("keeps video cutout speed and volume synchronized with linked audio", () =>
+   assert.equal(quieter.find((clip) => clip.id === audio.id)?.volume, 0.35);
+ });
+ 
++test("sets a solid-color key on selected main and cutout videos", () => {
++  const [videoCutout, audio] = createCutoutVideoPair({
++    videoId: "cutout-video-key",
++    audioId: "cutout-audio-key",
++    label: "Green screen",
++    src: "green.mp4",
++    playheadFrame: 0,
++    duration: 120,
++  });
++  const imageCutout = createCutoutImageClip({
++    id: "cutout-image-key",
++    label: "Poster",
++    src: "poster.png",
++    playheadFrame: 0,
++  });
++
++  const updated = setCutoutChromaKeyById(
++    [videoCutout, audio, imageCutout],
++    videoCutout.id,
++    "green",
++  );
++
++  assert.equal(
++    updated.find((clip) => clip.id === videoCutout.id)?.cutout?.chromaKey,
++    "green",
++  );
++  assert.equal(updated.find((clip) => clip.id === audio.id)?.cutout, undefined);
++  assert.equal(setCutoutChromaKeyById(updated, imageCutout.id, "white"), updated);
++
++  const mainVideo = {
++    id: "main-video-key",
++    label: "Main green screen",
++    track: "main" as const,
++    start: 0,
++    duration: 120,
++    color: "#0891b2",
++    src: "main-green.mp4",
++    mediaType: "video" as const,
++  };
++  const keyedMain = setCutoutChromaKeyById([mainVideo], mainVideo.id, "green");
++  assert.equal(keyedMain[0]?.chromaKey, "green");
++
++  const legacyMain = {...mainVideo, id: "legacy-main-video"};
++  delete (legacyMain as Partial<typeof legacyMain>).mediaType;
++  const keyedLegacyMain = setCutoutChromaKeyById(
++    [legacyMain],
++    legacyMain.id,
++    "white",
++  );
++  assert.equal(keyedLegacyMain[0]?.chromaKey, "white");
++});
++
+ test("moves an image cutout horizontally on the timeline", () => {
+   const cutout = createCutoutImageClip({
+     id: "cutout-image-move",
+@@ -2434,6 +2649,59 @@ test("automatic cutout preserves near-white highlights that are not edge backgro
+   assert.equal(result[(2 * width + 2) * 4 + 3], 255);
+ });
+ 
++test("automatic cutout removes a white poster background inside a beige screenshot", () => {
++  const width = 7;
++  const height = 7;
++  const pixels = new Uint8ClampedArray(width * height * 4);
++  const setPixel = (x: number, y: number, color: [number, number, number]) => {
++    pixels.set([...color, 255], (y * width + x) * 4);
++  };
++
++  for (let y = 0; y < height; y += 1) {
++    for (let x = 0; x < width; x += 1) {
++      setPixel(x, y, [246, 239, 226]);
++    }
++  }
++
++  for (let y = 1; y <= 5; y += 1) {
++    for (let x = 1; x <= 5; x += 1) {
++      setPixel(x, y, [255, 255, 255]);
++    }
++  }
++  setPixel(3, 3, [120, 30, 50]);
++
++  const result = removeBackgroundPixels(pixels, width, height, 72);
++
++  assert.equal(result[(0 * width + 0) * 4 + 3], 0);
++  assert.equal(result[(1 * width + 1) * 4 + 3], 0);
++  assert.equal(result[(3 * width + 3) * 4 + 3], 255);
++});
++
++test("automatic cutout keeps the central subject and removes off-center decorations", () => {
++  const width = 9;
++  const height = 5;
++  const pixels = new Uint8ClampedArray(width * height * 4);
++  const setPixel = (x: number, y: number, color: [number, number, number]) => {
++    pixels.set([...color, 255], (y * width + x) * 4);
++  };
++
++  for (let y = 0; y < height; y += 1) {
++    for (let x = 0; x < width; x += 1) {
++      setPixel(x, y, [40, 110, 170]);
++    }
++  }
++
++  setPixel(1, 2, [20, 220, 120]);
++  setPixel(4, 1, [160, 30, 50]);
++  setPixel(4, 2, [160, 30, 50]);
++  setPixel(4, 3, [160, 30, 50]);
++
++  const result = removeBackgroundPixels(pixels, width, height, 72);
++
++  assert.equal(result[(2 * width + 1) * 4 + 3], 0);
++  assert.equal(result[(2 * width + 4) * 4 + 3], 255);
++});
++
+ test("automatic cutout removes enclosed white background pixels", () => {
+   const pixels = new Uint8ClampedArray([
+     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+@@ -2627,6 +2895,58 @@ test("serializes and parses a saved editor project", () => {
+   assert.equal(parseSavedEditorProject("{bad json"), null);
+ });
+ 
++test("removes temporary browser media from saved projects", () => {
++  const project = createSavedEditorProject({
++    clips: [
++      {
++        id: "main-temp",
++        label: "temporary",
++        track: "main",
++        start: 0,
++        duration: 60,
++        color: "#0891b2",
++        src: "blob:http://localhost:5173/temporary-video",
++      },
++      {
++        id: "main-saved",
++        label: "saved",
++        track: "main",
++        start: 0,
++        duration: 60,
++        color: "#0891b2",
++        src: "uploads/saved.mp4",
++      },
++    ],
++    mediaItems: [
++      {
++        id: "media-temp",
++        label: "temporary.mp4",
++        src: "blob:http://localhost:5173/temporary-video",
++        duration: "00:02",
++        durationInFrames: 60,
++        kind: "local",
++      },
++      {
++        id: "media-saved",
++        label: "saved.mp4",
++        src: "uploads/saved.mp4",
++        duration: "00:02",
++        durationInFrames: 60,
++        kind: "local",
++      },
++    ],
++    selectedMediaId: "media-temp",
++    now: new Date("2026-07-16T00:00:00.000Z"),
++  });
++
++  assert.deepEqual(removeBrowserOnlySavedMedia(project), {
++    ...project,
++    clips: [project.clips[1]],
++    mediaItems: [project.mediaItems[1]],
++    selectedMediaId: "media-saved",
++  });
++});
++
+ test("creates deterministic waveform bars for audio clips", () => {
+   const first = createWaveformBars("audio-1", 8);
+   const second = createWaveformBars("audio-1", 8);
+@@ -2892,6 +3212,238 @@ test("moves text in the preview while preserving timing and appearance", () => {
+   });
+ });
+ 
++test("moves only the selected caption and clamps it inside the preview", () => {
++  const first = createManualCaptionClip({
++    id: "caption-1",
++    content: "First caption",
++    playheadFrame: 0,
++    timelineDuration: 300,
++    style: defaultCaptionStyle,
++  })!;
++  const second = createManualCaptionClip({
++    id: "caption-2",
++    content: "Second caption",
++    playheadFrame: 90,
++    timelineDuration: 300,
++    style: defaultCaptionStyle,
++  })!;
++
++  assert.deepEqual(getCaptionPosition(first.caption!), {x: 50, y: 82});
++  const moved = moveCaptionOverlay(
++    [first, second],
++    first.id,
++    {x: 98, y: 2},
++    {halfWidthPercent: 14, halfHeightPercent: 6},
++  );
++
++  assert.deepEqual(getCaptionPosition(moved[0].caption!), {x: 86, y: 6});
++  assert.deepEqual(moved[1], second);
++  assert.equal(moved[0].start, first.start);
++  assert.equal(moved[0].duration, first.duration);
++});
++
++test("keeps caption clip arrays unchanged for invalid and no-op moves", () => {
++  const caption = createManualCaptionClip({
++    id: "caption-1",
++    content: "First caption",
++    playheadFrame: 0,
++    timelineDuration: 300,
++    style: defaultCaptionStyle,
++  })!;
++  const positionedCaption = {
++    ...caption,
++    caption: {
++      ...caption.caption!,
++      x: 86,
++      y: 82,
++    },
++  };
++  const clips = [caption];
++  const positionedClips = [positionedCaption];
++  const bounds = {halfWidthPercent: 14, halfHeightPercent: 6};
++
++  assert.strictEqual(
++    moveCaptionOverlay(clips, "missing", {x: 50, y: 82}, bounds),
++    clips,
++  );
++  assert.strictEqual(
++    moveCaptionOverlay(positionedClips, caption.id, {x: 98, y: 82}, bounds),
++    positionedClips,
++  );
++});
++
++test("resizes only the selected caption within readable limits", () => {
++  const caption = createManualCaptionClip({
++    id: "caption-1",
++    content: "Resize me",
++    playheadFrame: 0,
++    timelineDuration: 300,
++    style: defaultCaptionStyle,
++  })!;
++  const larger = getResizedCaptionFontSize({
++    startFontSize: 36,
++    startX: 100,
++    startY: 100,
++    pointerX: 160,
++    pointerY: 180,
++  });
++
++  assert.equal(resizeCaptionOverlayById([caption], caption.id, larger)[0].caption?.fontSize, 86);
++  assert.equal(resizeCaptionOverlayById([caption], caption.id, 500)[0].caption?.fontSize, 160);
++  assert.equal(resizeCaptionOverlayById([caption], caption.id, -20)[0].caption?.fontSize, 12);
++});
++
++test("preserves caption resize references when the clamped size is unchanged", () => {
++  const caption = createManualCaptionClip({
++    id: "caption-1",
++    content: "No resize",
++    playheadFrame: 0,
++    timelineDuration: 300,
++    style: {...defaultCaptionStyle, fontSize: 160},
++  })!;
++  const clips = [caption];
++
++  const unchanged = resizeCaptionOverlayById(clips, caption.id, 500);
++
++  assert.strictEqual(unchanged, clips);
++  assert.strictEqual(unchanged[0], caption);
++  assert.strictEqual(unchanged[0].caption, caption.caption);
++});
++
++test("preserves references after a caption reaches its measured fit limit", () => {
++  const caption = createManualCaptionClip({
++    id: "caption-1",
++    content: "Already fitted",
++    playheadFrame: 0,
++    timelineDuration: 300,
++    style: {...defaultCaptionStyle, fontSize: 72},
++  })!;
++  const clips = [caption];
++
++  const unchanged = resizeCaptionOverlayById(clips, caption.id, 160, {
++    halfWidthPercent: 40,
++    halfHeightPercent: 20,
++    maximumFontSize: 72,
++  });
++
++  assert.strictEqual(unchanged, clips);
++  assert.strictEqual(unchanged[0], caption);
++  assert.strictEqual(unchanged[0].caption, caption.caption);
++});
++
++test("keeps a resized caption box inside the preview frame", () => {
++  const caption = createManualCaptionClip({
++    id: "caption-1",
++    content: "Near the edge",
++    playheadFrame: 0,
++    timelineDuration: 300,
++    style: defaultCaptionStyle,
++  })!;
++  const positionedCaption = {
++    ...caption,
++    caption: {
++      ...caption.caption!,
++      x: 90,
++      y: 92,
++      fontSize: 40,
++    },
++  };
++
++  const resized = resizeCaptionOverlayById(
++    [positionedCaption],
++    positionedCaption.id,
++    80,
++    {
++      halfWidthPercent: 8,
++      halfHeightPercent: 5,
++      referenceFontSize: 40,
++    },
++  );
++
++  assert.equal(resized[0].caption?.fontSize, 80);
++  assert.deepEqual(getCaptionPosition(resized[0].caption!), {x: 84, y: 90});
++});
++
++test("caps caption font size at the largest measured size that fits the preview", () => {
++  const caption = createManualCaptionClip({
++    id: "caption-1",
++    content: "A caption that wraps as it grows",
++    playheadFrame: 0,
++    timelineDuration: 300,
++    style: defaultCaptionStyle,
++  })!;
++  const previewWidth = 1000;
++  const previewHeight = 500;
++  const measure = (fontSize: number) => ({
++    width: Math.min(880, fontSize * 12),
++    height: fontSize <= 72 ? fontSize * 4 : fontSize * 7,
++  });
++  const maximumFontSize = getMaximumFittingCaptionFontSize({
++    requestedFontSize: 160,
++    previewWidth,
++    previewHeight,
++    measure,
++  });
++  const fittedBox = measure(maximumFontSize);
++
++  const resized = resizeCaptionOverlayById([caption], caption.id, 160, {
++    halfWidthPercent: (fittedBox.width / previewWidth) * 50,
++    halfHeightPercent: (fittedBox.height / previewHeight) * 50,
++    maximumFontSize,
++  });
++
++  assert.equal(maximumFontSize, 72);
++  assert.equal(resized[0].caption?.fontSize, 72);
++  assert.ok(fittedBox.width <= previewWidth);
++  assert.ok(fittedBox.height <= previewHeight);
++});
++
++test("fits and clamps a resized near-edge caption without changing other clips", () => {
++  const selected = createManualCaptionClip({
++    id: "caption-1",
++    content: "Near edge",
++    playheadFrame: 0,
++    timelineDuration: 300,
++    style: defaultCaptionStyle,
++  })!;
++  const other = createManualCaptionClip({
++    id: "caption-2",
++    content: "Leave me alone",
++    playheadFrame: 90,
++    timelineDuration: 300,
++    style: defaultCaptionStyle,
++  })!;
++  const positioned = {
++    ...selected,
++    caption: {...selected.caption!, x: 94, y: 8},
++  };
++  const previewWidth = 800;
++  const previewHeight = 450;
++  const maximumFontSize = getMaximumFittingCaptionFontSize({
++    requestedFontSize: 140,
++    previewWidth,
++    previewHeight,
++    measure: (fontSize) => ({width: fontSize * 9, height: fontSize * 4}),
++  });
++  const fittedBox = {
++    width: maximumFontSize * 9,
++    height: maximumFontSize * 4,
++  };
++
++  const resized = resizeCaptionOverlayById([positioned, other], positioned.id, 140, {
++    halfWidthPercent: (fittedBox.width / previewWidth) * 50,
++    halfHeightPercent: (fittedBox.height / previewHeight) * 50,
++    maximumFontSize,
++  });
++
++  assert.equal(maximumFontSize, 88);
++  assert.equal(resized[0].caption?.fontSize, 88);
++  assert.deepEqual(getCaptionPosition(resized[0].caption!), {x: 50.5, y: 39.111111111111114});
++  assert.ok(fittedBox.width <= previewWidth);
++  assert.ok(fittedBox.height <= previewHeight);
++  assert.strictEqual(resized[1], other);
++});
++
+ test("keeps the full text inside every preview edge", () => {
+   const text = createTextClip({
+     id: "text-1",
+@@ -2941,3 +3493,67 @@ test("keeps arrays unchanged when preview text cannot move", () => {
+     clips,
+   );
+ });
++
++test("removes unused imported media and selects the first remaining item", () => {
++  const firstItem = {
++    id: "first",
++    label: "First.mp4",
++    src: "/media/first.mp4",
++    duration: "00:10",
++    durationInFrames: 300,
++    kind: "public" as const,
++  };
++  const removedItem = {
++    id: "unused",
++    label: "Unused.mp4",
++    src: "/media/unused.mp4",
++    duration: "00:10",
++    durationInFrames: 300,
++    kind: "public" as const,
++  };
++
++  const result = removeUnusedMediaItem({
++    mediaItems: [firstItem, removedItem],
++    selectedMediaId: removedItem.id,
++    mediaId: removedItem.id,
++  });
++
++  assert.equal(result.outcome, "removed");
++  assert.deepEqual(result.mediaItems, [firstItem]);
++  assert.equal(result.selectedMediaId, firstItem.id);
++  assert.match(result.message, /removed/i);
++});
++
++test("removes media from the library without deleting timeline clips that use it", () => {
++  const mediaItem = {
++    id: "used",
++    label: "Used.mp4",
++    src: "/media/used.mp4",
++    duration: "00:10",
++    durationInFrames: 300,
++    kind: "public" as const,
++  };
++  const clip: TimelineClip = 
++    {
++      id: "clip-1",
++      label: "Used clip",
++      track: "main",
++      start: 0,
++      duration: 300,
++      color: "#0891b2",
++      src: mediaItem.src,
++    };
++  const mediaItems = [mediaItem];
++
++  const result = removeUnusedMediaItem({
++    mediaItems,
++    selectedMediaId: mediaItem.id,
++    mediaId: mediaItem.id,
++  });
++
++  assert.equal(result.outcome, "removed");
++  assert.deepEqual(result.mediaItems, []);
++  assert.equal(result.selectedMediaId, null);
++  assert.equal(clip.src, mediaItem.src);
++  assert.match(result.message, /removed/i);
++});
+diff --git a/video-editor/tests/playhead-ui.test.mts b/video-editor/tests/playhead-ui.test.mts
+index ffa3d2c..c84dcd9 100644
+--- a/video-editor/tests/playhead-ui.test.mts
++++ b/video-editor/tests/playhead-ui.test.mts
+@@ -258,6 +258,12 @@ test("lets cutouts move in time and supports manual and automatic background edi
+   assert.match(source, /aria-label="Restore cutout background"/);
+   assert.match(source, /aria-label="Cutout brush size"/);
+   assert.match(source, /removeSelectedImageBackgroundAutomatically/);
++  assert.match(source, /setSelectedCutoutChromaKey/);
++  assert.match(source, /aria-label="Remove green video background"/);
++  assert.match(source, /aria-label="Remove white video background"/);
++  assert.match(source, /className={`workspace \$\{activeTool === "cutout" \? "cutout-workspace" : ""\}`}/);
++  assert.match(source, /getCutoutChromaKeyStyle\(videoClip\)/);
++  assert.match(source, /getCutoutChromaKeyStyle/);
+   assert.match(source, /createCutoutMaskDataUrl/);
+   assert.match(source, /continueCutoutMaskStroke/);
+   assert.match(source, /finishCutoutMaskStroke/);
+@@ -271,6 +277,9 @@ test("lets cutouts move in time and supports manual and automatic background edi
+   assert.match(css, /\.preview-cutout\.erase-cutout-cursor/);
+   assert.match(css, /\.preview-cutout\.restore-cutout-cursor/);
+   assert.match(css, /\.preview-cutout-original/);
++  assert.match(css, /\.chroma-key-defs/);
++  assert.match(css, /\.workspace\.cutout-workspace/);
++  assert.match(css, /\.cutout-video-key-row/);
+   assert.doesNotMatch(css, /\.preview-cutout\s*\{[^}]*max-height:/s);
+   assert.doesNotMatch(css, /\.preview-cutout\.is-masking\s*\{[^}]*cursor:\s*crosshair/s);
+ });
+@@ -304,6 +313,22 @@ test("splits the cutout under the red playhead and selects its right segment", (
+   assert.match(source, /onClick=\{splitSelectedCutoutAtPlayhead\}/);
+ });
+ 
++test("keeps the newly created right segment selected after a toolbar split", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++  const handlerStart = source.indexOf("const splitSelectedTrackClip");
++  const handlerEnd = source.indexOf("const splitSelectedCutoutAtPlayhead", handlerStart);
++  const handler = source.slice(handlerStart, handlerEnd);
++
++  assert.match(handler, /const targetClip =/);
++  assert.match(handler, /const nextClips = splitClipByIdAtFrame/);
++  assert.match(handler, /if \(nextClips === clips\)/);
++  assert.match(handler, /setSelectedClipId\(`\$\{targetClip\.id\}-b`\)/);
++  assert.match(handler, /setProjectStatus\("Clip split at the red playhead"\)/);
++});
++
+ test("lets selected text rotate directly on the preview canvas", () => {
+   const compositionSource = readFileSync(
+     new URL("../src/Composition.tsx", import.meta.url),
+@@ -674,6 +699,18 @@ test("keeps new video layer drop targets accessible without visible wording", ()
+   assert.doesNotMatch(source, />New track below</);
+ });
+ 
++test("handles rejected native media playback promises", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++  const handledPlaybackCalls = source.match(
++    /\.play\(\)\.catch\(\(\) => undefined\)/g,
++  );
++
++  assert.equal(handledPlaybackCalls?.length, 4);
++});
++
+ test("supports inserting a video layer between existing video rows", () => {
+   const source = readFileSync(
+     new URL("../src/Composition.tsx", import.meta.url),
+@@ -983,6 +1020,31 @@ test("wires save export text resizing and audio waveform UI", () => {
+   assert.match(css, /\.timeline-clip \.audio-waveform\s*\{/);
+ });
+ 
++test("autosaves imported media so it survives refresh", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++
++  assert.match(source, /const persistProjectToStorage = /);
++  assert.match(
++    source,
++    /useEffect\(\(\) => \{\s*persistProjectToStorage\(getCurrentSavedProject\(\)\);\s*\}, \[getCurrentSavedProject\]\)/,
++  );
++  assert.match(source, /setProjectStatus\("Media imported and saved"\)/);
++});
++
++test("shows readable media import errors instead of raw API JSON", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++
++  assert.match(source, /const payload = await response\.json\(\)/);
++  assert.match(source, /payload\.error\?\.message/);
++  assert.doesNotMatch(source, /const message = await response\.text\(\)/);
++});
++
+ test("keeps save and export actions fully visible in the top bar", () => {
+   const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+ 
+@@ -1013,9 +1075,66 @@ test("keeps long timeline clip labels inside the clip body", () => {
+   assert.match(css, /\.timeline-clip span\s*\{[^}]*white-space:\s*nowrap/s);
+ });
+ 
++test("shows a floating drag preview only for gallery media", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++  assert.match(
++    source,
++    /pointerDrag\?\.type === "media" \? \([\s\S]*className="drag-preview"/,
++  );
++});
++
+ test("fills the middle preview frame with imported videos", () => {
+   const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+ 
+   assert.match(css, /\.preview-video\s*\{[^}]*object-fit:\s*cover/s);
+   assert.match(css, /\.preview-overlay-video\s*\{[^}]*object-fit:\s*cover/s);
+ });
++
++test("reveals a protected delete control for each imported media item", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
++  const deleteButton = source.slice(
++    source.indexOf('className="media-delete-button"') - 300,
++    source.indexOf('className="media-delete-button"') + 500,
++  );
++
++  assert.match(source, /aria-label=\{`Delete \$\{mediaItem\.label\}`\}/);
++  assert.match(source, /title=\{`Delete \$\{mediaItem\.label\}`\}/);
++  assert.match(source, /className="media-delete-button"/);
++  assert.match(
++    deleteButton,
++    /onPointerDown=\{\(event\) => \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/s,
++  );
++  assert.match(
++    deleteButton,
++    /onClick=\{\(event\) => \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/s,
++  );
++  assert.match(
++    css,
++    /\.media-thumb:hover \.media-delete-button,\s*\.media-thumb:focus-within \.media-delete-button\s*\{[^}]*opacity:\s*1[^}]*pointer-events:\s*auto/s,
++  );
++});
++
++test("lets the main Import button accept images and videos", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
++
++  assert.match(source, /accept="image\/\*,video\/\*"/);
++  assert.match(source, /getMediaFileType\(file\)/);
++  assert.match(source, /createImageMediaClip/);
++  assert.match(source, /className="media-thumb-image"/);
++  assert.match(source, /className="preview-image preview-layer-image"/);
++  assert.match(source, /className="timeline-clip-image"/);
++  assert.match(css, /\.media-thumb-video,\s*\.media-thumb-image\s*\{/);
++  assert.match(css, /\.preview-video,\s*\.preview-image\s*\{/);
++  assert.match(css, /\.timeline-clip-video,\s*\.timeline-clip-image\s*\{/);
++});
+diff --git a/video-editor/tests/transcriptionLogic.test.mjs b/video-editor/tests/transcriptionLogic.test.mjs
+index 3bf99f7..5b5daf8 100644
+--- a/video-editor/tests/transcriptionLogic.test.mjs
++++ b/video-editor/tests/transcriptionLogic.test.mjs
+@@ -1,7 +1,10 @@
+ import assert from "node:assert/strict";
+ import {Buffer} from "node:buffer";
+ import {once} from "node:events";
++import {mkdtemp, readFile, rm} from "node:fs/promises";
+ import {request as httpRequest} from "node:http";
++import {tmpdir} from "node:os";
++import {join} from "node:path";
+ import test from "node:test";
+ 
+ import {createTranscriptionApp} from "../server/transcriptionServer.mjs";
+@@ -342,6 +345,13 @@ const postSilenceDetectionRequest = async (url, formData, options = {}) =>
+     ...options,
+   });
+ 
++const postMediaRequest = async (url, formData, options = {}) =>
++  fetchImpl(`${url}/api/media`, {
++    method: "POST",
++    body: formData,
++    ...options,
++  });
++
+ const postExportRequest = async (url, project) =>
+   fetchImpl(`${url}/api/export`, {
+     method: "POST",
+@@ -428,6 +438,33 @@ const makeClipFormData = () => {
+   return formData;
+ };
+ 
++test("streams editor media that exceeds the smaller caption upload limit", async (t) => {
++  const mediaUploadDirectory = await mkdtemp(join(tmpdir(), "video-editor-media-test-"));
++  t.after(() => rm(mediaUploadDirectory, {recursive: true, force: true}));
++  const url = await startTestServer(t, {
++    maxFileSizeBytes: 4,
++    maxMediaFileSizeBytes: 8,
++    mediaUploadDirectory,
++  });
++  const formData = new FormDataCtor();
++  formData.append(
++    "file",
++    new BlobCtor([Buffer.from("12345")], {type: "video/mp4"}),
++    "large clip.mp4",
++  );
++
++  const response = await postMediaRequest(url, formData);
++
++  assert.equal(response.status, 200);
++  const payload = await response.json();
++  assert.match(payload.src, /^uploads\/large-clip-[a-f0-9-]+\.mp4$/);
++  assert.equal(payload.label, "large clip.mp4");
++  assert.deepEqual(
++    await readFile(join(mediaUploadDirectory, payload.src.replace("uploads/", ""))),
++    Buffer.from("12345"),
++  );
++});
++
+ test("returns normalized local silence ranges", async (t) => {
+   const serviceCalls = [];
+   const url = await startTestServer(t, {
+@@ -758,7 +795,7 @@ test("returns file_too_large when the uploaded file exceeds the limit", async (t
+   assert.deepEqual(await response.json(), {
+     error: {
+       code: "file_too_large",
+-      message: "Uploaded media must be 100 MB or smaller.",
++      message: "Transcript media must be 2 GB or smaller.",
+     },
+   });
+ });
+diff --git a/video-editor/vite.config.ts b/video-editor/vite.config.ts
+index 3c5e5b4..f33252e 100644
+--- a/video-editor/vite.config.ts
++++ b/video-editor/vite.config.ts
+@@ -6,9 +6,7 @@ export default defineConfig({
+     port: 5173,
+     strictPort: true,
+     watch: {
+-      // Imported media can be large and locked by the browser or renderer on
+-      // Windows. Vite only needs to serve these files, not watch them for HMR.
+-      ignored: ["**/build/**", "**/public/**"],
++      ignored: ["**/build/**"],
+     },
+     proxy: {
+       "/api": {

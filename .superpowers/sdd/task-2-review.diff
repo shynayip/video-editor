@@ -1,0 +1,561 @@
+﻿BASE: shared-worktree snapshot before Task 2
+HEAD: shared-worktree after Task 2 review fixes
+
+=== src/Composition.tsx ===
+warning: in the working copy of '.superpowers/sdd/task-2-before/Composition.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/Composition.tsx', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.superpowers/sdd/task-2-before/Composition.tsx b/src/Composition.tsx
+index 7e61a57..ef29af8 100644
+--- a/.superpowers/sdd/task-2-before/Composition.tsx
++++ b/src/Composition.tsx
+@@ -62,6 +62,7 @@ import {
+   getVisibleRotateHandleTop,
+   getStableTimelineFrameDelta,
+   getTimelineFrameFromPointer,
++  getTimelineTransitionBoundaries,
+   getTimelineDuration,
+   formatTimelineClock,
+   hasClipsOnTrack,
+@@ -95,6 +96,7 @@ import {
+   setClipEffectById,
+   setClipFilterById,
+   setClipSpeedById,
++  setClipTransitionById,
+   setClipVolumeById,
+   setVideoLayerSpeed,
+   setVideoLayerVolume,
+@@ -113,6 +115,7 @@ import {
+   ClipAnimationEasing,
+   ClipAnimationPreset,
+   ClipAnimationTiming,
++  ClipTransitionPreset,
+   ClipEffect,
+   ClipFilter,
+   TextEffect,
+@@ -176,6 +179,7 @@ const defaultImageDurationInFrames = 5 * fps;
+ const remotionRegistrationFallbackInFrames = 24 * 60 * 60 * fps;
+ const timelineScale = 1.15;
+ const timelineOrigin = 148;
++const minimumTransitionDuration = 1;
+ const savedProjectStorageKey = "video-editor-project-v1";
+ 
+ type SilenceRemovalCommitSnapshot = {
+@@ -1393,6 +1397,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+   const mediaPreviewVolumeDragRef = useRef(false);
+   const previewSourceRef = useRef<string | null>(null);
+   const timelineContentRef = useRef<HTMLDivElement>(null);
++  const transitionPopoverRef = useRef<HTMLDivElement>(null);
+   const voiceRecorderRef = useRef<BrowserVoiceRecorder | null>(null);
+   const [initialProject] = useState<SavedEditorProject | null>(
+     () => project ?? readBrowserSavedProject(),
+@@ -1426,6 +1431,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+   const [playheadFrame, setPlayheadFrame] = useState(0);
+   const [selectedTrack, setSelectedTrack] = useState<TrackName>("main");
+   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
++  const [selectedTransitionClipId, setSelectedTransitionClipId] = useState<string | null>(null);
++  const [selectedTransitionDuration, setSelectedTransitionDuration] =
++    useState(minimumTransitionDuration);
+   const [selectedVideoLayer, setSelectedVideoLayer] = useState<number | null>(null);
+   const selectedClipIdRef = useRef(selectedClipId);
+   const autoCaptionRequestRef = useRef<symbol | null>(null);
+@@ -1553,6 +1561,9 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+   const mainClipSpeed = mainClip?.speed ?? 1;
+   const mainClipVolume = mainClip?.volume ?? 1;
+   const selectedClip = clips.find((clip) => clip.id === selectedClipId);
++  const selectedTransitionClip = clips.find(
++    (clip) => clip.id === selectedTransitionClipId,
++  );
+   const selectedCaptionClip = selectedClip?.track === "caption" && selectedClip.caption
+     ? selectedClip
+     : null;
+@@ -1573,6 +1584,63 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     selectedCaptionSourceClip?.duration,
+     selectedCaptionSourceClip?.speed,
+   ]);
++  const transitionBoundariesByLayer = useMemo(() => {
++    const videoLayers = new Set(
++      clips
++        .map(getVideoLayer)
++        .filter((videoLayer): videoLayer is number => videoLayer !== null),
++    );
++    const boundariesByLayer = new Map<number, Array<{
++      outgoingClipId: string;
++      incomingClipId: string;
++      frame: number;
++      outgoingLabel: string;
++      incomingLabel: string;
++      maxDuration: number;
++      duration: number;
++    }>>();
++
++    for (const videoLayer of videoLayers) {
++      const boundaries = getTimelineTransitionBoundaries(clips, videoLayer)
++        .map((boundary) => {
++          const outgoingClip = clips.find((clip) => clip.id === boundary.outgoingClipId);
++          const incomingClip = clips.find((clip) => clip.id === boundary.incomingClipId);
++          if (!outgoingClip || !incomingClip) {
++            return null;
++          }
++
++          const maxDuration = Math.min(outgoingClip.duration, incomingClip.duration);
++
++          return {
++            ...boundary,
++            outgoingLabel: outgoingClip.label,
++            incomingLabel: incomingClip.label,
++            maxDuration,
++            duration: Math.max(
++              minimumTransitionDuration,
++              Math.min(
++                incomingClip.transition?.duration ?? Math.min(12, maxDuration),
++                maxDuration,
++              ),
++            ),
++          };
++        })
++        .filter((boundary) => boundary !== null);
++
++      boundariesByLayer.set(videoLayer, boundaries);
++    }
++
++    return boundariesByLayer;
++  }, [clips]);
++  const selectedTransitionBoundary = useMemo(
++    () =>
++      [...transitionBoundariesByLayer.values()]
++        .flat()
++        .find((boundary) => boundary.incomingClipId === selectedTransitionClipId) ?? null,
++    [selectedTransitionClipId, transitionBoundariesByLayer],
++  );
++  const selectedTransitionPreset: ClipTransitionPreset =
++    selectedTransitionClip?.transition?.preset ?? "none";
+   const contextualAudioSelectionId = selectedClip?.track === "audio"
+     ? selectedClip.linkedClipId ?? null
+     : selectedClipId;
+@@ -1909,6 +1977,68 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     );
+   }, []);
+ 
++  useEffect(() => {
++    if (selectedTransitionClipId === null) {
++      return;
++    }
++
++    const handlePointerDown = (event: globalThis.PointerEvent) => {
++      const popover = transitionPopoverRef.current;
++      if (
++        popover &&
++        event.target instanceof Node &&
++        !popover.contains(event.target)
++      ) {
++        setSelectedTransitionClipId(null);
++      }
++    };
++    const handleKeyDown = (event: KeyboardEvent) => {
++      if (event.key === "Escape") {
++        setSelectedTransitionClipId(null);
++      }
++    };
++
++    document.addEventListener("pointerdown", handlePointerDown);
++    document.addEventListener("keydown", handleKeyDown);
++    return () => {
++      document.removeEventListener("pointerdown", handlePointerDown);
++      document.removeEventListener("keydown", handleKeyDown);
++    };
++  }, [selectedTransitionClipId]);
++
++  useEffect(() => {
++    if (!selectedTransitionBoundary) {
++      if (selectedTransitionClipId !== null) {
++        setSelectedTransitionClipId(null);
++      }
++      return;
++    }
++
++    const currentTransitionDuration =
++      selectedTransitionClip?.transition?.duration ?? selectedTransitionBoundary.duration;
++    setSelectedTransitionDuration(
++      Math.max(
++        minimumTransitionDuration,
++        Math.min(currentTransitionDuration, selectedTransitionBoundary.maxDuration),
++      ),
++    );
++  }, [
++    selectedTransitionBoundary,
++    selectedTransitionClip?.transition?.duration,
++    selectedTransitionClipId,
++  ]);
++
++  const updateSelectedTransition = useCallback((
++    preset: ClipTransitionPreset,
++    duration: number,
++  ) => {
++    if (!selectedTransitionClipId) return;
++
++    commitClipChange((currentClips) =>
++      setClipTransitionById(currentClips, selectedTransitionClipId, preset, duration),
++    );
++  }, [commitClipChange, selectedTransitionClipId]);
++
+   const undoLastClipChange = () => {
+     setTimelineHistory(undoTimelineHistory);
+   };
+@@ -2485,7 +2615,22 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     setPreviewMode("timeline");
+   };
+ 
++  const selectTransitionBoundary = useCallback((
++    incomingClipId: string,
++    duration: number,
++    track: TrackName,
++  ) => {
++    setSelectedVideoLayer(null);
++    setSelectedClipId(null);
++    setSelectedTransitionClipId(incomingClipId);
++    setSelectedTransitionDuration(duration);
++    setSelectedTrack(track);
++    setIsAudioTrackVisible(false);
++    setPreviewMode("timeline");
++  }, []);
++
+   const selectTimelineClip = (clip: TimelineClip) => {
++    setSelectedTransitionClipId(null);
+     setSelectedVideoLayer(null);
+     setSelectedClipId(clip.id);
+     setSelectedTrack(clip.track);
+@@ -2498,6 +2643,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+   };
+ 
+   const selectTrackClipAtFrame = (track: TrackName, frame: number) => {
++    setSelectedTransitionClipId(null);
+     setSelectedVideoLayer(null);
+     const clip = getActiveClipAtFrame(clips, track, frame) ??
+       clips.find((candidate) => candidate.track === track);
+@@ -2513,6 +2659,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+   };
+ 
+   const selectVideoLayerClipAtFrame = (videoLayer: number, frame: number) => {
++    setSelectedTransitionClipId(null);
+     setSelectedVideoLayer(null);
+     const clip = clips.find(
+       (candidate) =>
+@@ -2533,6 +2680,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+   void selectVideoLayerClipAtFrame;
+ 
+   const selectWholeVideoLayer = (videoLayer: number) => {
++    setSelectedTransitionClipId(null);
+     setSelectedVideoLayer(videoLayer);
+     setSelectedClipId(null);
+     setSelectedTrack(videoLayer === 0 ? "main" : "upper");
+@@ -7671,6 +7819,104 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                   +
+                 </div>
+               ) : null}
++              {track.videoLayer !== undefined
++                ? (transitionBoundariesByLayer.get(track.videoLayer) ?? []).map(
++                    (boundary) => {
++                      const isSelectedTransition =
++                        selectedTransitionClipId === boundary.incomingClipId;
++                      const transitionTrack = track.videoLayer === 0 ? "main" : "upper";
++                      const transitionLabel =
++                        `Add transition between ${boundary.outgoingLabel} and ${boundary.incomingLabel}`;
++
++                      return (
++                        <div
++                          key={`${boundary.outgoingClipId}-${boundary.incomingClipId}`}
++                          ref={isSelectedTransition ? transitionPopoverRef : undefined}
++                          className="transition-anchor"
++                          style={{left: `${boundary.frame * timelineScale}px`}}
++                          onPointerDown={(event) => {
++                            event.stopPropagation();
++                          }}
++                        >
++                          <button
++                            className="transition-node"
++                            type="button"
++                            aria-label={`Add transition between ${boundary.outgoingLabel} and ${boundary.incomingLabel}`}
++                            title={transitionLabel}
++                            onClick={() => {
++                              selectTransitionBoundary(
++                                boundary.incomingClipId,
++                                boundary.duration,
++                                transitionTrack,
++                              );
++                            }}
++                          >
++                            +
++                          </button>
++                          {isSelectedTransition ? (
++                            <div
++                              className="transition-popover"
++                              role="dialog"
++                              aria-label={`Transition between ${boundary.outgoingLabel} and ${boundary.incomingLabel}`}
++                              onPointerDown={(event) => {
++                                event.stopPropagation();
++                              }}
++                            >
++                              <div className="transition-popover-header">
++                                <strong>Transition</strong>
++                                <span>{selectedTransitionDuration}f</span>
++                              </div>
++                              <div className="transition-preset-grid">
++                                {(["none", "fade", "dissolve", "slide", "zoom"] as const).map((preset) => (
++                                  <button
++                                    key={preset}
++                                    className={
++                                      selectedTransitionPreset === preset
++                                        ? "active-transition-preset"
++                                        : undefined
++                                    }
++                                    type="button"
++                                    onClick={() => {
++                                      updateSelectedTransition(
++                                        preset,
++                                        selectedTransitionDuration,
++                                      );
++                                    }}
++                                  >
++                                    {preset === "none"
++                                      ? "None"
++                                      : preset.charAt(0).toUpperCase() + preset.slice(1)}
++                                  </button>
++                                ))}
++                              </div>
++                              <label className="transition-duration-control">
++                                <span>Duration</span>
++                                <input
++                                  type="range"
++                                  min={minimumTransitionDuration}
++                                  max={selectedTransitionBoundary?.maxDuration ?? boundary.maxDuration}
++                                  step={1}
++                                  value={selectedTransitionDuration}
++                                  aria-label="Transition duration"
++                                  onChange={(event) => {
++                                    const duration = Number(event.currentTarget.value);
++                                    setSelectedTransitionDuration(duration);
++                                    if (selectedTransitionPreset !== "none") {
++                                      updateSelectedTransition(
++                                        selectedTransitionPreset,
++                                        duration,
++                                      );
++                                    }
++                                  }}
++                                />
++                              </label>
++                            </div>
++                          ) : null}
++                        </div>
++                      );
++                    },
++                  )
++                : null}
+               {clips
+                 .filter(
+                   (clip) =>
+
+=== src/index.css ===
+warning: in the working copy of '.superpowers/sdd/task-2-before/index.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/index.css', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.superpowers/sdd/task-2-before/index.css b/src/index.css
+index 843dba8..ccf2600 100644
+--- a/.superpowers/sdd/task-2-before/index.css
++++ b/src/index.css
+@@ -2166,13 +2166,113 @@ button {
+ .track-lane {
+   position: relative;
+   height: 36px;
+-  overflow: hidden;
++  overflow: visible;
+   border: 1px solid #26313c;
+   border-radius: 8px;
+   background: #151b24;
+   cursor: pointer;
+ }
+ 
++.transition-anchor {
++  position: absolute;
++  inset-block: 0;
++  width: 0;
++  z-index: 8;
++}
++
++.transition-node {
++  position: absolute;
++  top: 50%;
++  width: 24px;
++  height: 24px;
++  padding: 0;
++  border: 1px solid #334155;
++  border-radius: 999px;
++  translate: -50% -50%;
++  background: #0f172a;
++  color: #dce6ef;
++  font-size: 16px;
++  font-weight: 900;
++  z-index: 8;
++}
++
++.transition-node:hover,
++.transition-node:focus-visible {
++  border-color: #38d6c8;
++  background: #12302f;
++  color: #5eead4;
++  outline: none;
++}
++
++.transition-popover {
++  position: absolute;
++  left: 50%;
++  bottom: calc(100% + 8px);
++  width: 248px;
++  display: grid;
++  gap: 10px;
++  padding: 12px;
++  border: 1px solid #334155;
++  border-radius: 8px;
++  translate: -50% 0;
++  background: #0b1119;
++  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.38);
++  z-index: 20;
++}
++
++.transition-popover-header,
++.transition-duration-control span {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++}
++
++.transition-popover-header strong,
++.transition-duration-control span {
++  color: #eef4f8;
++  font-size: 12px;
++  font-weight: 900;
++}
++
++.transition-popover-header span {
++  color: #38d6c8;
++  font-size: 12px;
++  font-weight: 900;
++}
++
++.transition-preset-grid {
++  display: grid;
++  grid-template-columns: repeat(5, minmax(0, 1fr));
++  gap: 6px;
++}
++
++.transition-preset-grid button {
++  min-width: 0;
++  min-height: 34px;
++  padding: 0 6px;
++  border-radius: 6px;
++  background: #182230;
++  color: #dce6ef;
++  font-size: 11px;
++  font-weight: 900;
++}
++
++.transition-preset-grid .active-transition-preset {
++  background: #13b8aa;
++  color: #061211;
++}
++
++.transition-duration-control {
++  display: grid;
++  gap: 7px;
++}
++
++.transition-duration-control input {
++  width: 100%;
++  margin: 0;
++  accent-color: #38d6c8;
++}
++
+ .track-lane.selected-track-lane {
+   border-color: #38d6c8;
+   box-shadow: inset 0 0 0 1px rgba(56, 214, 200, 0.35);
+@@ -2357,6 +2457,10 @@ button {
+   background: rgba(3, 7, 18, 0.66);
+ }
+ 
++.timeline-clip:not(.selected-timeline-clip) .trim-handle {
++  display: none;
++}
++
+ .timeline-clip-video,
+ .timeline-clip-image {
+   position: absolute;
+
+=== tests/playhead-ui.test.mts ===
+warning: in the working copy of '.superpowers/sdd/task-2-before/playhead-ui.test.mts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/playhead-ui.test.mts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.superpowers/sdd/task-2-before/playhead-ui.test.mts b/tests/playhead-ui.test.mts
+index dda7867..f56b255 100644
+--- a/.superpowers/sdd/task-2-before/playhead-ui.test.mts
++++ b/tests/playhead-ui.test.mts
+@@ -314,6 +314,63 @@ test("lets users grab the red playhead directly", () => {
+   );
+ });
+ 
++test("renders transition nodes and an anchored transition picker", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++
++  assert.match(source, /className="transition-node"/);
++  assert.match(source, /aria-label=\{`Add transition between/);
++  assert.match(source, /className="transition-popover"/);
++  assert.match(source, /role="dialog"/);
++  assert.match(source, /aria-label="Transition duration"/);
++  assert.match(source, /setClipTransitionById/);
++});
++
++test("keeps transition nodes constrained by the real adjacent clip duration", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++
++  assert.match(source, /const minimumTransitionDuration = 1/);
++  assert.match(
++    source,
++    /const maxDuration = Math\.min\(outgoingClip\.duration, incomingClip\.duration\)/,
++  );
++  assert.match(source, /min=\{minimumTransitionDuration\}/);
++  assert.doesNotMatch(
++    source,
++    /const maxDuration = Math\.max\([\s\S]*?Math\.min\(outgoingClip\.duration, incomingClip\.duration\)/,
++  );
++});
++
++test("resynchronizes transition node duration from current timeline history", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++
++  assert.match(source, /const clips = timelineHistory\.present/);
++  assert.match(
++    source,
++    /useEffect\(\(\) => \{[\s\S]*?selectedTransitionClip\?\.transition\?\.duration[\s\S]*?setSelectedTransitionDuration[\s\S]*?selectedTransitionBoundary\.maxDuration[\s\S]*?\}, \[[^\]]*selectedTransitionClip\?\.transition\?\.duration[^\]]*\]\)/,
++  );
++});
++
++test("shows trim handles only for the selected clip", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++
++  assert.match(
++    source,
++    /selectedClipId === clip\.id \? \([\s\S]*trim-handle-left[\s\S]*trim-handle-right/,
++  );
++});
++
+ test("keeps the audio row hidden until a video or linked audio is selected", () => {
+   const compositionSource = readFileSync(
+     new URL("../src/Composition.tsx", import.meta.url),

@@ -1,0 +1,734 @@
+﻿BASE: shared-worktree snapshot before Task 3
+HEAD: shared-worktree after Task 3 fixes
+
+=== src/editorLogic.ts ===
+warning: in the working copy of '.superpowers/sdd/task-3-before/editorLogic.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/editorLogic.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.superpowers/sdd/task-3-before/editorLogic.ts b/src/editorLogic.ts
+index e3fe44e..a3051f7 100644
+--- a/.superpowers/sdd/task-3-before/editorLogic.ts
++++ b/src/editorLogic.ts
+@@ -353,6 +353,12 @@ export type ClipTransitionStyle = {
+   duration: number;
+ };
+ 
++export type ClipTransitionPresentation = {
++  opacity: number;
++  translateX: number;
++  scale: number;
++};
++
+ export type ClipAnimationPresentation = {
+   opacity: number;
+   translateX: number;
+@@ -2616,6 +2622,7 @@ export type TimelineTransitionBoundary = {
+ const isTransitionTargetClip = (clip: TimelineClip): boolean =>
+   (clip.track === "main" || clip.track === "upper") &&
+   Boolean(clip.src) &&
++  !clip.hidden &&
+   clip.mediaType !== "image";
+ 
+ const getOrderedTransitionTargetClips = (
+@@ -2775,6 +2782,62 @@ export const setClipTransitionById = (
+   );
+ };
+ 
++const neutralClipTransitionPresentation: ClipTransitionPresentation = {
++  opacity: 1,
++  translateX: 0,
++  scale: 1,
++};
++
++export const getClipTransitionPresentation = (
++  clips: TimelineClip[],
++  clipId: string,
++  frame: number,
++): ClipTransitionPresentation => {
++  for (const incomingClip of clips) {
++    if (!incomingClip.transition) continue;
++
++    const boundary = getTimelineTransitionBoundaries(
++      clips,
++      getVideoLayer(incomingClip) ?? 0,
++    ).find((candidate) => candidate.incomingClipId === incomingClip.id);
++    if (!boundary || (clipId !== boundary.outgoingClipId && clipId !== boundary.incomingClipId)) {
++      continue;
++    }
++
++    const start = boundary.frame - Math.floor(incomingClip.transition.duration / 2);
++    const end = boundary.frame + Math.ceil(incomingClip.transition.duration / 2);
++    if (frame < start || frame > end) continue;
++
++    const progress = incomingClip.transition.duration === 1 && frame === boundary.frame
++      ? 0.5
++      : Math.max(
++          0,
++          Math.min(1, (frame - start) / Math.max(1, end - start)),
++        );
++    const isOutgoing = clipId === boundary.outgoingClipId;
++    const visibility = isOutgoing ? 1 - progress : progress;
++
++    switch (incomingClip.transition.preset) {
++      case "fade":
++      case "dissolve":
++        return {...neutralClipTransitionPresentation, opacity: visibility};
++      case "slide":
++        return {
++          ...neutralClipTransitionPresentation,
++          translateX: isOutgoing ? -12 * progress : 12 * (1 - progress),
++        };
++      case "zoom":
++        return {
++          opacity: visibility,
++          translateX: 0,
++          scale: isOutgoing ? 1 + 0.06 * progress : 0.94 + 0.06 * progress,
++        };
++    }
++  }
++
++  return neutralClipTransitionPresentation;
++};
++
+ export const getNextVideoLayer = (
+   clips: TimelineClip[],
+   direction: VideoLayerDirection,
+
+=== src/Composition.tsx ===
+warning: in the working copy of '.superpowers/sdd/task-3-before/Composition.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/Composition.tsx', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.superpowers/sdd/task-3-before/Composition.tsx b/src/Composition.tsx
+index ef29af8..f2394a2 100644
+--- a/.superpowers/sdd/task-3-before/Composition.tsx
++++ b/src/Composition.tsx
+@@ -46,6 +46,7 @@ import {
+   getActiveClipsAtFrame,
+   getActiveVideoLayersAtFrame,
+   getClipSourceTime,
++  getClipTransitionPresentation,
+   getPublicMediaFallbackSource,
+   isPlayableMediaResponse,
+   isStoredUploadSource,
+@@ -115,6 +116,7 @@ import {
+   ClipAnimationEasing,
+   ClipAnimationPreset,
+   ClipAnimationTiming,
++  ClipTransitionPresentation,
+   ClipTransitionPreset,
+   ClipEffect,
+   ClipFilter,
+@@ -920,15 +922,21 @@ const getClipAdjustmentStyle = (clip?: TimelineClip) => {
+ const getClipFrameStyle = (
+   clip: TimelineClip | undefined,
+   playheadFrame: number,
++  transitionPresentation?: ClipTransitionPresentation,
+ ): CSSProperties => {
+   const visual = getClipVisualPresentation(clip);
+   const animation = getClipAnimationPresentation(clip, playheadFrame);
++  const transition = transitionPresentation ?? {
++    opacity: 1,
++    translateX: 0,
++    scale: 1,
++  };
+ 
+   return {
+     ...visual,
+-    opacity: visual.opacity * animation.opacity,
+-    translate: `${animation.translateX}% ${animation.translateY}%`,
+-    scale: visual.scale * animation.scale,
++    opacity: visual.opacity * animation.opacity * transition.opacity,
++    translate: `${animation.translateX + transition.translateX}% ${animation.translateY}%`,
++    scale: visual.scale * animation.scale * transition.scale,
+   };
+ };
+ 
+@@ -1822,8 +1830,26 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     (clip) =>
+       (clip.track === "main" || clip.track === "upper") &&
+       clip.src &&
++      !clip.hidden &&
+       !isImageClip(clip),
+   );
++  const previewVideoLayers = Array.from(
++    new Set(
++      clips
++        .filter(
++          (clip) =>
++            (clip.track === "main" || clip.track === "upper") &&
++            clip.src &&
++            !clip.hidden,
++        )
++        .map(getVideoLayer)
++        .filter((videoLayer): videoLayer is number => videoLayer !== null),
++    ),
++  ).sort((firstLayer, secondLayer) => firstLayer - secondLayer);
++  const getPreviewVideoLayerZIndex = (clip: TimelineClip) => {
++    const videoLayer = getVideoLayer(clip);
++    return videoLayer === null ? 0 : previewVideoLayers.indexOf(videoLayer) + 1;
++  };
+   const topVisibleVideoClip =
+     activeVideoLayers[activeVideoLayers.length - 1];
+   const activeStickerClips = getActiveClipsAtFrame(
+@@ -2634,6 +2660,10 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+     setSelectedVideoLayer(null);
+     setSelectedClipId(clip.id);
+     setSelectedTrack(clip.track);
++    if (clip.track === "text" || clip.track === "caption") {
++      setPlayheadFrame(Math.max(clip.start, clip.start + clip.duration - 1));
++      setPreviewMode("timeline");
++    }
+     const contextualSelectionId = clip.track === "audio"
+       ? clip.linkedClipId ?? null
+       : clip.id;
+@@ -6494,7 +6524,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                   <Fragment>
+                     {activeVideoLayers
+                       .filter((videoClip) => isImageClip(videoClip))
+-                      .map((videoClip, index) => (
++                      .map((videoClip) => (
+                         <Img
+                           key={videoClip.id}
+                           className="preview-image preview-layer-image"
+@@ -6504,7 +6534,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                             ...getClipFrameStyle(videoClip, playheadFrame),
+                             ...getClipAdjustmentStyle(videoClip),
+                             ...getCutoutChromaKeyStyle(videoClip),
+-                            zIndex: index + 1,
++                            zIndex: getPreviewVideoLayerZIndex(videoClip),
+                           }}
+                         />
+                       ))}
+@@ -6513,6 +6543,22 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                         (activeClip) => activeClip.id === videoClip.id,
+                       );
+                       const isActiveVideoClip = activeIndex >= 0;
++                      const transitionPresentation = getClipTransitionPresentation(
++                        clips,
++                        videoClip.id,
++                        playheadFrame,
++                      );
++                      const isTransitionPreviewClip =
++                        transitionPresentation.opacity !== 1 ||
++                        transitionPresentation.translateX !== 0 ||
++                        transitionPresentation.scale !== 1;
++                      const isVisibleVideoClip =
++                        isActiveVideoClip || isTransitionPreviewClip;
++                      const previewFrame = isActiveVideoClip
++                        ? playheadFrame
++                        : playheadFrame < videoClip.start
++                          ? videoClip.start
++                          : videoClip.start + videoClip.duration - 1;
+                       const videoMuted =
+                         !isActiveVideoClip ||
+                         (videoClip.volume ?? 1) === 0 ||
+@@ -6536,10 +6582,14 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                             reconcileTimelineClipSourceDuration(videoClip, event)}
+                           onError={() => recoverUnavailableVideo(videoClip.id)}
+                           style={{
+-                            ...getClipFrameStyle(videoClip, playheadFrame),
++                            ...getClipFrameStyle(
++                              videoClip,
++                              playheadFrame,
++                              transitionPresentation,
++                            ),
+                             ...getClipAdjustmentStyle(videoClip),
+-                            visibility: isActiveVideoClip ? "visible" : "hidden",
+-                            zIndex: isActiveVideoClip ? activeIndex + 1 : 0,
++                            visibility: isVisibleVideoClip ? "visible" : "hidden",
++                            zIndex: getPreviewVideoLayerZIndex(videoClip),
+                           }}
+                           ref={(video) => {
+                             if (!video) return;
+@@ -6551,7 +6601,7 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                               0,
+                               getClipSourceTime(
+                                 videoClip,
+-                                isActiveVideoClip ? playheadFrame : videoClip.start,
++                                previewFrame,
+                                 fps,
+                               ),
+                             );
+@@ -7236,7 +7286,75 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+         </section>
+ 
+         <aside className="details-panel">
+-            {selectedCaptionClip ? (
++            {selectedTransitionBoundary ? (
++              <div
++                ref={transitionPopoverRef}
++                className="transition-editor"
++                role="dialog"
++                aria-label={`Transition between ${selectedTransitionBoundary.outgoingLabel} and ${selectedTransitionBoundary.incomingLabel}`}
++              >
++                <div className="transition-editor-header">
++                  <div>
++                    <span>Transition</span>
++                    <strong>
++                      {selectedTransitionBoundary.outgoingLabel} to {selectedTransitionBoundary.incomingLabel}
++                    </strong>
++                  </div>
++                  <em>{selectedTransitionDuration} frames</em>
++                </div>
++                <div className="transition-editor-presets" aria-label="Transition style">
++                  {(["none", "fade", "dissolve", "slide", "zoom"] as const).map((preset) => (
++                    <button
++                      key={preset}
++                      className={
++                        selectedTransitionPreset === preset
++                          ? "active-transition-preset"
++                          : undefined
++                      }
++                      type="button"
++                      aria-pressed={selectedTransitionPreset === preset}
++                      onClick={() => {
++                        updateSelectedTransition(
++                          preset,
++                          selectedTransitionDuration,
++                        );
++                      }}
++                    >
++                      <span className={`transition-preset-icon transition-preset-${preset}`} aria-hidden="true" />
++                      <strong>
++                        {preset === "none"
++                          ? "None"
++                          : preset.charAt(0).toUpperCase() + preset.slice(1)}
++                      </strong>
++                    </button>
++                  ))}
++                </div>
++                <label className="transition-editor-duration">
++                  <span>
++                    <strong>Duration</strong>
++                    <em>{(selectedTransitionDuration / fps).toFixed(2)}s</em>
++                  </span>
++                  <input
++                    type="range"
++                    min={minimumTransitionDuration}
++                    max={selectedTransitionBoundary.maxDuration}
++                    step={1}
++                    value={selectedTransitionDuration}
++                    aria-label="Transition duration"
++                    onChange={(event) => {
++                      const duration = Number(event.currentTarget.value);
++                      setSelectedTransitionDuration(duration);
++                      if (selectedTransitionPreset !== "none") {
++                        updateSelectedTransition(
++                          selectedTransitionPreset,
++                          duration,
++                        );
++                      }
++                    }}
++                  />
++                </label>
++              </div>
++            ) : selectedCaptionClip ? (
+               <div className="clip-controls caption-selected-controls">
+                 <span>Caption controls: {selectedCaptionClip.label}</span>
+                 <label>
+@@ -7822,8 +7940,6 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+               {track.videoLayer !== undefined
+                 ? (transitionBoundariesByLayer.get(track.videoLayer) ?? []).map(
+                     (boundary) => {
+-                      const isSelectedTransition =
+-                        selectedTransitionClipId === boundary.incomingClipId;
+                       const transitionTrack = track.videoLayer === 0 ? "main" : "upper";
+                       const transitionLabel =
+                         `Add transition between ${boundary.outgoingLabel} and ${boundary.incomingLabel}`;
+@@ -7831,7 +7947,6 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                       return (
+                         <div
+                           key={`${boundary.outgoingClipId}-${boundary.incomingClipId}`}
+-                          ref={isSelectedTransition ? transitionPopoverRef : undefined}
+                           className="transition-anchor"
+                           style={{left: `${boundary.frame * timelineScale}px`}}
+                           onPointerDown={(event) => {
+@@ -7853,65 +7968,6 @@ export const MyComponent: React.FC<Props> = ({project}) => {
+                           >
+                             +
+                           </button>
+-                          {isSelectedTransition ? (
+-                            <div
+-                              className="transition-popover"
+-                              role="dialog"
+-                              aria-label={`Transition between ${boundary.outgoingLabel} and ${boundary.incomingLabel}`}
+-                              onPointerDown={(event) => {
+-                                event.stopPropagation();
+-                              }}
+-                            >
+-                              <div className="transition-popover-header">
+-                                <strong>Transition</strong>
+-                                <span>{selectedTransitionDuration}f</span>
+-                              </div>
+-                              <div className="transition-preset-grid">
+-                                {(["none", "fade", "dissolve", "slide", "zoom"] as const).map((preset) => (
+-                                  <button
+-                                    key={preset}
+-                                    className={
+-                                      selectedTransitionPreset === preset
+-                                        ? "active-transition-preset"
+-                                        : undefined
+-                                    }
+-                                    type="button"
+-                                    onClick={() => {
+-                                      updateSelectedTransition(
+-                                        preset,
+-                                        selectedTransitionDuration,
+-                                      );
+-                                    }}
+-                                  >
+-                                    {preset === "none"
+-                                      ? "None"
+-                                      : preset.charAt(0).toUpperCase() + preset.slice(1)}
+-                                  </button>
+-                                ))}
+-                              </div>
+-                              <label className="transition-duration-control">
+-                                <span>Duration</span>
+-                                <input
+-                                  type="range"
+-                                  min={minimumTransitionDuration}
+-                                  max={selectedTransitionBoundary?.maxDuration ?? boundary.maxDuration}
+-                                  step={1}
+-                                  value={selectedTransitionDuration}
+-                                  aria-label="Transition duration"
+-                                  onChange={(event) => {
+-                                    const duration = Number(event.currentTarget.value);
+-                                    setSelectedTransitionDuration(duration);
+-                                    if (selectedTransitionPreset !== "none") {
+-                                      updateSelectedTransition(
+-                                        selectedTransitionPreset,
+-                                        duration,
+-                                      );
+-                                    }
+-                                  }}
+-                                />
+-                              </label>
+-                            </div>
+-                          ) : null}
+                         </div>
+                       );
+                     },
+
+=== tests/editorLogic.test.mts ===
+warning: in the working copy of '.superpowers/sdd/task-3-before/editorLogic.test.mts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/editorLogic.test.mts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.superpowers/sdd/task-3-before/editorLogic.test.mts b/tests/editorLogic.test.mts
+index bc11080..008170f 100644
+--- a/.superpowers/sdd/task-3-before/editorLogic.test.mts
++++ b/tests/editorLogic.test.mts
+@@ -51,6 +51,7 @@ import {
+   hasClipsOnTrack,
+   findAvailableOverlayLane,
+   getTimelineTransitionBoundaries,
++  getClipTransitionPresentation,
+   setTrackVolume,
+   hideFirstClipOnTrack,
+   moveClipToMainTrack,
+@@ -305,6 +306,142 @@ test("clamps and removes an incoming clip transition", () => {
+   assert.equal(Object.hasOwn(removed[1], "transition"), false);
+ });
+ 
++test("presents both sides of a fade around an adjacent boundary", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", videoLayer: 0, src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", videoLayer: 0, src: "second.mp4"};
++  const clips = setClipTransitionById([first, second], "second", "fade", 10);
++
++  assert.deepEqual(getClipTransitionPresentation(clips, "first", 24), {
++    opacity: 1, translateX: 0, scale: 1,
++  });
++  assert.deepEqual(getClipTransitionPresentation(clips, "second", 36), {
++    opacity: 1, translateX: 0, scale: 1,
++  });
++  assert.deepEqual(getClipTransitionPresentation(clips, "first", 30), {
++    opacity: 0.5, translateX: 0, scale: 1,
++  });
++  assert.deepEqual(getClipTransitionPresentation(clips, "second", 30), {
++    opacity: 0.5, translateX: 0, scale: 1,
++  });
++});
++
++test("presents dissolve, slide, and zoom deterministically for both transition sides", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", videoLayer: 0, src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", videoLayer: 0, src: "second.mp4"};
++
++  const cases = [
++    {
++      preset: "dissolve" as const,
++      outgoing: {opacity: 0.5, translateX: 0, scale: 1},
++      incoming: {opacity: 0.5, translateX: 0, scale: 1},
++    },
++    {
++      preset: "slide" as const,
++      outgoing: {opacity: 1, translateX: -6, scale: 1},
++      incoming: {opacity: 1, translateX: 6, scale: 1},
++    },
++    {
++      preset: "zoom" as const,
++      outgoing: {opacity: 0.5, translateX: 0, scale: 1.03},
++      incoming: {opacity: 0.5, translateX: 0, scale: 0.97},
++    },
++  ];
++
++  for (const transitionCase of cases) {
++    const clips = setClipTransitionById(
++      [first, second],
++      "second",
++      transitionCase.preset,
++      10,
++    );
++
++    assert.deepEqual(
++      getClipTransitionPresentation(clips, "first", 30),
++      transitionCase.outgoing,
++    );
++    assert.deepEqual(
++      getClipTransitionPresentation(clips, "second", 30),
++      transitionCase.incoming,
++    );
++  }
++
++});
++
++test("presents both sides at the midpoint of a one-frame transition", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", videoLayer: 0, src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", videoLayer: 0, src: "second.mp4"};
++  const cases = [
++    {
++      preset: "fade" as const,
++      outgoing: {opacity: 0.5, translateX: 0, scale: 1},
++      incoming: {opacity: 0.5, translateX: 0, scale: 1},
++    },
++    {
++      preset: "dissolve" as const,
++      outgoing: {opacity: 0.5, translateX: 0, scale: 1},
++      incoming: {opacity: 0.5, translateX: 0, scale: 1},
++    },
++    {
++      preset: "zoom" as const,
++      outgoing: {opacity: 0.5, translateX: 0, scale: 1.03},
++      incoming: {opacity: 0.5, translateX: 0, scale: 0.97},
++    },
++  ];
++
++  for (const transitionCase of cases) {
++    const clips = setClipTransitionById(
++      [first, second],
++      "second",
++      transitionCase.preset,
++      1,
++    );
++
++    assert.deepEqual(
++      getClipTransitionPresentation(clips, "first", 30),
++      transitionCase.outgoing,
++    );
++    assert.deepEqual(
++      getClipTransitionPresentation(clips, "second", 30),
++      transitionCase.incoming,
++    );
++  }
++
++  const fadeClips = setClipTransitionById([first, second], "second", "fade", 1);
++  assert.deepEqual(getClipTransitionPresentation(fadeClips, "first", 31), {
++    opacity: 0, translateX: 0, scale: 1,
++  });
++  assert.deepEqual(getClipTransitionPresentation(fadeClips, "second", 31), {
++    opacity: 1, translateX: 0, scale: 1,
++  });
++});
++
++test("selects the active transition when a clip belongs to two adjacent edges", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", videoLayer: 0, src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", videoLayer: 0, src: "second.mp4"};
++  const third: TimelineClip = {id: "third", label: "Third", track: "main", start: 60, duration: 30, color: "#0891b2", videoLayer: 0, src: "third.mp4"};
++  const withFade = setClipTransitionById([first, second, third], "second", "fade", 10);
++  const clips = setClipTransitionById(withFade, "third", "slide", 10);
++
++  assert.deepEqual(getClipTransitionPresentation(clips, "second", 60), {
++    opacity: 1, translateX: -6, scale: 1,
++  });
++});
++
++test("returns neutral transition presentation when either adjacent clip is hidden", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", videoLayer: 0, src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", videoLayer: 0, src: "second.mp4", transition: {preset: "fade", duration: 10}};
++  const neutral = {opacity: 1, translateX: 0, scale: 1};
++
++  assert.deepEqual(
++    getClipTransitionPresentation([{...first, hidden: true}, second], "second", 30),
++    neutral,
++  );
++  assert.deepEqual(
++    getClipTransitionPresentation([first, {...second, hidden: true}], "first", 30),
++    neutral,
++  );
++});
++
+ test("removes an incoming transition when deleting its predecessor", () => {
+   const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", src: "first.mp4"};
+   const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", src: "second.mp4", transition: {preset: "fade", duration: 12}};
+
+=== tests/playhead-ui.test.mts ===
+warning: in the working copy of '.superpowers/sdd/task-3-before/playhead-ui.test.mts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/playhead-ui.test.mts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.superpowers/sdd/task-3-before/playhead-ui.test.mts b/tests/playhead-ui.test.mts
+index f56b255..a2c291c 100644
+--- a/.superpowers/sdd/task-3-before/playhead-ui.test.mts
++++ b/tests/playhead-ui.test.mts
+@@ -314,18 +314,32 @@ test("lets users grab the red playhead directly", () => {
+   );
+ });
+ 
+-test("renders transition nodes and an anchored transition picker", () => {
++test("renders transition nodes and a large contextual transition editor", () => {
+   const source = readFileSync(
+     new URL("../src/Composition.tsx", import.meta.url),
+     "utf8",
+   );
++  const stylesheetSource = readFileSync(
++    new URL("../src/index.css", import.meta.url),
++    "utf8",
++  );
+ 
+   assert.match(source, /className="transition-node"/);
+   assert.match(source, /aria-label=\{`Add transition between/);
+-  assert.match(source, /className="transition-popover"/);
++  assert.match(source, /className="transition-editor"/);
++  assert.match(source, /className="transition-editor-presets"/);
+   assert.match(source, /role="dialog"/);
+   assert.match(source, /aria-label="Transition duration"/);
+   assert.match(source, /setClipTransitionById/);
++  assert.doesNotMatch(source, /className="transition-popover"/);
++  assert.match(
++    stylesheetSource,
++    /\.transition-editor\s*\{[^}]*min-height:\s*100%/s,
++  );
++  assert.match(
++    stylesheetSource,
++    /\.transition-editor-presets\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s,
++  );
+ });
+ 
+ test("keeps transition nodes constrained by the real adjacent clip duration", () => {
+@@ -682,6 +696,26 @@ test("keeps text animation labels inside responsive preset buttons", () => {
+   );
+ });
+ 
++test("moves the playhead to the last visible frame of selected text and captions", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++  const handlerStart = source.indexOf("const selectTimelineClip");
++  const handlerEnd = source.indexOf("const selectTrackClipAtFrame", handlerStart);
++  const handler = source.slice(handlerStart, handlerEnd);
++
++  assert.match(
++    handler,
++    /if \(clip\.track === "text" \|\| clip\.track === "caption"\)/,
++  );
++  assert.match(
++    handler,
++    /setPlayheadFrame\(Math\.max\(clip\.start, clip\.start \+ clip\.duration - 1\)\)/,
++  );
++  assert.match(handler, /setPreviewMode\("timeline"\)/);
++});
++
+ test("wires contextual linked audio into overlay import, selection, and timeline rendering", () => {
+   const compositionSource = readFileSync(
+     new URL("../src/Composition.tsx", import.meta.url),
+@@ -829,7 +863,7 @@ test("keeps overlay preview playback synchronized with the editor", () => {
+   assert.match(overlayPreview, /preload="auto"/);
+   assert.match(
+     overlayPreview,
+-    /getClipSourceTime\(\s*videoClip,\s*isActiveVideoClip \? playheadFrame : videoClip\.start,\s*fps,?\s*\)/,
++    /getClipSourceTime\(\s*videoClip,\s*previewFrame,\s*fps,?\s*\)/,
+   );
+   assert.match(
+     overlayPreview,
+@@ -837,6 +871,85 @@ test("keeps overlay preview playback synchronized with the editor", () => {
+   );
+ });
+ 
++test("holds transition preview layers at their adjacent source frames", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++  const overlayStart = source.indexOf("timelinePreviewVideoClips.map");
++  const overlayEnd = source.indexOf("playbackAudioClips.map", overlayStart);
++  assert.ok(overlayStart >= 0 && overlayEnd > overlayStart);
++  const overlayPreview = source.slice(overlayStart, overlayEnd);
++
++  assert.match(source, /getClipTransitionPresentation,/);
++  assert.match(
++    overlayPreview,
++    /const transitionPresentation = getClipTransitionPresentation\(\s*clips,\s*videoClip\.id,\s*playheadFrame,\s*\)/,
++  );
++  assert.match(
++    overlayPreview,
++    /const isTransitionPreviewClip =\s*transitionPresentation\.opacity !== 1 \|\|\s*transitionPresentation\.translateX !== 0 \|\|\s*transitionPresentation\.scale !== 1/,
++  );
++  assert.match(
++    overlayPreview,
++    /const isVisibleVideoClip =\s*isActiveVideoClip \|\| isTransitionPreviewClip/,
++  );
++  assert.match(
++    overlayPreview,
++    /getClipFrameStyle\(\s*videoClip,\s*playheadFrame,\s*transitionPresentation,?\s*\)/,
++  );
++  assert.match(
++    overlayPreview,
++    /const previewFrame = isActiveVideoClip\s*\? playheadFrame\s*:\s*playheadFrame < videoClip\.start\s*\? videoClip\.start\s*:\s*videoClip\.start \+ videoClip\.duration - 1/,
++  );
++  assert.match(
++    overlayPreview,
++    /getClipSourceTime\(\s*videoClip,\s*previewFrame,\s*fps,?\s*\)/,
++  );
++  assert.match(overlayPreview, /visibility: isVisibleVideoClip \? "visible" : "hidden"/);
++});
++
++test("keeps a layer-zero transition preview below an active layer one", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++  const previewStart = source.indexOf("const activeVideoLayers");
++  const previewEnd = source.indexOf("const activeStickerClips", previewStart);
++  const renderStart = source.indexOf("activeVideoLayers", source.indexOf("<Fragment>"));
++  const renderEnd = source.indexOf("playbackAudioClips.map", renderStart);
++  assert.ok(previewStart >= 0 && previewEnd > previewStart);
++  assert.ok(renderStart >= 0 && renderEnd > renderStart);
++  const previewSetup = source.slice(previewStart, previewEnd);
++  const previewRender = source.slice(renderStart, renderEnd);
++
++  assert.match(previewSetup, /const previewVideoLayers = Array\.from\(/);
++  assert.match(
++    previewSetup,
++    /const getPreviewVideoLayerZIndex = \(clip: TimelineClip\) =>[\s\S]*?previewVideoLayers\.indexOf\(videoLayer\) \+ 1/,
++  );
++  assert.match(
++    previewRender,
++    /zIndex: getPreviewVideoLayerZIndex\(videoClip\)/,
++  );
++  assert.doesNotMatch(previewRender, /activeVideoLayers\.length \+ 1/);
++});
++
++test("excludes hidden clips from timeline transition preview rendering", () => {
++  const source = readFileSync(
++    new URL("../src/Composition.tsx", import.meta.url),
++    "utf8",
++  );
++  const previewStart = source.indexOf("const timelinePreviewVideoClips");
++  const previewEnd = source.indexOf("const previewVideoLayers", previewStart);
++  assert.ok(previewStart >= 0 && previewEnd > previewStart);
++
++  assert.match(
++    source.slice(previewStart, previewEnd),
++    /clip\.src &&\s*!clip\.hidden &&\s*!isImageClip\(clip\)/,
++  );
++});
++
+ test("uses each media item's real duration when adding an overlay", () => {
+   const compositionSource = readFileSync(
+     new URL("../src/Composition.tsx", import.meta.url),
+

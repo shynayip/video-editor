@@ -1,0 +1,13 @@
+node_modules
+dist
+build
+.edge-debug-profile
+*.log
+.DS_Store
+.env
+server-temp/
+.models/
+.models/**/*.partial
+
+# Ignore the output video from Git but not videos you import into src/.
+out

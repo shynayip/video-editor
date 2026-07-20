@@ -1,0 +1,694 @@
+﻿BASE: shared-worktree snapshot before Task 1
+HEAD: shared-worktree after Task 1 final fix
+NOTE: caption resizing hunks changed concurrently outside Task 1 ownership and must not be attributed to this task
+
+=== src/editorLogic.ts ===
+warning: in the working copy of '.superpowers/sdd/task-1-before/editorLogic.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/editorLogic.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.superpowers/sdd/task-1-before/editorLogic.ts b/src/editorLogic.ts
+index 461a70a..e3fe44e 100644
+--- a/.superpowers/sdd/task-1-before/editorLogic.ts
++++ b/src/editorLogic.ts
+@@ -341,6 +341,18 @@ export type ClipAnimationStyle = {
+   easing?: ClipAnimationEasing;
+ };
+ 
++export type ClipTransitionPreset =
++  | "none"
++  | "fade"
++  | "dissolve"
++  | "slide"
++  | "zoom";
++
++export type ClipTransitionStyle = {
++  preset: Exclude<ClipTransitionPreset, "none">;
++  duration: number;
++};
++
+ export type ClipAnimationPresentation = {
+   opacity: number;
+   translateX: number;
+@@ -383,6 +395,7 @@ export type TimelineClip = {
+   linkedClipId?: string;
+   overlayLane?: number;
+   videoLayer?: number;
++  transition?: ClipTransitionStyle;
+   sticker?: StickerTransform;
+   cutout?: CutoutTransform;
+   chromaKey?: NonNullable<CutoutTransform["chromaKey"]>;
+@@ -2103,11 +2116,11 @@ export const resizeCaptionOverlayById = (
+     }
+ 
+     const maximumFontSize = Math.max(
+-      12,
++      1,
+       Math.min(160, Math.round(bounds?.maximumFontSize ?? 160)),
+     );
+     const nextFontSize = Math.max(
+-      12,
++      1,
+       Math.min(maximumFontSize, Math.round(fontSize)),
+     );
+     if (nextFontSize === clip.caption.fontSize) {
+@@ -2197,7 +2210,7 @@ export const getResizedCaptionFontSizeFromHandle = ({
+     vectorLength;
+ 
+   return Math.max(
+-    12,
++    1,
+     Math.min(160, Math.round(startFontSize + projectedDistance / 2)),
+   );
+ };
+@@ -2213,11 +2226,11 @@ export const getMaximumFittingCaptionFontSize = ({
+   previewHeight: number;
+   measure: (fontSize: number) => {width: number; height: number};
+ }): number => {
+-  const upperLimit = Math.max(12, Math.min(160, Math.round(requestedFontSize)));
+-  if (previewWidth <= 0 || previewHeight <= 0) return 12;
++  const upperLimit = Math.max(1, Math.min(160, Math.round(requestedFontSize)));
++  if (previewWidth <= 0 || previewHeight <= 0) return 1;
+ 
+-  let largestFittingSize = 12;
+-  for (let fontSize = 12; fontSize <= upperLimit; fontSize += 1) {
++  let largestFittingSize = 1;
++  for (let fontSize = 1; fontSize <= upperLimit; fontSize += 1) {
+     const measured = measure(fontSize);
+     if (
+       Number.isFinite(measured.width) &&
+@@ -2594,6 +2607,174 @@ export const getVideoLayerEnd = (
+     0,
+   );
+ 
++export type TimelineTransitionBoundary = {
++  outgoingClipId: string;
++  incomingClipId: string;
++  frame: number;
++};
++
++const isTransitionTargetClip = (clip: TimelineClip): boolean =>
++  (clip.track === "main" || clip.track === "upper") &&
++  Boolean(clip.src) &&
++  clip.mediaType !== "image";
++
++const getOrderedTransitionTargetClips = (
++  clips: TimelineClip[],
++  videoLayer: number,
++) =>
++  clips
++    .map((clip, index) => ({clip, index}))
++    .filter(({clip}) =>
++      isTransitionTargetClip(clip) &&
++      getVideoLayer(clip) === videoLayer,
++    )
++    .sort(
++      (left, right) =>
++        left.clip.start - right.clip.start || left.index - right.index,
++    )
++    .map(({clip}) => clip);
++
++export const getTimelineTransitionBoundaries = (
++  clips: TimelineClip[],
++  videoLayer: number,
++): TimelineTransitionBoundary[] => {
++  const orderedClips = getOrderedTransitionTargetClips(clips, videoLayer);
++  const boundaries: TimelineTransitionBoundary[] = [];
++
++  for (let index = 1; index < orderedClips.length; index += 1) {
++    const previous = orderedClips[index - 1];
++    const current = orderedClips[index];
++
++    if (previous.start + previous.duration === current.start) {
++      boundaries.push({
++        outgoingClipId: previous.id,
++        incomingClipId: current.id,
++        frame: current.start,
++      });
++    }
++  }
++
++  return boundaries;
++};
++
++const withoutClipTransition = (clip: TimelineClip): TimelineClip => {
++  if (!clip.transition) return clip;
++  const {transition: _transition, ...clipWithoutTransition} = clip;
++  return clipWithoutTransition;
++};
++
++const normalizeTimelineTransitions = (
++  clips: TimelineClip[],
++): TimelineClip[] => {
++  const adjacentPredecessors = new Map<string, TimelineClip>();
++  const videoLayers = new Set(
++    clips
++      .filter(isTransitionTargetClip)
++      .map(getVideoLayer)
++      .filter((videoLayer): videoLayer is number => videoLayer !== null),
++  );
++
++  for (const videoLayer of videoLayers) {
++    const orderedClips = getOrderedTransitionTargetClips(clips, videoLayer);
++    for (let index = 1; index < orderedClips.length; index += 1) {
++      const previousClip = orderedClips[index - 1];
++      const incomingClip = orderedClips[index];
++      if (previousClip.start + previousClip.duration === incomingClip.start) {
++        adjacentPredecessors.set(incomingClip.id, previousClip);
++      }
++    }
++  }
++
++  let changed = false;
++  const normalizedClips = clips.map((clip) => {
++    if (!clip.transition) return clip;
++
++    const previousClip = adjacentPredecessors.get(clip.id);
++    if (!previousClip) {
++      changed = true;
++      return withoutClipTransition(clip);
++    }
++
++    const requestedDuration = Number.isFinite(clip.transition.duration)
++      ? Math.max(1, Math.round(clip.transition.duration))
++      : 1;
++    const duration = Math.max(
++      1,
++      Math.min(requestedDuration, previousClip.duration, clip.duration),
++    );
++    if (duration === clip.transition.duration) return clip;
++
++    changed = true;
++    return {...clip, transition: {...clip.transition, duration}};
++  });
++
++  return changed ? normalizedClips : clips;
++};
++
++export const setClipTransitionById = (
++  clips: TimelineClip[],
++  incomingClipId: string | null,
++  preset: ClipTransitionPreset,
++  duration: number,
++): TimelineClip[] => {
++  if (!incomingClipId) {
++    return clips;
++  }
++
++  const incomingClipIndex = clips.findIndex((clip) => clip.id === incomingClipId);
++  if (incomingClipIndex < 0) {
++    return clips;
++  }
++
++  const incomingClip = clips[incomingClipIndex];
++  if (!isTransitionTargetClip(incomingClip)) {
++    return clips;
++  }
++
++  if (preset === "none") {
++    if (!incomingClip.transition) {
++      return clips;
++    }
++
++    return clips.map((clip) =>
++      clip.id === incomingClipId ? withoutClipTransition(clip) : clip,
++    );
++  }
++
++  const orderedClips = getOrderedTransitionTargetClips(clips, getVideoLayer(incomingClip) ?? 0);
++  const orderedIncomingIndex = orderedClips.findIndex((clip) => clip.id === incomingClipId);
++  const previousClip = orderedIncomingIndex > 0 ? orderedClips[orderedIncomingIndex - 1] : undefined;
++
++  if (!previousClip || previousClip.start + previousClip.duration !== incomingClip.start) {
++    return clips;
++  }
++
++  const safeDuration = Number.isFinite(duration) ? Math.max(1, Math.round(duration)) : 1;
++  const clampedDuration = Math.max(
++    1,
++    Math.min(safeDuration, previousClip.duration, incomingClip.duration),
++  );
++
++  if (
++    incomingClip.transition?.preset === preset &&
++    incomingClip.transition.duration === clampedDuration
++  ) {
++    return clips;
++  }
++
++  return clips.map((clip) =>
++    clip.id === incomingClipId
++      ? {
++          ...clip,
++          transition: {
++            preset,
++            duration: clampedDuration,
++          },
++        }
++      : clip,
++  );
++};
++
+ export const getNextVideoLayer = (
+   clips: TimelineClip[],
+   direction: VideoLayerDirection,
+@@ -2636,7 +2817,9 @@ export const replaceVideoLayerRange = (
+     return clips;
+   }
+ 
+-  return clips.filter((clip) => !replacedIds.has(clip.id));
++  return normalizeTimelineTransitions(
++    clips.filter((clip) => !replacedIds.has(clip.id)),
++  );
+ };
+ 
+ const getSnappedVideoStart = (
+@@ -2696,7 +2879,7 @@ export const placeVideoPairOnLayer = (
+   );
+   const track: "main" | "upper" = videoLayer === 0 ? "main" : "upper";
+ 
+-  return [
++  return normalizeTimelineTransitions([
+     ...clips,
+     ...pair.map((clip) =>
+       clip.id === video.id
+@@ -2709,7 +2892,7 @@ export const placeVideoPairOnLayer = (
+           }
+         : {...clip, start: clampedStart},
+     ),
+-  ];
++  ]);
+ };
+ 
+ const shiftVideoLayerForInsert = (
+@@ -2784,7 +2967,7 @@ export const moveVideoClipToLayer = (
+ 
+   const track: "main" | "upper" = videoLayer === 0 ? "main" : "upper";
+ 
+-  return clips.map((clip) =>
++  return normalizeTimelineTransitions(clips.map((clip) =>
+     clip.id === target.id
+       ? {
+           ...clip,
+@@ -2796,7 +2979,7 @@ export const moveVideoClipToLayer = (
+       : clip.id === linkedAudio?.id
+         ? {...clip, start}
+         : clip,
+-  );
++  ));
+ };
+ 
+ const isAudioOwnedByVideo = (
+@@ -2881,7 +3064,9 @@ export const deleteClipById = (
+   const linkedAudio = getReciprocalLinkedAudio(clips, target);
+   const deletedIds = new Set([target.id, linkedAudio?.id]);
+ 
+-  return clips.filter((clip) => !deletedIds.has(clip.id));
++  return normalizeTimelineTransitions(
++    clips.filter((clip) => !deletedIds.has(clip.id)),
++  );
+ };
+ 
+ const duplicateLabel = (label: string): string => `${label.replace(/ copy$/, "")} copy`;
+@@ -2906,7 +3091,7 @@ export const duplicateClipById = (
+   const copyStart = target.start;
+ 
+   const duplicatedVideo: TimelineClip = {
+-    ...target,
++    ...withoutClipTransition(target),
+     id: `${idPrefix}-video`,
+     label: duplicateLabel(target.label),
+     track: "upper",
+@@ -2921,7 +3106,7 @@ export const duplicateClipById = (
+   }
+ 
+   const duplicatedAudio: TimelineClip = {
+-    ...linkedAudio,
++    ...withoutClipTransition(linkedAudio),
+     id: `${idPrefix}-audio`,
+     label: duplicateLabel(linkedAudio.label),
+     start: copyStart,
+@@ -3070,7 +3255,7 @@ export const trimClipById = (
+     : Math.max(minimumDuration, target.duration + appliedDelta);
+   const linkedAudio = getReciprocalLinkedAudio(clips, target);
+ 
+-  return clips.map((clip) => {
++  const trimmedClips = clips.map((clip) => {
+     if (clip.id !== clipId && clip.id !== linkedAudio?.id) {
+       return clip;
+     }
+@@ -3087,6 +3272,8 @@ export const trimClipById = (
+         : clip.sourceStart ?? 0,
+     };
+   });
++
++  return normalizeTimelineTransitions(trimmedClips);
+ };
+ 
+ export const replaceClipMediaById = (
+@@ -3214,7 +3401,7 @@ export const splitClipByIdAtFrame = (
+   const secondDuration = clipToSplit.duration - firstDuration;
+   const linkedAudio = getReciprocalLinkedAudio(clips, clipToSplit);
+ 
+-  return clips.flatMap((clip) => {
++  const splitClips = clips.flatMap((clip) => {
+     if (clip.id !== clipId && clip.id !== linkedAudio?.id) {
+       return [clip];
+     }
+@@ -3241,7 +3428,7 @@ export const splitClipByIdAtFrame = (
+         ...(linkedAudio ? {linkedClipId: firstLinkedClipId} : {}),
+       },
+       {
+-        ...clip,
++        ...withoutClipTransition(clip),
+         id: secondId,
+         start: frame,
+         duration: secondDuration,
+@@ -3251,6 +3438,8 @@ export const splitClipByIdAtFrame = (
+       },
+     ];
+   });
++
++  return normalizeTimelineTransitions(splitClips);
+ };
+ 
+ type SilenceRange = {
+@@ -3388,7 +3577,7 @@ export const removeSilenceFromLinkedVideo = (
+   }
+ 
+   const videoSegments = speechSegments.map<TimelineClip>((segment, index) => ({
+-    ...videoClip,
++    ...(index === 0 ? videoClip : withoutClipTransition(videoClip)),
+     id: `${videoClip.id}-speech-${index}`,
+     start: segment.start,
+     duration: segment.duration,
+@@ -3427,7 +3616,7 @@ export const removeSilenceFromLinkedVideo = (
+     }
+   });
+ 
+-  return clips.flatMap((clip) => {
++  const nextClips = clips.flatMap((clip) => {
+     if (
+       clip.track === "caption" &&
+       clip.caption?.generationId?.startsWith("transcript-") &&
+@@ -3446,6 +3635,8 @@ export const removeSilenceFromLinkedVideo = (
+     }
+     return [clip];
+   });
++
++  return normalizeTimelineTransitions(nextClips);
+ };
+ 
+ export const moveClipToMainTrack = (
+@@ -3456,7 +3647,7 @@ export const moveClipToMainTrack = (
+     .filter((clip) => clip.track === "main")
+     .reduce((end, clip) => Math.max(end, clip.start + clip.duration), 0);
+ 
+-  return clips.map((clip) => {
++  return normalizeTimelineTransitions(clips.map((clip) => {
+     if (clip.id !== clipId) {
+       return clip;
+     }
+@@ -3466,7 +3657,7 @@ export const moveClipToMainTrack = (
+       track: "main",
+       start: mainTrackEnd,
+     };
+-  });
++  }));
+ };
+ 
+ export const moveOverlayClip = (
+@@ -3509,13 +3700,13 @@ export const moveOverlayClip = (
+ 
+   const linkedAudio = getReciprocalLinkedAudio(clips, target);
+ 
+-  return clips.map((clip) =>
++  return normalizeTimelineTransitions(clips.map((clip) =>
+     clip.id === clipId
+       ? {...clip, start, overlayLane}
+       : clip.id === linkedAudio?.id
+         ? {...clip, start}
+         : clip,
+-  );
++  ));
+ };
+ 
+ export const getDraggedClipStart = ({
+@@ -3558,7 +3749,7 @@ export const splitFirstClipOnTrack = (
+   const firstDuration = Math.floor(clipToSplit.duration / 2);
+   const secondDuration = clipToSplit.duration - firstDuration;
+ 
+-  return clips.flatMap((clip) => {
++  const splitClips = clips.flatMap((clip) => {
+     if (clip.id !== clipToSplit.id) {
+       return [clip];
+     }
+@@ -3571,7 +3762,7 @@ export const splitFirstClipOnTrack = (
+         duration: firstDuration,
+       },
+       {
+-        ...clip,
++        ...withoutClipTransition(clip),
+         id: `${clip.id}-b`,
+         label: clip.label,
+         start: clip.start + firstDuration,
+@@ -3579,6 +3770,8 @@ export const splitFirstClipOnTrack = (
+       },
+     ];
+   });
++
++  return normalizeTimelineTransitions(splitClips);
+ };
+ 
+ export const splitClipOnTrackAtFrame = (
+@@ -3603,7 +3796,7 @@ export const splitClipOnTrackAtFrame = (
+     secondId: `${clipToSplit.id}-b`,
+   });
+ 
+-  return clips.flatMap((clip) => {
++  const splitClips = clips.flatMap((clip) => {
+     const ids = splitIds.get(clip.id);
+ 
+     if (!ids) {
+@@ -3620,7 +3813,7 @@ export const splitClipOnTrackAtFrame = (
+         duration: clipFirstDuration,
+       },
+       {
+-        ...clip,
++        ...withoutClipTransition(clip),
+         id: ids.secondId,
+         label: clip.label,
+         start: frame,
+@@ -3630,6 +3823,8 @@ export const splitClipOnTrackAtFrame = (
+       },
+     ];
+   });
++
++  return normalizeTimelineTransitions(splitClips);
+ };
+ 
+ export const replaceFirstClipOnTrack = (
+@@ -3739,7 +3934,7 @@ export const changeFirstClipSpeed = (
+     return clips;
+   }
+ 
+-  return clips.map((clip) => {
++  return normalizeTimelineTransitions(clips.map((clip) => {
+     if (clip.id !== clipToChange.id) {
+       return clip;
+     }
+@@ -3753,7 +3948,7 @@ export const changeFirstClipSpeed = (
+       ),
+       speed,
+     };
+-  });
++  }));
+ };
+ 
+ export const setTrackVolume = (
+@@ -3825,7 +4020,7 @@ export const reconcileClipSourceDuration = (
+     };
+   });
+ 
+-  return changed ? reconciled : clips;
++  return changed ? normalizeTimelineTransitions(reconciled) : clips;
+ };
+ 
+ export const setVideoLayerSpeed = (
+@@ -3852,10 +4047,10 @@ export const setVideoLayerSpeed = (
+   }
+ 
+   if (updates.size === 0) return clips;
+-  return clips.map((clip) => {
++  return normalizeTimelineTransitions(clips.map((clip) => {
+     const update = updates.get(clip.id);
+     return update ? {...clip, ...update} : clip;
+-  });
++  }));
+ };
+ 
+ export const setVideoLayerVolume = (
+@@ -3923,7 +4118,7 @@ export const setClipSpeedById = (
+     Math.round((target.duration * (target.speed ?? 1)) / speed),
+   );
+ 
+-  return clips.map((clip) => {
++  return normalizeTimelineTransitions(clips.map((clip) => {
+     if (!targetIds.has(clip.id)) {
+       return clip;
+     }
+@@ -3933,7 +4128,7 @@ export const setClipSpeedById = (
+       duration,
+       speed,
+     };
+-  });
++  }));
+ };
+ 
+ export const setClipVolumeById = (
+
+=== tests/editorLogic.test.mts ===
+warning: in the working copy of '.superpowers/sdd/task-1-before/editorLogic.test.mts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/editorLogic.test.mts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.superpowers/sdd/task-1-before/editorLogic.test.mts b/tests/editorLogic.test.mts
+index 63036ad..bc11080 100644
+--- a/.superpowers/sdd/task-1-before/editorLogic.test.mts
++++ b/tests/editorLogic.test.mts
+@@ -50,6 +50,7 @@ import {
+   placeVideoPairOnLayer,
+   hasClipsOnTrack,
+   findAvailableOverlayLane,
++  getTimelineTransitionBoundaries,
+   setTrackVolume,
+   hideFirstClipOnTrack,
+   moveClipToMainTrack,
+@@ -71,6 +72,7 @@ import {
+   redoTimelineHistory,
+   setClipSpeedById,
+   setClipVolumeById,
++  setClipTransitionById,
+   setVideoLayerSpeed,
+   setVideoLayerVolume,
+   getVideoLayerControlState,
+@@ -277,6 +279,96 @@ test("finds the end of only the requested video layer", () => {
+   assert.equal(getVideoLayerEnd(clips, 2), 0);
+ });
+ 
++test("derives transitions only between adjacent clips on one video layer", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", videoLayer: 0, src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 20, color: "#0891b2", videoLayer: 0, src: "second.mp4"};
++  const gap: TimelineClip = {id: "gap", label: "Gap", track: "main", start: 60, duration: 10, color: "#0891b2", videoLayer: 0, src: "gap.mp4"};
++  const upper: TimelineClip = {id: "upper", label: "Upper", track: "upper", start: 30, duration: 20, color: "#7c3aed", videoLayer: 1, src: "upper.mp4"};
++
++  assert.deepEqual(getTimelineTransitionBoundaries([gap, upper, second, first], 0), [{
++    outgoingClipId: "first",
++    incomingClipId: "second",
++    frame: 30,
++  }]);
++  assert.deepEqual(getTimelineTransitionBoundaries([gap, upper, second, first], 1), []);
++});
++
++test("clamps and removes an incoming clip transition", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", videoLayer: 0, src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 12, color: "#0891b2", videoLayer: 0, src: "second.mp4"};
++
++  const applied = setClipTransitionById([first, second], "second", "fade", 40);
++  assert.deepEqual(applied[1].transition, {preset: "fade", duration: 12});
++
++  const removed = setClipTransitionById(applied, "second", "none", 12);
++  assert.equal(removed[1].transition, undefined);
++  assert.equal(Object.hasOwn(removed[1], "transition"), false);
++});
++
++test("removes an incoming transition when deleting its predecessor", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", src: "second.mp4", transition: {preset: "fade", duration: 12}};
++
++  const result = deleteClipById([first, second], "first");
++
++  assert.deepEqual(result.map((clip) => clip.id), ["second"]);
++  assert.equal(result[0].transition, undefined);
++  assert.equal(Object.hasOwn(result[0], "transition"), false);
++});
++
++test("does not copy a transition onto a non-adjacent duplicate", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", src: "second.mp4", transition: {preset: "fade", duration: 12}};
++
++  const result = duplicateClipById([first, second], "second", "copy");
++  const duplicate = result.find((clip) => clip.id === "copy-video");
++
++  assert.ok(duplicate);
++  assert.equal(duplicate.videoLayer, 1);
++  assert.equal(duplicate.transition, undefined);
++  assert.equal(Object.hasOwn(duplicate, "transition"), false);
++});
++
++test("reclamps an incoming transition after speed shrinks its clip", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", src: "second.mp4", speed: 1, transition: {preset: "fade", duration: 20}};
++
++  const result = setClipSpeedById([first, second], "second", 3);
++
++  assert.equal(result[1].duration, 10);
++  assert.deepEqual(result[1].transition, {preset: "fade", duration: 10});
++});
++
++test("removes an incoming transition when trimming creates a gap", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", src: "second.mp4", transition: {preset: "fade", duration: 12}};
++
++  const result = trimClipById([first, second], "first", "right", -10, 1);
++
++  assert.equal(result[0].duration, 20);
++  assert.equal(result[1].transition, undefined);
++});
++
++test("does not copy an incoming transition onto the right side of a split", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", src: "second.mp4", transition: {preset: "fade", duration: 20}};
++
++  const result = splitClipByIdAtFrame([first, second], "second", 40);
++
++  assert.deepEqual(result.find((clip) => clip.id === "second-a")?.transition, {preset: "fade", duration: 10});
++  assert.equal(result.find((clip) => clip.id === "second-b")?.transition, undefined);
++});
++
++test("removes an incoming transition when moving its clip across a gap", () => {
++  const first: TimelineClip = {id: "first", label: "First", track: "main", start: 0, duration: 30, color: "#0891b2", src: "first.mp4"};
++  const second: TimelineClip = {id: "second", label: "Second", track: "main", start: 30, duration: 30, color: "#0891b2", src: "second.mp4", transition: {preset: "fade", duration: 12}};
++
++  const result = moveVideoClipToLayer([first, second], "second", 0, 60);
++
++  assert.equal(result.find((clip) => clip.id === "second")?.start, 60);
++  assert.equal(result.find((clip) => clip.id === "second")?.transition, undefined);
++});
++
+ test("formats timeline clocks beyond one hour", () => {
+   assert.equal(formatTimelineClock(16 * 30, 30), "00:16");
+   assert.equal(formatTimelineClock((60 * 60 + 5) * 30, 30), "01:00:05");
+@@ -4363,7 +4455,7 @@ test("resizes only the selected caption within readable limits", () => {
+ 
+   assert.equal(resizeCaptionOverlayById([caption], caption.id, larger)[0].caption?.fontSize, 86);
+   assert.equal(resizeCaptionOverlayById([caption], caption.id, 500)[0].caption?.fontSize, 160);
+-  assert.equal(resizeCaptionOverlayById([caption], caption.id, -20)[0].caption?.fontSize, 12);
++  assert.equal(resizeCaptionOverlayById([caption], caption.id, -20)[0].caption?.fontSize, 1);
+ });
+ 
+ test("projects caption resizing along cardinal and diagonal handle directions", () => {
+@@ -4409,7 +4501,7 @@ test("projects caption resizing along cardinal and diagonal handle directions",
+   }), 54);
+ });
+ 
+-test("clamps directional caption resizing to readable limits", () => {
++test("clamps directional caption resizing to editable limits", () => {
+   assert.equal(getResizedCaptionFontSizeFromHandle({
+     startFontSize: 150,
+     startX: 100,
+@@ -4425,7 +4517,7 @@ test("clamps directional caption resizing to readable limits", () => {
+     pointerX: 200,
+     pointerY: 100,
+     handle: "left",
+-  }), 12);
++  }), 1);
+ });
+ 
+ test("preserves caption resize references when the clamped size is unchanged", () => {

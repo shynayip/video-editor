@@ -1,0 +1,9 @@
+.crop-control-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.crop-control-grid label {
+  min-width: 0;
+  gap: 4px 6px;
+}

@@ -46,6 +46,7 @@ import {
   defaultClipAdjustment,
   deleteClipById,
   duplicateClipById,
+  ensureLinkedAudioForVideo,
   keepDominantVoiceInLinkedVideo,
   getActiveClipsAtFrame,
   getActiveVideoLayersAtFrame,
@@ -107,6 +108,7 @@ import {
   resizeCutoutTransform,
   setClipEffectById,
   setClipFilterById,
+  setClipAdjustmentById,
   setClipSpeedById,
   setClipVolumeById,
   setVideoLayerSpeed,
@@ -125,7 +127,7 @@ import {
   shouldMovePlayheadDuringScrub,
   shouldMuteVideoNativeAudio,
   splitClipByIdAtFrame,
-  splitSceneMediaItemAtFrame,
+  intersectSourceRanges,
   subtractSourceRanges,
   ClipAnimationEasing,
   ClipAnimationPreset,
@@ -145,6 +147,7 @@ import {
   TimelineClip,
   TrackName,
   trimClipById,
+  trimMediaItemRange,
   undoTimelineHistory,
   VideoLayerDirection,
   VideoLayerControlHistoryGesture,
@@ -459,6 +462,30 @@ const shouldShowTimelineWaveform = (clip: TimelineClip) =>
       ? !isImageClip(clip)
       : clip.track === "cutout" && clip.cutout?.mediaKind === "video"));
 
+const getTimelineThumbnailCount = (clip: TimelineClip) =>
+  Math.max(
+    1,
+    Math.min(12, Math.ceil((clip.duration * timelineScale) / 84)),
+  );
+
+const seekTimelineThumbnail = (
+  video: HTMLVideoElement,
+  clip: TimelineClip,
+  index: number,
+  count: number,
+) => {
+  const sourceStartSeconds = (clip.sourceStart ?? 0) / fps;
+  const sourceDurationSeconds =
+    (clip.duration * (clip.speed ?? 1)) / fps;
+  const requestedTime =
+    sourceStartSeconds +
+    sourceDurationSeconds * ((index + 0.5) / Math.max(1, count));
+  const latestSeekTime = Number.isFinite(video.duration)
+    ? Math.max(0, video.duration - 0.05)
+    : requestedTime;
+  video.currentTime = Math.max(0, Math.min(requestedTime, latestSeekTime));
+};
+
 const createWaveformLinePoints = (clipId: string, duration: number) => {
   const amplitudes = createWaveformBars(
     clipId,
@@ -502,6 +529,15 @@ const formatMediaPreviewTime = (seconds: number) => {
   const minutes = Math.floor(totalSeconds / 60);
   const remainingSeconds = totalSeconds % 60;
   return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+};
+
+const formatMediaTrimTime = (frame: number) => {
+  const totalSeconds = Math.max(0, frame) / fps;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds - minutes * 60;
+  return `${String(minutes).padStart(2, "0")}:${seconds
+    .toFixed(2)
+    .padStart(5, "0")}`;
 };
 
 const defaultClipAnimation = {
@@ -722,20 +758,6 @@ const setClipFilterIntensityById = (
       filter: clip.visual?.filter ?? "none",
       effectIntensity: clip.visual?.effectIntensity,
       filterIntensity: intensity,
-    },
-  }));
-
-const setClipAdjustmentById = (
-  clips: TimelineClip[],
-  clipId: string | null,
-  adjustment: Partial<ClipAdjustment>,
-): TimelineClip[] =>
-  updateClipById(clips, clipId, (clip) => ({
-    ...clip,
-    adjustment: {
-      ...defaultClipAdjustment,
-      ...clip.adjustment,
-      ...adjustment,
     },
   }));
 
@@ -1026,7 +1048,8 @@ const getClipAdjustmentStyle = (clip?: TimelineClip) => {
   };
 
   return {
-    transform: `scale(${adjustment.scale}) rotate(${adjustment.rotation}deg)`,
+    transform: `translate(${adjustment.positionX}%, ${adjustment.positionY}%) scale(${adjustment.scale}) rotate(${adjustment.rotation}deg)`,
+    transformOrigin: "center",
     clipPath: `inset(${adjustment.cropTop}% ${adjustment.cropRight}% ${adjustment.cropBottom}% ${adjustment.cropLeft}%)`,
   };
 };
@@ -1407,16 +1430,22 @@ type TimelineRow = {
   label: string;
   order: number;
   videoLayer?: number;
-  audioKind?: "voiceover";
+  audioKind?: "voiceover" | "imported";
 };
 
 const isVoiceoverClip = (clip: TimelineClip) =>
   clip.track === "audio" &&
   (clip.audioKind === "voiceover" || clip.id.startsWith("voice-"));
 
+const isImportedAudioClip = (clip: TimelineClip) =>
+  clip.track === "audio" && !clip.linkedClipId && !isVoiceoverClip(clip);
+
 const timelineRowContainsClip = (row: TimelineRow, clip: TimelineClip) => {
   if (row.audioKind === "voiceover") {
     return isVoiceoverClip(clip);
+  }
+  if (row.audioKind === "imported") {
+    return isImportedAudioClip(clip);
   }
 
   return row.videoLayer !== undefined
@@ -1440,10 +1469,12 @@ type VideoDropTarget =
 type PointerDrag = {
   type: "timeline" | "media";
   id: string;
+  mediaIds?: string[];
   label: string;
   x: number;
   y: number;
   pointerStartX?: number;
+  pointerStartY?: number;
   originalStart?: number;
   grabOffsetFrames?: number;
 };
@@ -1568,6 +1599,14 @@ type CropDrag = {
   originalAdjustment: ClipAdjustment;
 };
 
+type AdjustmentPanDrag = {
+  clipId: string;
+  startX: number;
+  startY: number;
+  originalClips: TimelineClip[];
+  originalAdjustment: ClipAdjustment;
+};
+
 type RotateDrag = {
   clipId: string;
   centerX: number;
@@ -1639,6 +1678,8 @@ export const MyComposition = () => {
 export const MyComponent: React.FC<Props> = ({ project }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importChoiceDialogRef = useRef<HTMLDialogElement>(null);
+  const mediaTrimDialogRef = useRef<HTMLDialogElement>(null);
+  const mediaTrimVideoRef = useRef<HTMLVideoElement>(null);
   const pendingImportFilesRef = useRef<File[]>([]);
   const musicInputRef = useRef<HTMLInputElement>(null);
   const stickerInputRef = useRef<HTMLInputElement>(null);
@@ -1654,6 +1695,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const previewSourceRef = useRef<string | null>(null);
   const timelineContentRef = useRef<HTMLDivElement>(null);
   const timelineScrollRef = useRef<HTMLDivElement>(null);
+  const suppressMediaClickRef = useRef(false);
   const animationQuickMenuRef = useRef<HTMLDivElement>(null);
   const voiceRecorderRef = useRef<BrowserVoiceRecorder | null>(null);
   const [initialProject] = useState<SavedEditorProject | null>(
@@ -1687,16 +1729,28 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       initialProject?.mediaItems[0]?.id ??
       initialMediaItems[0].id,
   );
+  const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>(() => {
+    const initialId =
+      initialProject?.selectedMediaId ??
+      initialProject?.mediaItems[0]?.id ??
+      initialMediaItems[0]?.id;
+    return initialId ? [initialId] : [];
+  });
   const [mediaPreviewTime, setMediaPreviewTime] = useState(0);
   const [mediaPreviewDuration, setMediaPreviewDuration] = useState(0);
   const [isMediaPreviewPlaying, setIsMediaPreviewPlaying] = useState(false);
   const [mediaPreviewVolume, setMediaPreviewVolume] = useState(1);
+  const [mediaTrimDraft, setMediaTrimDraft] = useState<{
+    mediaId: string;
+    startFrame: number;
+    endFrame: number;
+  } | null>(null);
   const [isMediaPreviewVolumeOpen, setIsMediaPreviewVolumeOpen] =
     useState(false);
   const [isMediaPreviewVolumeAdjusting, setIsMediaPreviewVolumeAdjusting] =
     useState(false);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
-  const [mediaPreviewFrame, setMediaPreviewFrame] = useState(0);
+  const [, setMediaPreviewFrame] = useState(0);
   const [projectStatus, setProjectStatus] = useState("");
   const [isExporting, setIsExporting] = useState(false);
   const [playheadFrame, setPlayheadFrame] = useState(0);
@@ -1801,6 +1855,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     "sliders",
   );
   const [cropDrag, setCropDrag] = useState<CropDrag | null>(null);
+  const [adjustmentPanDrag, setAdjustmentPanDrag] =
+    useState<AdjustmentPanDrag | null>(null);
   const [rotateDrag, setRotateDrag] = useState<RotateDrag | null>(null);
 
   clipsRef.current = clips;
@@ -1809,10 +1865,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
   const projectDuration = useMemo(() => getTimelineDuration(clips), [clips]);
   const mainVideoLayerEnd = useMemo(() => getVideoLayerEnd(clips, 0), [clips]);
-  const draggedMediaItem =
+  const draggedMediaItems =
     pointerDrag?.type === "media"
-      ? mediaItems.find((item) => item.id === pointerDrag.id)
-      : null;
+      ? mediaItems.filter((item) =>
+          (pointerDrag.mediaIds ?? [pointerDrag.id]).includes(item.id),
+        )
+      : [];
+  const draggedMediaItem = draggedMediaItems[0] ?? null;
+  const draggedMediaDuration = draggedMediaItems.reduce(
+    (total, item) => total + item.durationInFrames,
+    0,
+  );
   const draggedTimelineClip =
     pointerDrag?.type === "timeline"
       ? clips.find((clip) => clip.id === pointerDrag.id)
@@ -1824,7 +1887,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const mainAppendTargetWidth = draggedMediaItem
     ? Math.max(
         96,
-        Math.min(draggedMediaItem.durationInFrames * timelineScale, 220),
+        Math.min(draggedMediaDuration * timelineScale, 360),
       )
     : 0;
   const mainAppendVisibleOverlap = 48;
@@ -1833,12 +1896,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     mainVideoLayerEnd * timelineScale - mainAppendVisibleOverlap,
   );
   const dragRunwayWidth = pointerDrag
-    ? Math.max(
-        960,
-        (draggedMediaItem?.durationInFrames ??
-          draggedTimelineClip?.duration ??
-          0) * timelineScale,
-      )
+      ? Math.max(
+          960,
+          (draggedMediaDuration || (draggedTimelineClip?.duration ?? 0)) *
+            timelineScale,
+        )
     : 0;
   const timelineCanvasWidth = Math.max(
     projectDuration * timelineScale,
@@ -1898,20 +1960,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       ? selectedClip
       : null;
   const selectedMainVoiceClip =
-    selectedClip?.track === "main" &&
+    (selectedClip?.track === "main" || selectedClip?.track === "upper") &&
     selectedClip.mediaType !== "image" &&
     selectedClip.src
       ? selectedClip
       : null;
-  const canKeepMainVoice = Boolean(
-    selectedMainVoiceClip?.linkedClipId &&
-    clips.some(
-      (clip) =>
-        clip.id === selectedMainVoiceClip.linkedClipId &&
-        clip.track === "audio" &&
-        clip.linkedClipId === selectedMainVoiceClip.id,
-    ),
-  );
+  const canKeepMainVoice = Boolean(selectedMainVoiceClip);
 
   useEffect(() => {
     autoCaptionSelectionVersionRef.current += 1;
@@ -2146,7 +2200,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     ? getMediaItemType(selectedMedia)
     : null;
   const isSelectedMediaScene =
-    selectedMediaType === "video" && isDetectedSceneMediaItem(selectedMedia);
+    selectedMediaType === "video" &&
+    Boolean(
+      isDetectedSceneMediaItem(selectedMedia) ||
+        (selectedMedia &&
+          ((selectedMedia.sourceStart ?? 0) > 0 ||
+            (selectedMedia.sourceDurationInFrames ??
+              selectedMedia.durationInFrames) > selectedMedia.durationInFrames)),
+    );
+  const mediaTrimItem = mediaTrimDraft
+    ? mediaItems.find((item) => item.id === mediaTrimDraft.mediaId) ?? null
+    : null;
   const mediaPreviewStartSeconds = (selectedMedia?.sourceStart ?? 0) / fps;
   const mediaPreviewEndSeconds =
     mediaPreviewStartSeconds + (selectedMedia?.durationInFrames ?? 0) / fps;
@@ -2370,6 +2434,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             ?.timelineRowOrder ??
           -10 + videoLayer,
       })),
+      ...(clips.some(isImportedAudioClip)
+        ? [
+            {
+              key: "imported-audio",
+              id: "audio" as TrackName,
+              label: "Imported audio",
+              audioKind: "imported" as const,
+              order: -90,
+            },
+          ]
+        : []),
       ...(clips.some(isVoiceoverClip) || isRecording
         ? [
             {
@@ -2618,11 +2693,25 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     resetCaptionStatus();
   };
 
-  const chooseMedia = (mediaItem: MediaItem) => {
+  const chooseMedia = (mediaItem: MediaItem, additive = false) => {
     previewVideoRef.current?.pause();
-    setSelectedMediaId(mediaItem.id);
-    if (isDetectedSceneMediaItem(mediaItem)) {
-      setMediaPreviewTime((mediaItem.sourceStart ?? 0) / fps);
+    const isAlreadySelected = selectedMediaIds.includes(mediaItem.id);
+    const nextSelectedIds = additive
+      ? isAlreadySelected
+        ? selectedMediaIds.filter((id) => id !== mediaItem.id)
+        : [...selectedMediaIds, mediaItem.id]
+      : [mediaItem.id];
+    const nextPrimaryId =
+      additive && isAlreadySelected
+        ? (nextSelectedIds[nextSelectedIds.length - 1] ?? null)
+        : mediaItem.id;
+    const nextPrimaryMedia =
+      mediaItems.find((item) => item.id === nextPrimaryId) ?? mediaItem;
+
+    setSelectedMediaIds(nextSelectedIds);
+    setSelectedMediaId(nextPrimaryId);
+    if (isDetectedSceneMediaItem(nextPrimaryMedia)) {
+      setMediaPreviewTime((nextPrimaryMedia.sourceStart ?? 0) / fps);
     } else {
       setMediaPreviewTime(0);
     }
@@ -2633,20 +2722,69 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setPreviewMode("media");
   };
 
-  const splitSelectedMediaScene = (mediaItem: MediaItem) => {
-    const nextMediaItems = splitSceneMediaItemAtFrame({
-      mediaItems,
+  const openMediaTrimEditor = (mediaItem: MediaItem) => {
+    previewVideoRef.current?.pause();
+    setIsMediaPreviewPlaying(false);
+    setMediaTrimDraft({
       mediaId: mediaItem.id,
-      relativeFrame: mediaPreviewFrame,
+      startFrame: 0,
+      endFrame: Math.max(1, mediaItem.durationInFrames),
     });
-    if (nextMediaItems === mediaItems) {
-      setProjectStatus("Choose an interior scene frame");
+    window.requestAnimationFrame(() =>
+      mediaTrimDialogRef.current?.showModal(),
+    );
+  };
+
+  const closeMediaTrimEditor = () => {
+    mediaTrimVideoRef.current?.pause();
+    mediaTrimDialogRef.current?.close();
+    setMediaTrimDraft(null);
+  };
+
+  const previewMediaTrimFrame = (
+    mediaItem: MediaItem,
+    relativeFrame: number,
+  ) => {
+    const video = mediaTrimVideoRef.current;
+    if (!video) {
+      return;
+    }
+    video.currentTime =
+      ((mediaItem.sourceStart ?? 0) + Math.max(0, relativeFrame)) / fps;
+  };
+
+  const applyMediaTrim = () => {
+    if (!mediaTrimDraft || !mediaTrimItem) {
       return;
     }
 
-    setMediaItems(nextMediaItems);
-    setSelectedMediaId(mediaItem.id);
-    setProjectStatus("Scene split");
+    const startFrame = Math.max(
+      0,
+      Math.min(mediaTrimDraft.startFrame, mediaTrimItem.durationInFrames - 1),
+    );
+    const endFrame = Math.max(
+      startFrame + 1,
+      Math.min(mediaTrimDraft.endFrame, mediaTrimItem.durationInFrames),
+    );
+    const durationInFrames = endFrame - startFrame;
+    const sourceStart = (mediaTrimItem.sourceStart ?? 0) + startFrame;
+
+    setMediaItems((currentItems) =>
+      trimMediaItemRange({
+        mediaItems: currentItems,
+        mediaId: mediaTrimItem.id,
+        startFrame,
+        endFrame,
+      }),
+    );
+    setSelectedMediaId(mediaTrimItem.id);
+    setSelectedMediaIds([mediaTrimItem.id]);
+    setMediaPreviewTime(sourceStart / fps);
+    setMediaPreviewDuration(0);
+    setMediaPreviewFrame(0);
+    setPreviewMode("media");
+    setProjectStatus(`Video trimmed to ${formatMediaDuration(durationInFrames)}`);
+    closeMediaTrimEditor();
   };
 
   const deleteMediaItem = (mediaId: string) => {
@@ -2658,6 +2796,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
     setMediaItems(result.mediaItems);
     setSelectedMediaId(result.selectedMediaId);
+    setSelectedMediaIds((currentIds) => {
+      const remainingIds = currentIds.filter((id) => id !== mediaId);
+      if (remainingIds.length > 0) return remainingIds;
+      return result.selectedMediaId ? [result.selectedMediaId] : [];
+    });
     setProjectStatus(result.message);
   };
 
@@ -3056,6 +3199,24 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setCropDrag({
       clipId: clipControlTarget.id,
       edge,
+      startX: event.clientX,
+      startY: event.clientY,
+      originalClips: clips,
+      originalAdjustment: {
+        ...defaultClipAdjustment,
+        ...clipControlTarget.adjustment,
+      },
+    });
+  };
+
+  const startManualAdjustmentPan = (event: PointerEvent<HTMLDivElement>) => {
+    if (!clipControlTarget || !canEditSelectedVisual) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setAdjustmentPanDrag({
+      clipId: clipControlTarget.id,
       startX: event.clientX,
       startY: event.clientY,
       originalClips: clips,
@@ -3940,7 +4101,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       setCaptionStatus({
         kind: "error",
         message:
-          "Select a main video clip with its linked audio before keeping the main voice.",
+          "Select a main or overlay video clip before keeping the main voice.",
       });
       return;
     }
@@ -3953,6 +4114,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     const sourceClipSpeed = selectedMainVoiceClip.speed ?? 1;
     const sourceStartSeconds = sourceClipSourceStart / fps;
     const sourceDurationSeconds = (sourceClipDuration * sourceClipSpeed) / fps;
+    const referenceVoiceClip = clipsRef.current
+      .filter(
+        (clip) =>
+          clip.id !== sourceClipId &&
+          clip.track === "main" &&
+          clip.mediaType !== "image" &&
+          Boolean(clip.src) &&
+          clip.start < selectedMainVoiceClip.start,
+      )
+      .sort(
+        (left, right) =>
+          right.duration - left.duration || left.start - right.start,
+      )[0];
     const abortController = new AbortController();
     const isCurrentRequest = () =>
       keepMainVoiceRequestRef.current === requestToken &&
@@ -3961,6 +4135,60 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         selectedClipIdRef.current,
         clipsRef.current,
       );
+    const removeNonSpeakingScene = (message: string) => {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      const replacementClip = clipsRef.current
+        .filter(
+          (clip) =>
+            clip.id !== sourceClipId &&
+            (clip.track === "main" ||
+              clip.track === "upper" ||
+              clip.track === "cutout") &&
+            clip.mediaType !== "image" &&
+            Boolean(clip.src),
+        )
+        .sort((left, right) => {
+          const leftDistance = Math.abs(left.start - selectedMainVoiceClip.start);
+          const rightDistance = Math.abs(
+            right.start - selectedMainVoiceClip.start,
+          );
+          return leftDistance - rightDistance || left.start - right.start;
+        })[0];
+      if (!replacementClip) {
+        preserveUncertainScene(
+          "This is the only video in the project, so it was kept. Split or trim it before removing silent sections.",
+        );
+        return;
+      }
+
+      commitClipChange((currentClips) => {
+        if (
+          !isDominantVoiceRequestCurrent(
+            snapshot,
+            sourceClipId,
+            currentClips,
+          )
+        ) {
+          return currentClips;
+        }
+
+        return deleteClipById(currentClips, sourceClipId);
+      });
+      setSelectedClipId(replacementClip.id);
+      setSelectedTrack(replacementClip.track);
+      setPlayheadFrame(replacementClip.start);
+      setCaptionStatus({ kind: "success", message });
+      setPreviewMode("timeline");
+      setIsAudioTrackVisible(false);
+    };
+    const preserveUncertainScene = (message: string) => {
+      if (!isCurrentRequest()) return;
+      setCaptionStatus({kind: "error", message});
+      setPreviewMode("timeline");
+    };
 
     keepMainVoiceRequestRef.current = requestToken;
     keepMainVoiceAbortControllerRef.current = abortController;
@@ -3995,6 +4223,41 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       formData.append("file", clipFile);
       formData.append("sourceStart", String(sourceStartSeconds));
       formData.append("duration", String(sourceDurationSeconds));
+      if (referenceVoiceClip?.src) {
+        setCaptionStatus({
+          kind: "loading",
+          message: "Comparing with the main-track speaker...",
+        });
+        const referenceResponse = await fetch(
+          resolveMediaSource(referenceVoiceClip.src),
+          {signal: abortController.signal},
+        );
+        if (!isCurrentRequest()) return;
+        if (!referenceResponse.ok) {
+          throw new Error("Could not load the main-track voice reference.");
+        }
+        const referenceBlob = await referenceResponse.blob();
+        if (!isCurrentRequest()) return;
+        formData.append(
+          "referenceFile",
+          new File(
+            [referenceBlob],
+            getCaptionSourceFileName(referenceVoiceClip, referenceBlob),
+            {type: referenceBlob.type || "video/mp4"},
+          ),
+        );
+        formData.append(
+          "referenceSourceStart",
+          String((referenceVoiceClip.sourceStart ?? 0) / fps),
+        );
+        formData.append(
+          "referenceDuration",
+          String(
+            (referenceVoiceClip.duration * (referenceVoiceClip.speed ?? 1)) /
+              fps,
+          ),
+        );
+      }
 
       setCaptionStatus({ kind: "loading", message: "Detecting speakers..." });
       const dominantVoiceResponse = await fetch("/api/detect-dominant-voice", {
@@ -4169,46 +4432,174 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           endSeconds: range.endSeconds,
         };
       });
-      const retainedRanges = subtractSourceRanges(
+
+      const speechFormData = new FormData();
+      speechFormData.append("file", clipFile);
+      speechFormData.append("sourceStart", String(sourceStartSeconds));
+      speechFormData.append("duration", String(sourceDurationSeconds));
+      setCaptionStatus({
+        kind: "loading",
+        message: "Finding spoken words...",
+      });
+      const speechResponse = await fetch("/api/detect-speech", {
+        method: "POST",
+        body: speechFormData,
+        signal: abortController.signal,
+      });
+      if (!isCurrentRequest()) return;
+
+      let speechPayload: unknown;
+      try {
+        speechPayload = await speechResponse.json();
+      } catch {
+        throw new Error("Speech detection returned an invalid response.");
+      }
+      if (!speechResponse.ok) {
+        const speechServerMessage =
+          typeof speechPayload === "object" &&
+          speechPayload !== null &&
+          !Array.isArray(speechPayload) &&
+          "error" in speechPayload &&
+          typeof speechPayload.error === "object" &&
+          speechPayload.error !== null &&
+          "message" in speechPayload.error &&
+          typeof speechPayload.error.message === "string"
+            ? speechPayload.error.message
+            : null;
+        throw new Error(speechServerMessage ?? "Speech detection failed.");
+      }
+      if (
+        typeof speechPayload !== "object" ||
+        speechPayload === null ||
+        Array.isArray(speechPayload) ||
+        !("ranges" in speechPayload) ||
+        !Array.isArray(speechPayload.ranges)
+      ) {
+        throw new Error("Speech detection response did not include ranges.");
+      }
+      const speechRanges = speechPayload.ranges.map((range) => {
+        if (
+          typeof range !== "object" ||
+          range === null ||
+          Array.isArray(range) ||
+          !("startSeconds" in range) ||
+          typeof range.startSeconds !== "number" ||
+          !Number.isFinite(range.startSeconds) ||
+          !("endSeconds" in range) ||
+          typeof range.endSeconds !== "number" ||
+          !Number.isFinite(range.endSeconds)
+        ) {
+          throw new Error("Speech detection returned an invalid range.");
+        }
+        return {
+          startSeconds: range.startSeconds,
+          endSeconds: range.endSeconds,
+        };
+      });
+      if (speechRanges.length === 0) {
+        removeNonSpeakingScene(
+          "Removed the selected non-speaking scene and its linked audio.",
+        );
+        return;
+      }
+
+      const spokenMainVoiceRanges = intersectSourceRanges(
         ranges,
+        speechRanges,
+        sourceDurationSeconds,
+      );
+      const retainedRanges = subtractSourceRanges(
+        spokenMainVoiceRanges,
         silenceRanges,
         sourceDurationSeconds,
       );
       if (retainedRanges.length === 0) {
+        removeNonSpeakingScene(
+          "Removed the selected scene because it did not contain the main voice.",
+        );
+        return;
+      }
+
+      const cleanupFormData = new FormData();
+      cleanupFormData.append("file", clipFile);
+      setCaptionStatus({
+        kind: "loading",
+        message: "Reducing background noise...",
+      });
+      const cleanupResponse = await fetch("/api/clean-voice-audio", {
+        method: "POST",
+        body: cleanupFormData,
+        signal: abortController.signal,
+      });
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      let cleanupPayload: unknown;
+      try {
+        cleanupPayload = await cleanupResponse.json();
+      } catch {
+        throw new Error("Background-noise cleanup returned an invalid response.");
+      }
+      const cleanedSrc =
+        typeof cleanupPayload === "object" &&
+        cleanupPayload !== null &&
+        !Array.isArray(cleanupPayload) &&
+        "src" in cleanupPayload &&
+        typeof cleanupPayload.src === "string" &&
+        cleanupPayload.src.trim()
+          ? cleanupPayload.src.trim()
+          : null;
+      if (!cleanupResponse.ok || !cleanedSrc) {
+        const cleanupServerMessage =
+          typeof cleanupPayload === "object" &&
+          cleanupPayload !== null &&
+          !Array.isArray(cleanupPayload) &&
+          "error" in cleanupPayload &&
+          typeof cleanupPayload.error === "object" &&
+          cleanupPayload.error !== null &&
+          "message" in cleanupPayload.error &&
+          typeof cleanupPayload.error.message === "string"
+            ? cleanupPayload.error.message
+            : null;
         throw new Error(
-          "No main voice remained after removing silent sections.",
+          cleanupServerMessage ?? "Background-noise cleanup failed.",
         );
       }
 
       setCaptionStatus({
         kind: "loading",
-        message: "Removing other voices and silence...",
+        message: "Removing silent scenes and other voices...",
       });
       if (!isCurrentRequest()) {
         return;
       }
       commitClipChange((currentClips) => {
         if (
-          keepMainVoiceRequestRef.current !== requestToken ||
           !isDominantVoiceRequestCurrent(
             snapshot,
-            selectedClipIdRef.current,
+            sourceClipId,
             currentClips,
           )
         ) {
           return currentClips;
         }
 
-        return keepDominantVoiceInLinkedVideo(
+        const clipsWithLinkedAudio = ensureLinkedAudioForVideo(
           currentClips,
+          sourceClipId,
+        );
+        return keepDominantVoiceInLinkedVideo(
+          clipsWithLinkedAudio,
           sourceClipId,
           retainedRanges,
           fps,
+          cleanedSrc,
         );
       });
       setCaptionStatus({
         kind: "success",
-        message: `Kept the main voice and removed ${silenceRanges.length} silent section${silenceRanges.length === 1 ? "" : "s"}.`,
+        message: "Removed non-speaking scenes and cleaned the remaining voice.",
       });
       setPreviewMode("timeline");
       setIsAudioTrackVisible(true);
@@ -4798,38 +5189,64 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     [],
   );
 
-  const placeMediaOnVideoLayer = useCallback(
-    (mediaItem: MediaItem, videoLayer: number, startFrame: number) => {
-      const mediaTiming = { duration: mediaItem.durationInFrames };
-      const { videoId, clips: mediaClips } = createMediaTimelineClips(
-        { ...mediaItem, durationInFrames: mediaTiming.duration },
-        videoLayer,
-        startFrame,
-      );
+  const placeMediaBatchOnVideoLayer = useCallback(
+    (
+      batchItems: MediaItem[],
+      videoLayer: number,
+      startFrame: number,
+      mode: "insert" | "append" | "place",
+      rowOrder?: number,
+    ) => {
+      if (batchItems.length === 0) return;
 
-      commitClipChange((currentClips) =>
-        videoLayer === 0
-          ? insertVideoPairOnLayerAtFrame(
-              currentClips,
-              mediaClips,
-              videoLayer,
-              startFrame,
-            )
-          : placeVideoPairOnLayer(
-              currentClips,
-              mediaClips,
-              videoLayer,
-              startFrame,
-            ),
-      );
-      setSelectedClipId(videoId);
+      const preparedItems = batchItems.map((mediaItem) => ({
+        mediaItem,
+        ...createMediaTimelineClips(mediaItem, videoLayer, 0),
+      }));
+
+      commitClipChange((currentClips) => {
+        let updatedClips = currentClips;
+        let cursorFrame =
+          mode === "append"
+            ? getVideoLayerEnd(currentClips, videoLayer)
+            : Math.max(0, startFrame);
+
+        for (const preparedItem of preparedItems) {
+          const positionedClips = preparedItem.clips.map((clip) => {
+            const positionedClip = { ...clip, start: cursorFrame };
+            return rowOrder !== undefined && getVideoLayer(clip) === videoLayer
+              ? { ...positionedClip, timelineRowOrder: rowOrder }
+              : positionedClip;
+          });
+
+          updatedClips =
+            mode === "insert" && videoLayer === 0
+              ? insertVideoPairOnLayerAtFrame(
+                  updatedClips,
+                  positionedClips,
+                  videoLayer,
+                  cursorFrame,
+                )
+              : placeVideoPairOnLayer(
+                  updatedClips,
+                  positionedClips,
+                  videoLayer,
+                  cursorFrame,
+                );
+          cursorFrame += preparedItem.mediaItem.durationInFrames;
+        }
+
+        return updatedClips;
+      });
+
+      setSelectedClipId(preparedItems[0].videoId);
       setSelectedVideoLayer(null);
       setSelectedTrack(videoLayer === 0 ? "main" : "upper");
-      setIsAudioTrackVisible(getMediaItemType(mediaItem) === "video");
+      setIsAudioTrackVisible(
+        batchItems.some((item) => getMediaItemType(item) === "video"),
+      );
       setProjectStatus(
-        videoLayer === 0
-          ? "Video inserted on the Main track at the drop position"
-          : "Video added to the selected overlay track",
+        `${batchItems.length} selected ${batchItems.length === 1 ? "scene" : "scenes"} added together`,
       );
     },
     [commitClipChange, createMediaTimelineClips],
@@ -5306,6 +5723,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       );
       if (firstSuccessfulImport) {
         setSelectedMediaId(firstSuccessfulImport.mediaId);
+        setSelectedMediaIds([firstSuccessfulImport.mediaId]);
         setIsPreviewPlaying(false);
         setIsMediaPreviewPlaying(false);
         setPreviewMode("media");
@@ -5381,19 +5799,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     importChoiceDialogRef.current?.showModal();
   };
 
-  const importBackgroundMusic = async (
+  const importAudioSources = async (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const input = event.currentTarget;
-    const selectedFiles = Array.from(input.files ?? []).filter((file) =>
-      file.type.startsWith("audio/"),
+    const selectedFiles = Array.from(input.files ?? []).filter(
+      (file) =>
+        file.type.startsWith("audio/") || file.type.startsWith("video/"),
     );
 
     if (selectedFiles.length === 0) {
       return;
     }
 
-    setProjectStatus("Importing music...");
+    setProjectStatus("Importing audio...");
 
     try {
       const timestamp = Date.now();
@@ -5401,13 +5820,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         selectedFiles.map(async (file, index) => {
           const previewSrc = URL.createObjectURL(file);
           try {
+            const isVideoSource = file.type.startsWith("video/");
             const [durationInFrames, uploadedMedia] = await Promise.all([
-              readAudioDurationInFrames(previewSrc),
+              isVideoSource
+                ? readVideoDurationInFrames(previewSrc)
+                : readAudioDurationInFrames(previewSrc),
               uploadMediaFile(file),
             ]);
+            const sourceLabel = (uploadedMedia.label || file.name).replace(
+              /\.[^.]+$/,
+              "",
+            );
             return createBackgroundMusicClip({
-              id: `music-${timestamp}-${index}`,
-              label: (uploadedMedia.label || file.name).replace(/\.[^.]+$/, ""),
+              id: `imported-audio-${timestamp}-${index}`,
+              label: isVideoSource ? `${sourceLabel} audio` : sourceLabel,
               src: uploadedMedia.src,
               playheadFrame,
               durationInFrames,
@@ -5424,12 +5850,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       setIsAudioTrackVisible(true);
       setActiveTool("audio");
       setPreviewMode("timeline");
-      setProjectStatus("Music imported");
+      setProjectStatus(
+        `${newMusicClips.length} audio clip${newMusicClips.length === 1 ? "" : "s"} imported`,
+      );
     } catch (error) {
       setProjectStatus(
         error instanceof Error
-          ? `Music import failed: ${error.message}`
-          : "Music import failed.",
+          ? `Audio import failed: ${error.message}`
+          : "Audio import failed.",
       );
     } finally {
       input.value = "";
@@ -5526,14 +5954,28 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     event: PointerEvent<HTMLElement>,
     mediaItem: MediaItem,
   ) => {
+    if (event.ctrlKey || event.metaKey) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    const mediaIds = selectedMediaIds.includes(mediaItem.id)
+      ? selectedMediaIds
+      : [mediaItem.id];
+    if (!selectedMediaIds.includes(mediaItem.id)) {
+      setSelectedMediaIds(mediaIds);
+      setSelectedMediaId(mediaItem.id);
+    }
     setPointerDrag({
       type: "media",
       id: mediaItem.id,
-      label: mediaItem.label.replace(/\.[^.]+$/, ""),
+      mediaIds,
+      label:
+        mediaIds.length > 1
+          ? `${mediaIds.length} selected scenes`
+          : mediaItem.label.replace(/\.[^.]+$/, ""),
       x: event.clientX,
       y: event.clientY,
+      pointerStartX: event.clientX,
+      pointerStartY: event.clientY,
     });
   };
 
@@ -5563,6 +6005,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     };
 
     const handlePointerMove = (event: globalThis.PointerEvent) => {
+      if (
+        pointerDrag.type === "media" &&
+        Math.hypot(
+          event.clientX - (pointerDrag.pointerStartX ?? event.clientX),
+          event.clientY - (pointerDrag.pointerStartY ?? event.clientY),
+        ) > 5
+      ) {
+        suppressMediaClickRef.current = true;
+      }
       setPointerDrag((currentDrag) =>
         currentDrag
           ? { ...currentDrag, x: event.clientX, y: event.clientY }
@@ -5588,66 +6039,45 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         : null;
 
       if (pointerDrag.type === "media" && target?.kind === "track") {
-        const mediaItem = mediaItems.find((item) => item.id === pointerDrag.id);
-        if (mediaItem) {
-          placeMediaOnTimelineTrack(mediaItem, target.track, pointerFrame);
+        const draggedItems = mediaItems.filter((item) =>
+          (pointerDrag.mediaIds ?? [pointerDrag.id]).includes(item.id),
+        );
+        if (draggedItems.length === 1) {
+          placeMediaOnTimelineTrack(draggedItems[0], target.track, pointerFrame);
+        } else if (draggedItems.length > 1) {
+          setProjectStatus(
+            "Drop selected scenes on the Main track or an Overlay track",
+          );
         }
       } else if (targetVideoLayer !== null) {
         if (pointerDrag.type === "media") {
-          const mediaItem = mediaItems.find(
-            (item) => item.id === pointerDrag.id,
+          const draggedItems = mediaItems.filter((item) =>
+            (pointerDrag.mediaIds ?? [pointerDrag.id]).includes(item.id),
           );
 
-          if (mediaItem) {
+          if (draggedItems.length > 0) {
             if (target?.kind === "append-main") {
-              const { videoId, clips: mediaClips } = createMediaTimelineClips(
-                mediaItem,
+              placeMediaBatchOnVideoLayer(
+                draggedItems,
                 0,
                 getVideoLayerEnd(clips, 0),
+                "append",
               );
-              commitClipChange((currentClips) => {
-                const appendFrame = getVideoLayerEnd(currentClips, 0);
-                const appendedMediaClips = mediaClips.map((clip) => ({
-                  ...clip,
-                  start: appendFrame,
-                }));
-                return placeVideoPairOnLayer(
-                  currentClips,
-                  appendedMediaClips,
-                  0,
-                  appendFrame,
-                );
-              });
-              setSelectedClipId(videoId);
-              setSelectedVideoLayer(null);
-              setSelectedTrack("main");
-              setIsAudioTrackVisible(getMediaItemType(mediaItem) === "video");
             } else if (target?.kind === "row-gap") {
-              const { videoId, clips: mediaClips } = createMediaTimelineClips(
-                mediaItem,
+              placeMediaBatchOnVideoLayer(
+                draggedItems,
                 targetVideoLayer,
                 pointerFrame,
+                "place",
+                target.rowOrder,
               );
-              const positionedMediaClips = mediaClips.map((clip) =>
-                getVideoLayer(clip) === targetVideoLayer
-                  ? { ...clip, timelineRowOrder: target.rowOrder }
-                  : clip,
-              );
-
-              commitClipChange((currentClips) =>
-                placeVideoPairOnLayer(
-                  currentClips,
-                  positionedMediaClips,
-                  targetVideoLayer,
-                  pointerFrame,
-                ),
-              );
-              setSelectedClipId(videoId);
-              setSelectedVideoLayer(null);
-              setSelectedTrack(targetVideoLayer === 0 ? "main" : "upper");
-              setIsAudioTrackVisible(getMediaItemType(mediaItem) === "video");
             } else {
-              placeMediaOnVideoLayer(mediaItem, targetVideoLayer, pointerFrame);
+              placeMediaBatchOnVideoLayer(
+                draggedItems,
+                targetVideoLayer,
+                pointerFrame,
+                targetVideoLayer === 0 ? "insert" : "place",
+              );
             }
           }
         } else {
@@ -5695,12 +6125,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   }, [
     clips,
     commitClipChange,
-    createMediaTimelineClips,
     getPointerTimelineFrame,
     getVideoDropTargetFromElement,
     mediaItems,
     placeMediaOnTimelineTrack,
-    placeMediaOnVideoLayer,
+    placeMediaBatchOnVideoLayer,
     pointerDrag,
     projectDuration,
   ]);
@@ -5878,6 +6307,55 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       window.removeEventListener("pointercancel", finishCrop);
     };
   }, [cropDrag]);
+
+  useEffect(() => {
+    if (!adjustmentPanDrag) return;
+
+    const handlePointerMove = (event: globalThis.PointerEvent) => {
+      const bounds = previewWindowRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+
+      const deltaX = ((event.clientX - adjustmentPanDrag.startX) / bounds.width) *
+        100;
+      const deltaY =
+        ((event.clientY - adjustmentPanDrag.startY) / bounds.height) * 100;
+      setTimelineHistory((currentHistory) => ({
+        ...currentHistory,
+        present: setClipAdjustmentById(
+          adjustmentPanDrag.originalClips,
+          adjustmentPanDrag.clipId,
+          {
+            positionX:
+              adjustmentPanDrag.originalAdjustment.positionX + deltaX,
+            positionY:
+              adjustmentPanDrag.originalAdjustment.positionY + deltaY,
+          },
+        ),
+      }));
+    };
+
+    const finishPan = () => {
+      setTimelineHistory((currentHistory) =>
+        currentHistory.present === adjustmentPanDrag.originalClips
+          ? currentHistory
+          : {
+              past: [...currentHistory.past, adjustmentPanDrag.originalClips],
+              present: currentHistory.present,
+              future: [],
+            },
+      );
+      setAdjustmentPanDrag(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishPan, { once: true });
+    window.addEventListener("pointercancel", finishPan, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishPan);
+      window.removeEventListener("pointercancel", finishPan);
+    };
+  }, [adjustmentPanDrag]);
 
   useEffect(() => {
     if (!rotateDrag) return;
@@ -6880,16 +7358,26 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   ))}
                   {mediaItems.map((mediaItem) => (
                     <div
-                      className={`media-thumb ${selectedMediaId === mediaItem.id ? "selected-media" : ""}`}
+                      className={`media-thumb ${selectedMediaIds.includes(mediaItem.id) ? "selected-media" : ""} ${selectedMediaId === mediaItem.id ? "active-media" : ""}`}
                       key={mediaItem.id}
                     >
                       <button
                         className="media-thumb-select"
                         type="button"
+                        aria-pressed={selectedMediaIds.includes(mediaItem.id)}
                         onPointerDown={(event) => {
                           startMediaDrag(event, mediaItem);
                         }}
-                        onClick={() => chooseMedia(mediaItem)}
+                        onClick={(event) => {
+                          if (suppressMediaClickRef.current) {
+                            suppressMediaClickRef.current = false;
+                            return;
+                          }
+                          chooseMedia(
+                            mediaItem,
+                            event.ctrlKey || event.metaKey,
+                          );
+                        }}
                       >
                         {mediaItem.sourceGroupIndex !== undefined ? (
                           <span className="added-chip scene-chip">
@@ -6942,17 +7430,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                         <strong>{mediaItem.label}</strong>
                       </button>
                       {selectedMediaId === mediaItem.id &&
-                      mediaItem.sourceFileId &&
                       getMediaItemType(mediaItem) === "video" ? (
                         <button
-                          aria-label="Split scene"
-                          title="Split scene"
+                          aria-label={`Trim ${mediaItem.label}`}
+                          title="Trim video"
                           className="media-split-button"
                           type="button"
-                          disabled={
-                            mediaPreviewFrame <= 0 ||
-                            mediaPreviewFrame >= mediaItem.durationInFrames
-                          }
+                          disabled={mediaItem.durationInFrames <= 1}
                           onPointerDown={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
@@ -6960,7 +7444,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            splitSelectedMediaScene(mediaItem);
+                            openMediaTrimEditor(mediaItem);
                           }}
                         >
                           <span aria-hidden="true">&#9986;</span>
@@ -7688,12 +8172,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 </div>
                 <span>Select a main or overlay clip.</span>
                 <label>
-                  <strong>Size</strong>
+                  <strong>Zoom</strong>
                   <em>{Math.round(selectedClipAdjustment.scale * 100)}%</em>
                   <input
+                    aria-label="Video zoom"
                     type="range"
                     min="0.25"
-                    max="2"
+                    max="4"
                     step="0.05"
                     value={selectedClipAdjustment.scale}
                     disabled={!canEditSelectedVisual}
@@ -7818,7 +8303,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   type="button"
                   onClick={() => musicInputRef.current?.click()}
                 >
-                  Import music
+                  Import audio
                 </button>
                 <button
                   className={`record-button ${isRecording ? "is-recording" : ""}`}
@@ -7836,9 +8321,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   ref={musicInputRef}
                   className="hidden-file-input"
                   type="file"
-                  accept="audio/*"
+                  accept="audio/*,video/*"
                   multiple
-                  onChange={importBackgroundMusic}
+                  onChange={importAudioSources}
                 />
               </div>
             )}
@@ -8211,6 +8696,59 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           left: `${selectedClipAdjustment.cropLeft}%`,
                         }}
                       >
+                        <div
+                          className={`crop-pan-surface ${
+                            adjustmentPanDrag ? "is-panning" : ""
+                          }`}
+                          role="button"
+                          tabIndex={0}
+                          aria-label="Drag to reposition video"
+                          title="Drag to reposition. Scroll to zoom."
+                          onPointerDown={startManualAdjustmentPan}
+                          onWheel={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            updateSelectedClipAdjustment({
+                              scale:
+                                selectedClipAdjustment.scale +
+                                (event.deltaY < 0 ? 0.1 : -0.1),
+                            });
+                          }}
+                        />
+                        <div
+                          className="crop-canvas-toolbar"
+                          aria-label="Canvas zoom controls"
+                        >
+                          <button
+                            type="button"
+                            aria-label="Zoom out"
+                            title="Zoom out"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={() =>
+                              updateSelectedClipAdjustment({
+                                scale: selectedClipAdjustment.scale - 0.1,
+                              })
+                            }
+                          >
+                            &minus;
+                          </button>
+                          <output>
+                            {Math.round(selectedClipAdjustment.scale * 100)}%
+                          </output>
+                          <button
+                            type="button"
+                            aria-label="Zoom in"
+                            title="Zoom in"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={() =>
+                              updateSelectedClipAdjustment({
+                                scale: selectedClipAdjustment.scale + 0.1,
+                              })
+                            }
+                          >
+                            +
+                          </button>
+                        </div>
                         {(
                           [
                             "top",
@@ -9369,6 +9907,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   </div>
                   <div
                     className={`timeline-track ${track.id === "upper" ? "overlay-timeline-track" : ""} ${
+                      track.id === "audio" ? "audio-timeline-track" : ""
+                    } ${
                       rowHasTimelineWaveform ? "waveform-timeline-track" : ""
                     }`}
                   >
@@ -9394,6 +9934,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           playheadFrame,
                           track.audioKind === "voiceover"
                             ? isVoiceoverClip
+                            : track.audioKind === "imported"
+                              ? isImportedAudioClip
                             : undefined,
                         );
                       }}
@@ -9436,6 +9978,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             Math.max(0, frame),
                             track.audioKind === "voiceover"
                               ? isVoiceoverClip
+                              : track.audioKind === "imported"
+                                ? isImportedAudioClip
                               : undefined,
                           );
                         }
@@ -9570,6 +10114,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             (track.id !== "audio" ||
                               activeTool === "audio" ||
                               track.audioKind === "voiceover" ||
+                              track.audioKind === "imported" ||
                               contextualAudioClipIds.has(clip.id)),
                         )
                         .map((clip) => (
@@ -9589,7 +10134,37 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               shouldShowTimelineWaveform(clip)
                                 ? "has-timeline-waveform"
                                 : ""
-                            } ${clip.track === "audio" ? "audio-timeline-clip" : ""} ${isVoiceoverClip(clip) ? "voiceover-timeline-clip" : ""}`}
+                            } ${clip.track === "audio" ? "audio-timeline-clip" : ""} ${isVoiceoverClip(clip) ? "voiceover-timeline-clip" : ""} ${
+                              clip.track === "main" || clip.track === "upper"
+                                ? "video-timeline-clip"
+                                : ""
+                            } ${
+                              (clip.track === "main" ||
+                                clip.track === "upper") &&
+                              clip.duration * timelineScale < 180
+                                ? "compact-video-timeline-clip"
+                                : ""
+                            } ${
+                              clip.track === "caption"
+                                ? "caption-timeline-clip"
+                                : ""
+                            } ${
+                              (clip.track === "caption" ||
+                                clip.track === "text" ||
+                                clip.track === "sticker" ||
+                                clip.track === "cutout") &&
+                              clip.duration * timelineScale < 120
+                                ? "compact-overlay-clip"
+                                : ""
+                            } ${
+                              (clip.track === "caption" ||
+                                clip.track === "text" ||
+                                clip.track === "sticker" ||
+                                clip.track === "cutout") &&
+                              clip.duration * timelineScale < 48
+                                ? "tiny-overlay-clip"
+                                : ""
+                            }`}
                             key={clip.id}
                             onPointerDown={(event) => {
                               event.stopPropagation();
@@ -9685,32 +10260,42 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             (clip.track === "main" ||
                               clip.track === "upper") ? (
                               <>
-                                {isImageClip(clip) ? (
-                                  <Img
-                                    className="timeline-clip-image"
-                                    src={resolveMediaSource(clip.src)}
-                                    style={getClipFrameStyle(
-                                      clip,
-                                      playheadFrame,
-                                    )}
-                                  />
-                                ) : (
-                                  // eslint-disable-next-line @remotion/warn-native-media-tag
-                                  <video
-                                    className="timeline-clip-video"
-                                    src={resolveMediaSource(clip.src)}
-                                    onError={() =>
-                                      recoverUnavailableVideo(clip.id)
-                                    }
-                                    muted
-                                    playsInline
-                                    preload="metadata"
-                                    style={getClipFrameStyle(
-                                      clip,
-                                      playheadFrame,
-                                    )}
-                                  />
-                                )}
+                                <div className="timeline-video-thumbnail-strip">
+                                  {Array.from(
+                                    {
+                                      length: getTimelineThumbnailCount(clip),
+                                    },
+                                    (_, thumbnailIndex) =>
+                                      isImageClip(clip) ? (
+                                        <Img
+                                          className="timeline-clip-image timeline-video-thumbnail"
+                                          key={`${clip.id}-thumbnail-${thumbnailIndex}`}
+                                          src={resolveMediaSource(clip.src!)}
+                                        />
+                                      ) : (
+                                        // eslint-disable-next-line @remotion/warn-native-media-tag
+                                        <video
+                                          className="timeline-clip-video timeline-video-thumbnail"
+                                          key={`${clip.id}-thumbnail-${thumbnailIndex}`}
+                                          src={resolveMediaSource(clip.src!)}
+                                          onLoadedMetadata={(event) =>
+                                            seekTimelineThumbnail(
+                                              event.currentTarget,
+                                              clip,
+                                              thumbnailIndex,
+                                              getTimelineThumbnailCount(clip),
+                                            )
+                                          }
+                                          onError={() =>
+                                            recoverUnavailableVideo(clip.id)
+                                          }
+                                          muted
+                                          playsInline
+                                          preload="metadata"
+                                        />
+                                      ),
+                                  )}
+                                </div>
                                 <div className="timeline-clip-filmstrip" />
                               </>
                             ) : null}
@@ -9764,6 +10349,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 </svg>
                               </div>
                             ) : null}
+                            {shouldShowTimelineWaveform(clip) ? (
                             <button
                               className={`clip-mute-button ${(clip.volume ?? 1) === 0 ? "muted-clip-button" : ""}`}
                               type="button"
@@ -9787,9 +10373,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             >
                               {(clip.volume ?? 1) === 0 ? "🔇" : "🔊"}
                             </button>
-                            <span>{clip.label}</span>
-                            <small>
-                              {clip.track === "main" && clip.speed
+                            ) : null}
+                            <span className="timeline-clip-label">
+                              {clip.label}
+                            </span>
+                            <small className="timeline-clip-duration">
+                              {clip.track === "audio"
+                                ? formatMediaDuration(clip.duration)
+                                : clip.track === "main" && clip.speed
                                 ? `${clip.speed.toFixed(2)}x`
                                 : `${clip.duration}f`}
                             </small>
@@ -9875,6 +10466,121 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             Cancel
           </button>
         </div>
+      </dialog>
+
+      <dialog
+        ref={mediaTrimDialogRef}
+        className="media-trim-dialog"
+        aria-labelledby="media-trim-title"
+        onCancel={(event) => {
+          event.preventDefault();
+          closeMediaTrimEditor();
+        }}
+      >
+        {mediaTrimDraft && mediaTrimItem ? (
+          <div className="media-trim-content">
+            <div className="media-trim-heading">
+              <div>
+                <h2 id="media-trim-title">Trim video</h2>
+                <p>{mediaTrimItem.label}</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close trim editor"
+                title="Close"
+                onClick={closeMediaTrimEditor}
+              >
+                {"\u00d7"}
+              </button>
+            </div>
+            <div className="media-trim-preview">
+              {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
+              <video
+                ref={mediaTrimVideoRef}
+                src={resolveMediaSource(mediaTrimItem.src)}
+                controls
+                playsInline
+                preload="metadata"
+                onLoadedMetadata={(event) => {
+                  event.currentTarget.currentTime =
+                    ((mediaTrimItem.sourceStart ?? 0) +
+                      mediaTrimDraft.startFrame) /
+                    fps;
+                }}
+              />
+            </div>
+            <div className="media-trim-controls">
+              <label>
+                <span>
+                  Start
+                  <strong>
+                    {formatMediaTrimTime(mediaTrimDraft.startFrame)}
+                  </strong>
+                </span>
+                <input
+                  aria-label="Trim start"
+                  type="range"
+                  min={0}
+                  max={Math.max(0, mediaTrimDraft.endFrame - 1)}
+                  step={1}
+                  value={mediaTrimDraft.startFrame}
+                  onChange={(event) => {
+                    const startFrame = Number(event.currentTarget.value);
+                    setMediaTrimDraft((currentDraft) =>
+                      currentDraft ? { ...currentDraft, startFrame } : null,
+                    );
+                    previewMediaTrimFrame(mediaTrimItem, startFrame);
+                  }}
+                />
+              </label>
+              <label>
+                <span>
+                  End
+                  <strong>
+                    {formatMediaTrimTime(mediaTrimDraft.endFrame)}
+                  </strong>
+                </span>
+                <input
+                  aria-label="Trim end"
+                  type="range"
+                  min={Math.min(
+                    mediaTrimItem.durationInFrames,
+                    mediaTrimDraft.startFrame + 1,
+                  )}
+                  max={mediaTrimItem.durationInFrames}
+                  step={1}
+                  value={mediaTrimDraft.endFrame}
+                  onChange={(event) => {
+                    const endFrame = Number(event.currentTarget.value);
+                    setMediaTrimDraft((currentDraft) =>
+                      currentDraft ? { ...currentDraft, endFrame } : null,
+                    );
+                    previewMediaTrimFrame(
+                      mediaTrimItem,
+                      Math.max(0, endFrame - 1),
+                    );
+                  }}
+                />
+              </label>
+              <div className="media-trim-summary">
+                <span>New duration</span>
+                <strong>
+                  {formatMediaTrimTime(
+                    mediaTrimDraft.endFrame - mediaTrimDraft.startFrame,
+                  )}
+                </strong>
+              </div>
+            </div>
+            <div className="media-trim-actions">
+              <button type="button" onClick={closeMediaTrimEditor}>
+                Cancel
+              </button>
+              <button type="button" onClick={applyMediaTrim}>
+                Apply trim
+              </button>
+            </div>
+          </div>
+        ) : null}
       </dialog>
 
       {animationQuickMenu ? (
@@ -9966,7 +10672,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             top: pointerDrag.y,
           }}
         >
-          {pointerDrag.label}
+          <span>{pointerDrag.label}</span>
         </div>
       ) : null}
     </main>

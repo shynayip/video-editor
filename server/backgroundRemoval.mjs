@@ -8,7 +8,6 @@ import {promisify} from "node:util";
 import ffmpegPath from "ffmpeg-static";
 
 import {createSubjectCutoutEngine} from "./subjectCutoutEngine.mjs";
-import {composeRgbaWithAlpha, interpolateAlpha} from "./subjectMask.mjs";
 
 const execFileAsync = promisify(execFile);
 const RuntimeDOMException = globalThis.DOMException;
@@ -25,11 +24,6 @@ const defaultRunFfmpeg = (args, options) =>
 const defaultLoadImage = async (inputPath) => {
   const {RawImage} = await import("@huggingface/transformers");
   return RawImage.read(inputPath);
-};
-
-const getDefaultRawImageCtor = async () => {
-  const {RawImage} = await import("@huggingface/transformers");
-  return RawImage;
 };
 
 const throwIfAborted = (signal) => {
@@ -69,20 +63,13 @@ export const createBackgroundRemovalProcessor = ({
   readDirectoryImpl = readdir,
   removeDirectoryImpl = rm,
   renameFileImpl = rename,
+  videoMaskFps = 1,
 } = {}) => {
   const engine = subjectEngine ?? createSubjectCutoutEngine({
     pipelineFactory,
     loadImageImpl,
     RawImageCtor,
   });
-  let rawImageCtorPromise;
-  const loadRawImageCtor = () => {
-    rawImageCtorPromise ??= RawImageCtor
-      ? Promise.resolve(RawImageCtor)
-      : getDefaultRawImageCtor();
-    return rawImageCtorPromise;
-  };
-
   return {
     async process({
       inputPath,
@@ -129,6 +116,13 @@ export const createBackgroundRemovalProcessor = ({
         await makeDirectoryImpl(sourceFramesDirectory, {recursive: true});
         await makeDirectoryImpl(processedFramesDirectory, {recursive: true});
         const targetFrameCount = Math.ceil(Number(durationSeconds) * 30);
+        const normalizedMaskFps = Number.isFinite(videoMaskFps)
+          ? Math.max(0.25, Math.min(5, Number(videoMaskFps)))
+          : 1;
+        const targetMaskFrameCount = Math.max(
+          1,
+          Math.ceil(Number(durationSeconds) * normalizedMaskFps),
+        );
         const sourceFramePattern = join(
           sourceFramesDirectory,
           "frame-%08d.png",
@@ -139,9 +133,9 @@ export const createBackgroundRemovalProcessor = ({
           "-t", String(durationSeconds),
           "-i", inputPath,
           "-map", "0:v:0",
-          "-vf", "fps=30",
+          "-vf", `fps=${normalizedMaskFps}`,
           "-vsync", "0",
-          "-frames:v", String(targetFrameCount),
+          "-frames:v", String(targetMaskFrameCount),
           sourceFramePattern,
         ], {signal});
         throwIfAborted(signal);
@@ -154,12 +148,12 @@ export const createBackgroundRemovalProcessor = ({
           throw new Error("FFmpeg did not extract any video frames.");
         }
 
-        const frameNames = extractedFrameNames.slice(0, targetFrameCount);
+        const frameNames = extractedFrameNames.slice(0, targetMaskFrameCount);
         const lastExtractedFramePath = join(
           sourceFramesDirectory,
           extractedFrameNames.at(-1),
         );
-        while (frameNames.length < targetFrameCount) {
+        while (frameNames.length < targetMaskFrameCount) {
           throwIfAborted(signal);
           const paddedFrameName = getFrameName(frameNames.length + 1);
           await copyFileImpl(
@@ -170,72 +164,51 @@ export const createBackgroundRemovalProcessor = ({
           frameNames.push(paddedFrameName);
         }
 
-        const keyframeIndexes = [];
-        for (let frameIndex = 0; frameIndex < targetFrameCount; frameIndex += 3) {
-          keyframeIndexes.push(frameIndex);
-        }
-        const totalProcessingSteps = keyframeIndexes.length + targetFrameCount;
-        let completedProcessingSteps = 0;
-        const reportProcessingProgress = () => {
-          completedProcessingSteps += 1;
-          onProgress?.(
-            10 + Math.round((completedProcessingSteps / totalProcessingSteps) * 80),
-          );
-        };
-        const keyframeAlpha = new Map();
         let previousSubject;
-        for (const [keyframeNumber, frameIndex] of keyframeIndexes.entries()) {
+        for (const [frameIndex, frameName] of frameNames.entries()) {
           throwIfAborted(signal);
           const result = await engine.process(
-            join(sourceFramesDirectory, frameNames[frameIndex]),
+            join(sourceFramesDirectory, frameName),
             {
-              mode: keyframeNumber === 0 ? "video-first" : "video-next",
+              mode: frameIndex === 0 ? "video-first" : "video-next",
               previousSubject,
               signal,
             },
           );
           throwIfAborted(signal);
-          keyframeAlpha.set(frameIndex, result.alpha);
-          previousSubject = result.subject;
-          reportProcessingProgress();
-        }
-
-        const ImageCtor = await loadRawImageCtor();
-        throwIfAborted(signal);
-        for (let frameIndex = 0; frameIndex < targetFrameCount; frameIndex += 1) {
-          throwIfAborted(signal);
-          const leftKeyframeIndex = Math.floor(frameIndex / 3) * 3;
-          const rightKeyframeIndex = leftKeyframeIndex + 3;
-          const leftAlpha = keyframeAlpha.get(leftKeyframeIndex);
-          const alpha = frameIndex > leftKeyframeIndex
-            && keyframeAlpha.has(rightKeyframeIndex)
-            ? interpolateAlpha(
-              leftAlpha,
-              keyframeAlpha.get(rightKeyframeIndex),
-              (frameIndex - leftKeyframeIndex) / 3,
-            )
-            : leftAlpha;
-          const originalImage = await loadImageImpl(
-            join(sourceFramesDirectory, frameNames[frameIndex]),
-          );
-          throwIfAborted(signal);
-          const image = composeRgbaWithAlpha(originalImage, alpha, ImageCtor);
-          await image.save(join(
+          await result.image.save(join(
             processedFramesDirectory,
             getFrameName(frameIndex + 1),
           ));
+          previousSubject = result.subject;
           throwIfAborted(signal);
-          reportProcessingProgress();
+          onProgress?.(
+            10 + Math.round(((frameIndex + 1) / frameNames.length) * 80),
+          );
         }
 
         throwIfAborted(signal);
         const temporaryOutputPath = join(tempDirectory, "output.webm");
         await runFfmpeg([
           "-y",
-          "-framerate", "30",
+          "-ss", String(startSeconds),
+          "-t", String(durationSeconds),
+          "-i", inputPath,
+          "-framerate", String(normalizedMaskFps),
           "-i", join(processedFramesDirectory, "frame-%08d.png"),
+          "-filter_complex",
+          "[0:v]fps=30,format=rgba[video];"
+            + "[1:v]format=rgba,alphaextract,"
+            + "tpad=stop_mode=clone:stop_duration=1,"
+            + "framerate=fps=30:interp_start=0:interp_end=255:flags=0,"
+            + "format=gray[mask];"
+            + "[video][mask]alphamerge[out]",
+          "-map", "[out]",
           "-frames:v", String(targetFrameCount),
           "-c:v", "libvpx-vp9",
+          "-deadline", "realtime",
+          "-cpu-used", "8",
+          "-row-mt", "1",
           "-pix_fmt", "yuva420p",
           "-auto-alt-ref", "0",
           "-an",

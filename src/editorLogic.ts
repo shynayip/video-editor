@@ -300,6 +300,48 @@ export const splitSceneMediaItemAtFrame = ({
   return splitItems.map((item) => renumbered.get(item.id) ?? item);
 };
 
+export const trimMediaItemRange = ({
+  mediaItems,
+  mediaId,
+  startFrame,
+  endFrame,
+}: {
+  mediaItems: SavedMediaItem[];
+  mediaId: string;
+  startFrame: number;
+  endFrame: number;
+}): SavedMediaItem[] => {
+  const target = mediaItems.find((item) => item.id === mediaId);
+  if (
+    !target ||
+    !Number.isInteger(startFrame) ||
+    !Number.isInteger(endFrame) ||
+    startFrame < 0 ||
+    endFrame <= startFrame ||
+    endFrame > target.durationInFrames
+  ) {
+    return mediaItems;
+  }
+
+  const durationInFrames = endFrame - startFrame;
+  if (startFrame === 0 && durationInFrames === target.durationInFrames) {
+    return mediaItems;
+  }
+
+  return mediaItems.map((item) =>
+    item.id === mediaId
+      ? {
+          ...item,
+          sourceStart: (item.sourceStart ?? 0) + startFrame,
+          sourceDurationInFrames:
+            item.sourceDurationInFrames ?? item.durationInFrames,
+          durationInFrames,
+          duration: formatSceneCardDuration(durationInFrames, sceneCardFps),
+        }
+      : item,
+  );
+};
+
 export type SavedEditorProject = {
   version: 1;
   savedAt: string;
@@ -422,6 +464,8 @@ export type ClipAnimationPresentation = {
 export type ClipAdjustment = {
   scale: number;
   rotation: number;
+  positionX: number;
+  positionY: number;
   cropTop: number;
   cropRight: number;
   cropBottom: number;
@@ -431,6 +475,8 @@ export type ClipAdjustment = {
 export const defaultClipAdjustment: ClipAdjustment = {
   scale: 1,
   rotation: 0,
+  positionX: 0,
+  positionY: 0,
   cropTop: 0,
   cropRight: 0,
   cropBottom: 0,
@@ -4158,6 +4204,49 @@ export const subtractSourceRanges = (
   });
 };
 
+export const intersectSourceRanges = (
+  leftRanges: SilenceRange[],
+  rightRanges: SilenceRange[],
+  sourceDurationSeconds: number,
+): SilenceRange[] => {
+  if (
+    !hasValidSourceRanges(leftRanges) ||
+    !hasValidSourceRanges(rightRanges) ||
+    !Number.isFinite(sourceDurationSeconds) ||
+    sourceDurationSeconds <= 0
+  ) {
+    return [];
+  }
+
+  const left = normalizeSourceRanges(leftRanges, sourceDurationSeconds);
+  const right = normalizeSourceRanges(rightRanges, sourceDurationSeconds);
+  const intersections: SilenceRange[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const startSeconds = Math.max(
+      left[leftIndex].startSeconds,
+      right[rightIndex].startSeconds,
+    );
+    const endSeconds = Math.min(
+      left[leftIndex].endSeconds,
+      right[rightIndex].endSeconds,
+    );
+    if (endSeconds > startSeconds) {
+      intersections.push({startSeconds, endSeconds});
+    }
+
+    if (left[leftIndex].endSeconds <= right[rightIndex].endSeconds) {
+      leftIndex += 1;
+    } else {
+      rightIndex += 1;
+    }
+  }
+
+  return intersections;
+};
+
 type TimelineSourceSegment = {
   start: number;
   duration: number;
@@ -4196,6 +4285,7 @@ const createSynchronizedLinkedSegments = (
   ranges: SilenceRange[],
   fps: number,
   segmentLabel: string,
+  replacementSrc?: string,
 ): {
   videoSegments: TimelineClip[];
   audioSegments: TimelineClip[];
@@ -4215,6 +4305,7 @@ const createSynchronizedLinkedSegments = (
       duration: segment.duration,
       sourceStart: (videoClip.sourceStart ?? 0) + segment.sourceOffset,
       linkedClipId: `${linkedAudio.id}-${segmentLabel}-${index}`,
+      ...(replacementSrc ? {src: replacementSrc} : {}),
     })),
     audioSegments: timelineSegments.map<TimelineClip>((segment, index) => ({
       ...linkedAudio,
@@ -4223,6 +4314,7 @@ const createSynchronizedLinkedSegments = (
       duration: segment.duration,
       sourceStart: (linkedAudio.sourceStart ?? 0) + segment.sourceOffset,
       linkedClipId: `${videoClip.id}-${segmentLabel}-${index}`,
+      ...(replacementSrc ? {src: replacementSrc} : {}),
     })),
     compactDuration,
   };
@@ -4347,11 +4439,12 @@ export const keepDominantVoiceInLinkedVideo = (
   videoClipId: string,
   ranges: SilenceRange[],
   fps: number,
+  cleanedSrc?: string,
 ): TimelineClip[] => {
   const videoClip = clips.find(
     (clip) =>
       clip.id === videoClipId &&
-      clip.track === "main" &&
+      (clip.track === "main" || clip.track === "upper") &&
       clip.mediaType !== "image" &&
       Boolean(clip.src),
   );
@@ -4389,10 +4482,20 @@ export const keepDominantVoiceInLinkedVideo = (
       retainedRanges,
       fps,
       "dominant",
+      cleanedSrc,
     );
   const removedFrames = videoClip.duration - compactDuration;
-  if (videoSegments.length === 0 || removedFrames <= 0) {
+  if (videoSegments.length === 0) {
     return clips;
+  }
+
+  if (removedFrames <= 0) {
+    if (!cleanedSrc?.trim()) return clips;
+    return clips.map((clip) =>
+      clip.id === videoClip.id || clip.id === linkedAudio.id
+        ? {...clip, src: cleanedSrc}
+        : clip,
+    );
   }
 
   const selectedEnd = videoClip.start + videoClip.duration;
@@ -4411,6 +4514,7 @@ export const keepDominantVoiceInLinkedVideo = (
       return audioSegments;
     }
     if (
+      videoClip.track === "main" &&
       clip.track === "main" &&
       clip.mediaType !== "image" &&
       clip.start >= selectedEnd
@@ -4421,6 +4525,79 @@ export const keepDominantVoiceInLinkedVideo = (
   });
 
   return nextClips;
+};
+
+export const ensureLinkedAudioForVideo = (
+  clips: TimelineClip[],
+  videoClipId: string,
+): TimelineClip[] => {
+  const videoClip = clips.find(
+    (clip) =>
+      clip.id === videoClipId &&
+      (clip.track === "main" || clip.track === "upper") &&
+      clip.mediaType !== "image" &&
+      Boolean(clip.src),
+  );
+  if (!videoClip?.src) return clips;
+
+  const reciprocalAudio = getReciprocalLinkedAudio(clips, videoClip);
+  if (reciprocalAudio) return clips;
+
+  const matchingAudio = clips.find(
+    (clip) =>
+      clip.track === "audio" &&
+      clip.src === videoClip.src &&
+      clip.start === videoClip.start &&
+      (clip.sourceStart ?? 0) === (videoClip.sourceStart ?? 0),
+  );
+  if (matchingAudio) {
+    return clips.map((clip) => {
+      if (clip.id === videoClip.id) {
+        return {...clip, linkedClipId: matchingAudio.id};
+      }
+      if (clip.id === matchingAudio.id) {
+        return {
+          ...clip,
+          duration: videoClip.duration,
+          linkedClipId: videoClip.id,
+        };
+      }
+      return clip;
+    });
+  }
+
+  const baseAudioId = `${videoClip.id}-audio`;
+  let audioId = baseAudioId;
+  let suffix = 2;
+  while (clips.some((clip) => clip.id === audioId)) {
+    audioId = `${baseAudioId}-${suffix}`;
+    suffix += 1;
+  }
+
+  const linkedAudio: TimelineClip = {
+    id: audioId,
+    label: `${videoClip.label} audio`,
+    track: "audio",
+    start: videoClip.start,
+    duration: videoClip.duration,
+    sourceStart: videoClip.sourceStart ?? 0,
+    ...(Number.isFinite(videoClip.sourceDuration)
+      ? {sourceDuration: videoClip.sourceDuration}
+      : {}),
+    color: "#2563eb",
+    src: videoClip.src,
+    audioKind: "linked",
+    speed: videoClip.speed ?? 1,
+    volume: videoClip.volume ?? 1,
+    linkedClipId: videoClip.id,
+  };
+
+  return [
+    ...clips.map((clip) =>
+      clip.id === videoClip.id ? {...clip, linkedClipId: audioId} : clip,
+    ),
+    linkedAudio,
+  ];
 };
 
 export const moveClipToMainTrack = (
@@ -5366,8 +5543,10 @@ export const setClipAdjustmentById = (
     return {
       ...clip,
       adjustment: {
-        scale: clamp(next.scale, 0.25, 2),
+        scale: clamp(next.scale, 0.25, 4),
         rotation: clamp(next.rotation, -180, 180),
+        positionX: clamp(next.positionX, -100, 100),
+        positionY: clamp(next.positionY, -100, 100),
         cropTop: clamp(next.cropTop, 0, 45),
         cropRight: clamp(next.cropRight, 0, 45),
         cropBottom: clamp(next.cropBottom, 0, 45),

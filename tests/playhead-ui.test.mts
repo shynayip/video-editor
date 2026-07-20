@@ -372,6 +372,25 @@ test("uses transition nodes as shortcuts to the existing animations tab", () => 
   assert.doesNotMatch(stylesheetSource, /\.transition-editor/);
 });
 
+test("keeps short videos visually separate without a trailing animation plus", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(source, /trailing-animation-anchor/);
+  assert.doesNotMatch(source, /Open ending animation for/);
+  assert.match(source, /clip\.duration \* timelineScale < 180[\s\S]*?compact-video-timeline-clip/);
+  assert.match(
+    css,
+    /\.timeline-clip\.compact-video-timeline-clip > \.timeline-clip-label,[\s\S]*?\.clip-mute-button\s*\{\s*display:\s*none/s,
+  );
+});
+
 test("derives animation shortcut nodes from real adjacent clip duration", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
@@ -414,6 +433,12 @@ test("lets text, stickers, cutouts, and captions resize to their real duration",
     /targetClip\.track === "caption"[\s\S]*targetClip\.track === "text"[\s\S]*targetClip\.track === "sticker"[\s\S]*targetClip\.track === "cutout"[\s\S]*\? 1\s*:\s*15/,
   );
   assert.match(css, /\.timeline-clip\s*\{[^}]*min-width:\s*2px/s);
+  assert.match(source, /clip\.duration \* timelineScale < 120[\s\S]*compact-overlay-clip/);
+  assert.match(source, /clip\.duration \* timelineScale < 48[\s\S]*tiny-overlay-clip/);
+  assert.match(
+    css,
+    /\.timeline-clip\.compact-overlay-clip > \.timeline-clip-label,[\s\S]*\.timeline-clip\.compact-overlay-clip > \.clip-mute-button\s*\{\s*display:\s*none/,
+  );
 });
 
 test("keeps linked audio internal and only reveals a row for recorded voiceover", () => {
@@ -1738,7 +1763,7 @@ test("provides a direct append target after the last main-track clip", () => {
 
   assert.match(source, /kind: "append-main"/);
   assert.match(source, /data-append-main-track/);
-  assert.match(source, /getVideoLayerEnd\(currentClips, 0\)/);
+  assert.match(source, /getVideoLayerEnd\(currentClips, videoLayer\)/);
   assert.match(source, /aria-label="Append media to main track"/);
   assert.match(source, /const mainAppendVisibleOverlap = 48/);
   assert.match(
@@ -2482,6 +2507,50 @@ test("numbers separated and whole video imports by source group", () => {
   assert.match(
     source,
     /mediaItem\.sourceGroupIndex !== undefined[\s\S]*?\{mediaItem\.label\}/,
+  );
+});
+
+test("imports audio directly from audio files or video soundtracks", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /const importAudioSources = async/);
+  assert.match(
+    source,
+    /file\.type\.startsWith\("audio\/"\) \|\| file\.type\.startsWith\("video\/"\)/,
+  );
+  assert.match(
+    source,
+    /isVideoSource\s*\? readVideoDurationInFrames\(previewSrc\)\s*:\s*readAudioDurationInFrames\(previewSrc\)/,
+  );
+  assert.match(source, /label: isVideoSource \? `\$\{sourceLabel\} audio` : sourceLabel/);
+  assert.match(source, /accept="audio\/\*,video\/\*"/);
+  assert.match(source, /onChange=\{importAudioSources\}/);
+});
+
+test("shows imported soundtracks in their own waveform timeline row", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /const isImportedAudioClip =/);
+  assert.match(
+    source,
+    /clip\.track === "audio" && !clip\.linkedClipId && !isVoiceoverClip\(clip\)/,
+  );
+  assert.match(source, /key: "imported-audio"/);
+  assert.match(source, /label: "Imported audio"/);
+  assert.match(source, /audioKind: "imported" as const/);
+  assert.match(
+    source,
+    /track\.audioKind === "imported"[\s\S]*?isImportedAudioClip/,
+  );
+  assert.match(
+    source,
+    /clip\.track === "audio"\s*\? formatMediaDuration\(clip\.duration\)/,
   );
 });
 

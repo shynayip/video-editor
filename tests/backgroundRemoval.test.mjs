@@ -179,7 +179,7 @@ test("uses the subject engine and writes transparent image results as PNG", asyn
   ]);
 });
 
-test("reconstructs every 30 fps frame from interpolated keyframe alpha", async () => {
+test("uses sparse AI masks and lets FFmpeg interpolate the 30 fps alpha", async () => {
   const engineCalls = [];
   const ffmpegCalls = [];
   const progressValues = [];
@@ -201,11 +201,11 @@ test("reconstructs every 30 fps frame from interpolated keyframe alpha", async (
   });
   const keyframeAlpha = new Map([
     ["frame-00000001.png", 0],
-    ["frame-00000004.png", 90],
     ["frame-00000007.png", 180],
   ]);
   const abortController = new AbortControllerCtor();
   const processor = createBackgroundRemovalProcessor({
+    videoMaskFps: 2,
     subjectEngine: {
       process: async (inputPath, options) => {
         engineCalls.push({frameName: basename(inputPath), options});
@@ -214,6 +214,12 @@ test("reconstructs every 30 fps frame from interpolated keyframe alpha", async (
         return {
           alpha: new Uint8ClampedArray([alpha]),
           subject: {frameName: basename(inputPath), route: "portrait"},
+          image: new FakeRawImage(
+            new Uint8ClampedArray([1, 21, 41, alpha]),
+            1,
+            1,
+            4,
+          ),
         };
       },
     },
@@ -253,73 +259,47 @@ test("reconstructs every 30 fps frame from interpolated keyframe alpha", async (
         signal: abortController.signal,
       },
     },
-    {
-      frameName: "frame-00000004.png",
-      options: {
-        mode: "video-next",
-        previousSubject: {frameName: "frame-00000001.png", route: "portrait"},
-        signal: abortController.signal,
-      },
-    },
-    {
-      frameName: "frame-00000007.png",
-      options: {
-        mode: "video-next",
-        previousSubject: {frameName: "frame-00000004.png", route: "portrait"},
-        signal: abortController.signal,
-      },
-    },
   ]);
   assert.equal(ffmpegCalls.length, 2);
   assert.deepEqual(ffmpegCalls[0].args.slice(0, 13), [
     "-y", "-ss", "2.5", "-t", "0.26", "-i", "C:/media/source.mp4",
-    "-map", "0:v:0", "-vf", "fps=30", "-vsync", "0",
+    "-map", "0:v:0", "-vf", "fps=2", "-vsync", "0",
   ]);
   assert.equal(ffmpegCalls[0].args.at(-1).endsWith("frame-%08d.png"), true);
   assert.deepEqual(ffmpegCalls[0].options, {signal: abortController.signal});
   assert.deepEqual(ffmpegCalls[1].args, [
-    "-y", "-framerate", "30",
+    "-y", "-ss", "2.5", "-t", "0.26",
+    "-i", "C:/media/source.mp4",
+    "-framerate", "2",
     "-i", join(
       "C:/temp/smooth-video-job",
       "processed-frames",
       "frame-%08d.png",
     ),
+    "-filter_complex",
+    "[0:v]fps=30,format=rgba[video];"
+      + "[1:v]format=rgba,alphaextract,"
+      + "tpad=stop_mode=clone:stop_duration=1,"
+      + "framerate=fps=30:interp_start=0:interp_end=255:flags=0,"
+      + "format=gray[mask];"
+      + "[video][mask]alphamerge[out]",
+    "-map", "[out]",
     "-frames:v", "8",
-    "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p",
+    "-c:v", "libvpx-vp9", "-deadline", "realtime",
+    "-cpu-used", "8", "-row-mt", "1", "-pix_fmt", "yuva420p",
     "-auto-alt-ref", "0", "-an",
     join("C:/temp/smooth-video-job", "output.webm"),
   ]);
-  assert.equal(ffmpegCalls[1].args.includes("-t"), false);
+  assert.equal(ffmpegCalls[1].args.includes("-t"), true);
   assert.deepEqual(ffmpegCalls[1].options, {signal: abortController.signal});
-  assert.deepEqual(copiedFiles, [{
-    from: join(
-      "C:/temp/smooth-video-job",
-      "source-frames",
-      "frame-00000007.png",
-    ),
-    to: join(
-      "C:/temp/smooth-video-job",
-      "source-frames",
-      "frame-00000008.png",
-    ),
-  }]);
-  assert.deepEqual(loadedFrameNames, Array.from(
-    {length: 8},
-    (_, index) => `frame-${String(index + 1).padStart(8, "0")}.png`,
-  ));
+  assert.deepEqual(copiedFiles, []);
+  assert.deepEqual(loadedFrameNames, []);
   assert.deepEqual(savedImages.map(({outputPath, data, channels}) => ({
     frameName: basename(outputPath),
     data,
     channels,
   })), [
     {frameName: "frame-00000001.png", data: [1, 21, 41, 0], channels: 4},
-    {frameName: "frame-00000002.png", data: [2, 22, 42, 30], channels: 4},
-    {frameName: "frame-00000003.png", data: [3, 23, 43, 60], channels: 4},
-    {frameName: "frame-00000004.png", data: [4, 24, 44, 90], channels: 4},
-    {frameName: "frame-00000005.png", data: [5, 25, 45, 120], channels: 4},
-    {frameName: "frame-00000006.png", data: [6, 26, 46, 150], channels: 4},
-    {frameName: "frame-00000007.png", data: [7, 27, 47, 180], channels: 4},
-    {frameName: "frame-00000008.png", data: [8, 28, 48, 180], channels: 4},
   ]);
   assert.deepEqual([result.extension, result.mimeType], [".webm", "video/webm"]);
   assert.equal(result.outputPath.endsWith(".webm"), true);
@@ -349,7 +329,15 @@ test("pads the encoded video so it is never shorter than the requested duration"
       process: async (framePath) => {
         const {RawImage} = await import("@huggingface/transformers");
         const image = await RawImage.read(framePath);
+        const rgba = new Uint8ClampedArray(image.width * image.height * 4);
+        for (let index = 0; index < image.width * image.height; index += 1) {
+          rgba[index * 4] = image.data[index * image.channels];
+          rgba[index * 4 + 1] = image.data[index * image.channels + 1];
+          rgba[index * 4 + 2] = image.data[index * image.channels + 2];
+          rgba[index * 4 + 3] = 255;
+        }
         return {
+          image: new RawImage(rgba, image.width, image.height, 4),
           alpha: new Uint8ClampedArray(image.width * image.height).fill(255),
           subject: null,
         };
@@ -400,6 +388,7 @@ test("allows a later subject-engine job after a processing failure", async () =>
         videoAttempts += 1;
         if (videoAttempts === 1) throw new Error("video processing failed");
         return {
+          image: {save: async () => {}},
           alpha: new Uint8ClampedArray([255]),
           subject: {route: "portrait"},
         };
@@ -501,6 +490,7 @@ test("aborts during encode and still cleans up the temporary directory", async (
   const processor = createBackgroundRemovalProcessor({
     subjectEngine: {
       process: async () => ({
+        image: {save: async () => {}},
         alpha: new Uint8ClampedArray([255]),
         subject: {route: "portrait"},
       }),

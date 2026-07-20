@@ -13,6 +13,7 @@ const cleanupOptions = {recursive: true, force: true};
 const minimumCandidateSpeechSeconds = 0.6;
 const minimumDominantSpeechSeconds = 1.2;
 const minimumDominantRatio = 0.45;
+const minimumReferenceSimilarity = 0.84;
 const sampleRate = 16000;
 const secondsEpsilon = 1e-6;
 const preferredAnalysisWindowSeconds = 1.5;
@@ -360,6 +361,9 @@ export const createDominantVoiceDetector = ({
     ffmpegPath: selectedFfmpegPath = ffmpegPath,
     sourceStartSeconds = 0,
     durationSeconds,
+    referenceInputPath,
+    referenceSourceStartSeconds = 0,
+    referenceDurationSeconds,
     signal,
   }) {
     throwIfAborted(signal);
@@ -407,6 +411,44 @@ export const createDominantVoiceDetector = ({
         : undefined;
       throwIfAborted(signal);
       const audio = await loadAudioImpl(audioPath, runtime, readFileImpl);
+      let referenceEmbedding = null;
+      if (
+        referenceInputPath &&
+        Number.isFinite(referenceDurationSeconds) &&
+        referenceDurationSeconds > 0
+      ) {
+        const referenceOutputPath = join(tempDirectory, "reference.f32le");
+        const referenceAudioPath = await extractAudioImpl({
+          inputPath: referenceInputPath,
+          outputWavPath: referenceOutputPath,
+          ffmpegPath: selectedFfmpegPath,
+          sourceStartSeconds: referenceSourceStartSeconds,
+          durationSeconds: referenceDurationSeconds,
+          signal,
+          execFileImpl,
+        });
+        throwIfAborted(signal);
+        const referenceAudio = await loadAudioImpl(
+          referenceAudioPath,
+          runtime,
+          readFileImpl,
+        );
+        if (referenceAudio.length > 0) {
+          referenceEmbedding = await awaitWithAbort(
+            createEmbeddingImpl(
+              referenceAudio,
+              {
+                startSeconds: 0,
+                endSeconds: referenceAudio.length / sampleRate,
+                analysisStartSeconds: 0,
+                analysisEndSeconds: referenceAudio.length / sampleRate,
+              },
+              runtime,
+            ),
+            signal,
+          );
+        }
+      }
       const decodedDurationSeconds = audio.length / sampleRate;
       const analysisDurationSeconds = Math.min(
         durationSeconds,
@@ -475,19 +517,47 @@ export const createDominantVoiceDetector = ({
       }
 
       const clusters = clusterSpeakerWindows(windows);
-      const dominantCluster = clusters[0];
+      let referenceSimilarity = null;
+      const dominantCluster = referenceEmbedding
+        ? clusters.reduce((best, cluster) => {
+            const similarity = cosineSimilarity(
+              cluster.centroid,
+              referenceEmbedding,
+            );
+            if (!best || similarity > best.similarity) {
+              return {cluster, similarity};
+            }
+            return best;
+          }, null)
+        : null;
+      const selectedCluster = dominantCluster?.cluster ?? clusters[0];
+      referenceSimilarity = dominantCluster?.similarity ?? null;
       const runnerUpCluster = clusters[1];
-      const dominantSpeechSeconds = dominantCluster?.durationSeconds ?? 0;
+      const dominantSpeechSeconds = selectedCluster?.durationSeconds ?? 0;
       const analyzedSpeechSeconds = candidateSpeech.reduce(
         (total, range) => total + range.endSeconds - range.startSeconds,
         0,
       );
+
+      if (
+        referenceEmbedding &&
+        (!Number.isFinite(referenceSimilarity) ||
+          referenceSimilarity < minimumReferenceSimilarity)
+      ) {
+        return {
+          ranges: [],
+          dominantSpeechSeconds: 0,
+          analyzedSpeechSeconds,
+          referenceSimilarity,
+        };
+      }
 
       if (dominantSpeechSeconds < minimumDominantSpeechSeconds) {
         throw new Error("A reliable main voice needs at least 1.2 seconds of speech.");
       }
 
       if (
+        !referenceEmbedding &&
         runnerUpCluster &&
         Math.abs(dominantSpeechSeconds - runnerUpCluster.durationSeconds) <=
           secondsEpsilon
@@ -495,18 +565,22 @@ export const createDominantVoiceDetector = ({
         throw new Error("A reliable main voice could not be identified: speakers are ambiguous.");
       }
 
-      if (dominantSpeechSeconds / analyzedSpeechSeconds < minimumDominantRatio) {
+      if (
+        !referenceEmbedding &&
+        dominantSpeechSeconds / analyzedSpeechSeconds < minimumDominantRatio
+      ) {
         throw new Error(
           "A reliable main voice needs a 0.45 dominant-duration ratio.",
         );
       }
 
       return {
-        ranges: normalizeDominantVoiceRanges(dominantCluster.windows, {
+        ranges: normalizeDominantVoiceRanges(selectedCluster.windows, {
           durationSeconds: analysisDurationSeconds,
         }),
         dominantSpeechSeconds,
         analyzedSpeechSeconds,
+        ...(referenceSimilarity === null ? {} : {referenceSimilarity}),
       };
     } catch (error) {
       primaryFailureOccurred = true;

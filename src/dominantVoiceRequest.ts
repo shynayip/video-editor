@@ -15,15 +15,17 @@ const fingerprintClip = (clip: TimelineClip) => JSON.stringify({
   linkedClipId: clip.linkedClipId ?? null,
 });
 
-const isMainVideoClip = (clip: TimelineClip | null | undefined) =>
-  clip?.track === "main" && clip.mediaType !== "image" && Boolean(clip.src);
+const isVoiceCleanupVideoClip = (clip: TimelineClip | null | undefined) =>
+  (clip?.track === "main" || clip?.track === "upper") &&
+  clip.mediaType !== "image" &&
+  Boolean(clip.src);
 
 export const createDominantVoiceRequestSnapshot = (
   clip: TimelineClip | null | undefined,
 ): DominantVoiceRequestSnapshot | null => {
   if (
     !clip ||
-    !isMainVideoClip(clip)
+    !isVoiceCleanupVideoClip(clip)
   ) {
     return null;
   }

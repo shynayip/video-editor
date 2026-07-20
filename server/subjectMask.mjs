@@ -1,11 +1,12 @@
-const foregroundThreshold = 24;
+const foregroundThreshold = 8;
 const confidenceMinimumCoverage = 0.015;
 const confidenceMaximumCoverage = 0.90;
 const confidenceMinimumOwnership = 0.65;
 const confidenceMaximumCenterDistance = 0.42;
-const companionMinimumCoverage = 0.001;
-const companionMaximumPrimaryRatio = 0.5;
-const companionMaximumDistance = 0.36;
+const companionMinimumCoverage = 0.0005;
+const companionMaximumPrimaryRatio = 0.85;
+const companionMaximumDistance = 0.55;
+const edgeCompanionMinimumPrimaryRatio = 0.4;
 
 const neighborOffsets = [
   [-1, -1], [0, -1], [1, -1],
@@ -249,7 +250,9 @@ export const selectPrimaryAlpha = ({alpha, width, height, previousSubject}) => {
     const areaRatio = component.area / totalPixels;
     const centerScore = getCenterScore(component.centroidX, component.centroidY);
     const continuityScore = getContinuityScore(component, previousSubject);
-    const score = areaRatio * 0.55 + centerScore * 0.30 + continuityScore * 0.15;
+    const score = previousSubject
+      ? areaRatio * 0.45 + centerScore * 0.20 + continuityScore * 0.35
+      : areaRatio * 0.72 + centerScore * 0.28;
     return {...component, score};
   });
   const selected = scoredComponents.reduce((best, component) => (
@@ -270,7 +273,8 @@ export const selectPrimaryAlpha = ({alpha, width, height, previousSubject}) => {
     return areaRatio >= companionMinimumCoverage
       && component.area <= selected.area * companionMaximumPrimaryRatio
       && distanceFromPrimary <= companionMaximumDistance
-      && !touchesFrameEdge;
+      && (!touchesFrameEdge
+        || component.area >= selected.area * edgeCompanionMinimumPrimaryRatio);
   });
   const selectedMask = new Uint8Array(totalPixels);
   for (const index of selected.pixels) selectedMask[index] = 1;

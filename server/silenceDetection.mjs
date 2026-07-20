@@ -9,6 +9,7 @@ export const parseSilenceRanges = (stderr, {
   durationSeconds,
   minimumSilenceSeconds = 0.6,
   speechPaddingSeconds = 0.15,
+  noiseThresholdDb = -40,
 }) => {
   const events = [...String(stderr).matchAll(/silence_(start|end):\s*([0-9.]+)/g)]
     .map((match) => ({kind: match[1], seconds: Number(match[2])}))
@@ -56,10 +57,11 @@ export const detectSilenceInMedia = async ({
   execFileImpl = execFileAsync,
   minimumSilenceSeconds = 0.6,
   speechPaddingSeconds = 0.15,
+  noiseThresholdDb = -40,
 }) => {
   const ffmpegArgs = [
     "-hide_banner", "-ss", String(sourceStartSeconds), "-t", String(durationSeconds),
-    "-i", inputPath, "-vn", "-af", `silencedetect=noise=-40dB:d=${minimumSilenceSeconds}`,
+    "-i", inputPath, "-vn", "-af", `silencedetect=noise=${noiseThresholdDb}dB:d=${minimumSilenceSeconds}`,
     "-f", "null", "-",
   ];
 
@@ -68,5 +70,6 @@ export const detectSilenceInMedia = async ({
     durationSeconds,
     minimumSilenceSeconds,
     speechPaddingSeconds,
+    noiseThresholdDb,
   });
 };

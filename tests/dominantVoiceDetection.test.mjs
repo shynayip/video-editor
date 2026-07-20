@@ -236,6 +236,62 @@ test("returns only the longest-speaking cluster", async () => {
   });
 });
 
+test("uses a main-track voice reference instead of the longest background speaker", async () => {
+  const detector = createDominantVoiceDetector({
+    extractAudioImpl: async ({outputWavPath}) => outputWavPath,
+    findCandidateSpeechImpl: async () => [
+      {startSeconds: 0, endSeconds: 2},
+      {startSeconds: 3, endSeconds: 7},
+    ],
+    loadAudioImpl: async (audioPath) => {
+      const audio = new Float32Array(16000 * 8);
+      audio[0] = /reference\.f32le$/.test(audioPath) ? 1 : 0;
+      return audio;
+    },
+    createEmbeddingImpl: async (audio, range) =>
+      audio[0] === 1 || range.startSeconds < 2 ? [1, 0] : [0, 1],
+    makeTempDirectoryImpl: async () => "C:/temp/reference-job",
+    removeDirectoryImpl: async () => undefined,
+  });
+
+  const result = await detector.detect({
+    inputPath: "C:/media/selected.mp4",
+    durationSeconds: 8,
+    referenceInputPath: "C:/media/main-speaker.mp4",
+    referenceDurationSeconds: 4,
+  });
+
+  assert.deepEqual(result.ranges, [{startSeconds: 0, endSeconds: 2.15}]);
+  assert.equal(result.dominantSpeechSeconds, 2);
+  assert.equal(result.referenceSimilarity, 1);
+});
+
+test("returns no ranges when the selected voice does not match the main track", async () => {
+  const detector = createDominantVoiceDetector({
+    extractAudioImpl: async ({outputWavPath}) => outputWavPath,
+    findCandidateSpeechImpl: async () => [{startSeconds: 0, endSeconds: 4}],
+    loadAudioImpl: async (audioPath) => {
+      const audio = new Float32Array(16000 * 4);
+      audio[0] = /reference\.f32le$/.test(audioPath) ? 1 : 0;
+      return audio;
+    },
+    createEmbeddingImpl: async (audio) =>
+      audio[0] === 1 ? [1, 0] : [0, 1],
+    makeTempDirectoryImpl: async () => "C:/temp/reference-miss-job",
+    removeDirectoryImpl: async () => undefined,
+  });
+
+  const result = await detector.detect({
+    inputPath: "C:/media/background-speaker.mp4",
+    durationSeconds: 4,
+    referenceInputPath: "C:/media/main-speaker.mp4",
+    referenceDurationSeconds: 4,
+  });
+
+  assert.deepEqual(result.ranges, []);
+  assert.equal(result.referenceSimilarity, 0);
+});
+
 test("rejects when no candidate speech is found and cleans up", async () => {
   const {calls, detector} = createDetectorHarness({candidateSpeech: []});
 

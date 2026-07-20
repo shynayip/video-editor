@@ -24,8 +24,10 @@ import ffprobeStatic from "ffprobe-static";
 import {createBackgroundRemovalProcessor} from "./backgroundRemoval.mjs";
 import {createDominantVoiceDetector} from "./dominantVoiceDetection.mjs";
 import {transcribeMediaFileLocally} from "./localWhisper.mjs";
+import {detectSpeechInMedia} from "./voiceActivityDetection.mjs";
 import {detectScenesInMedia} from "./sceneDetection.mjs";
 import {detectSilenceInMedia} from "./silenceDetection.mjs";
+import {cleanVoiceAudio} from "./voiceAudioCleanup.mjs";
 
 dotenv.config({quiet: true});
 
@@ -239,6 +241,8 @@ export const createTranscriptionApp = ({
   detectDominantVoiceImpl = (options) => dominantVoiceDetector.detect(options),
   detectScenesInMediaImpl = detectScenesInMedia,
   detectSilenceInMediaImpl = detectSilenceInMedia,
+  detectSpeechInMediaImpl = detectSpeechInMedia,
+  cleanVoiceAudioImpl = cleanVoiceAudio,
   transcribeMediaFileImpl = transcribeMediaFileLocally,
   writeFileImpl = writeFile,
   makeDirectoryImpl = mkdir,
@@ -457,6 +461,9 @@ export const createTranscriptionApp = ({
         durationSeconds: trimRange.durationSeconds,
         signal: requestAbortController.signal,
         execFileImpl,
+        minimumSilenceSeconds: 0.35,
+        speechPaddingSeconds: 0.08,
+        noiseThresholdDb: -32,
       });
 
       await cleanupTempDirectory({
@@ -485,8 +492,157 @@ export const createTranscriptionApp = ({
     }
   });
 
-  app.post("/api/detect-dominant-voice", upload.single("file"), async (req, res) => {
+  app.post("/api/detect-speech", upload.single("file"), async (req, res) => {
+    if (!req.file) {
+      return sendError(res, 400, "missing_file", "No media file was uploaded.");
+    }
+
+    const trimRange = parseTrimRange(req.body, maxTrimDurationSeconds);
+    if (!trimRange) {
+      return sendError(
+        res,
+        400,
+        "invalid_trim_range",
+        "Speech detection requires a valid source range.",
+      );
+    }
+
+    let tempDirectory = null;
+    const requestAbortController = new RuntimeAbortController();
+    const abortRequest = () => requestAbortController.abort();
+    req.on("aborted", abortRequest);
+    req.on("close", () => {
+      if (!req.complete) abortRequest();
+    });
+    res.on("close", () => {
+      if (!res.writableEnded) abortRequest();
+    });
+
+    try {
+      tempDirectory = await makeTempDirectory(
+        join(tmpdir(), "video-editor-speech-"),
+      );
+      const inputPath = toInputPath(tempDirectory, req.file.originalname);
+      const outputPath = join(tempDirectory, "output.f32le");
+      await writeFileImpl(inputPath, req.file.buffer);
+
+      const ranges = await detectSpeechInMediaImpl({
+        inputPath,
+        outputPath,
+        ffmpegPath: ffmpegBinaryPath,
+        sourceStartSeconds: trimRange.sourceStartSeconds,
+        durationSeconds: trimRange.durationSeconds,
+        signal: requestAbortController.signal,
+        execFileImpl,
+        readFileImpl,
+      });
+      await cleanupTempDirectory({
+        removeDirectoryImpl,
+        tempDirectory,
+        primaryError: null,
+      });
+      tempDirectory = null;
+      return res.json({ranges});
+    } catch (error) {
+      if (tempDirectory) {
+        await cleanupTempDirectory({
+          removeDirectoryImpl,
+          tempDirectory,
+          primaryError: error,
+        });
+      }
+      if (isAbortError(error) || requestAbortController.signal.aborted) return;
+
+      const message =
+        error instanceof Error ? error.message : "Speech detection failed.";
+      return sendError(res, 500, "speech_detection_failed", message);
+    }
+  });
+
+  app.post("/api/clean-voice-audio", upload.single("file"), async (req, res) => {
     if (!req.file || !req.file.mimetype.startsWith("video/")) {
+      return sendError(
+        res,
+        400,
+        "invalid_voice_cleanup_request",
+        "Select a video with audio to clean.",
+      );
+    }
+
+    const requestAbortController = new RuntimeAbortController();
+    const abortRequest = () => requestAbortController.abort();
+    req.on("aborted", abortRequest);
+    req.on("close", () => {
+      if (!req.complete) abortRequest();
+    });
+    res.on("close", () => {
+      if (!res.writableEnded) abortRequest();
+    });
+
+    let tempDirectory = null;
+    let storedPath = null;
+    try {
+      tempDirectory = await makeTempDirectory(
+        join(tmpdir(), "video-editor-voice-cleanup-"),
+      );
+      const inputPath = toInputPath(tempDirectory, req.file.originalname);
+      const outputPath = join(tempDirectory, "cleaned.mp4");
+      await writeFileImpl(inputPath, req.file.buffer);
+      const cleaned = await cleanVoiceAudioImpl({
+        inputPath,
+        outputPath,
+        ffmpegPath: ffmpegBinaryPath,
+        signal: requestAbortController.signal,
+        execFileImpl,
+      });
+      const outputStats = await statFileImpl(cleaned.outputPath);
+      if (!outputStats.isFile()) {
+        throw new Error("Voice cleanup did not create an output file.");
+      }
+
+      await makeDirectoryImpl(mediaUploadDirectory, {recursive: true});
+      const storedName = toStoredMediaName(
+        req.file.originalname,
+        cleaned.extension,
+      );
+      storedPath = join(mediaUploadDirectory, storedName);
+      await copyFileImpl(cleaned.outputPath, storedPath);
+
+      await cleanupTempDirectory({
+        removeDirectoryImpl,
+        tempDirectory,
+        primaryError: null,
+      });
+      tempDirectory = null;
+      storedPath = null;
+      return res.json({src: `uploads/${storedName}`, mimeType: cleaned.mimeType});
+    } catch (error) {
+      if (storedPath) {
+        await removeDirectoryImpl(storedPath, {force: true}).catch(() => undefined);
+      }
+      if (tempDirectory) {
+        await cleanupTempDirectory({
+          removeDirectoryImpl,
+          tempDirectory,
+          primaryError: error,
+        });
+      }
+      if (isAbortError(error) || requestAbortController.signal.aborted) {
+        return;
+      }
+      const message =
+        error instanceof Error ? error.message : "Voice cleanup failed.";
+      return sendError(res, 500, "voice_cleanup_failed", message);
+    }
+  });
+
+  app.post("/api/detect-dominant-voice", upload.fields([
+    {name: "file", maxCount: 1},
+    {name: "referenceFile", maxCount: 1},
+  ]), async (req, res) => {
+    const selectedFile = req.files?.file?.[0];
+    const referenceFile = req.files?.referenceFile?.[0];
+    if (!selectedFile || !selectedFile.mimetype.startsWith("video/")) {
       return sendError(
         res,
         400,
@@ -502,6 +658,26 @@ export const createTranscriptionApp = ({
         400,
         "invalid_dominant_voice_request",
         "Select a valid video range.",
+      );
+    }
+    const referenceTrimRange = referenceFile
+      ? parseTrimRange(
+          {
+            sourceStart: req.body.referenceSourceStart,
+            duration: req.body.referenceDuration,
+          },
+          maxTrimDurationSeconds,
+        )
+      : null;
+    if (
+      referenceFile &&
+      (!referenceFile.mimetype.startsWith("video/") || !referenceTrimRange)
+    ) {
+      return sendError(
+        res,
+        400,
+        "invalid_dominant_voice_reference",
+        "The main voice reference must be a valid video range.",
       );
     }
 
@@ -526,13 +702,22 @@ export const createTranscriptionApp = ({
       tempDirectory = await makeTempDirectory(
         join(tmpdir(), "video-editor-dominant-voice-"),
       );
-      const inputPath = toInputPath(tempDirectory, req.file.originalname);
-      await writeFileImpl(inputPath, req.file.buffer);
+      const inputPath = toInputPath(tempDirectory, selectedFile.originalname);
+      await writeFileImpl(inputPath, selectedFile.buffer);
+      const referenceInputPath = referenceFile
+        ? join(tempDirectory, `reference-${basename(referenceFile.originalname)}`)
+        : undefined;
+      if (referenceFile && referenceInputPath) {
+        await writeFileImpl(referenceInputPath, referenceFile.buffer);
+      }
 
       const result = await detectDominantVoiceImpl({
         inputPath,
         sourceStartSeconds: trimRange.sourceStartSeconds,
         durationSeconds: trimRange.durationSeconds,
+        referenceInputPath,
+        referenceSourceStartSeconds: referenceTrimRange?.sourceStartSeconds,
+        referenceDurationSeconds: referenceTrimRange?.durationSeconds,
         signal: requestAbortController.signal,
       });
 

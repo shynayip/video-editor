@@ -2,6 +2,50 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+test("removes only the selected rejected scene and keeps a sole project video", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const keepMainVoice = source.slice(
+    source.indexOf("const keepMainVoiceAutomatically"),
+    source.indexOf("const duplicateSelectedSticker"),
+  );
+
+  assert.match(
+    keepMainVoice,
+    /const removeNonSpeakingScene[\s\S]*deleteClipById\(currentClips, sourceClipId\)/,
+  );
+  assert.match(
+    keepMainVoice,
+    /if \(!replacementClip\) \{[\s\S]*preserveUncertainScene/,
+  );
+  assert.match(
+    keepMainVoice,
+    /setSelectedClipId\(replacementClip\.id\)[\s\S]*setPlayheadFrame\(replacementClip\.start\)/,
+  );
+  assert.match(
+    keepMainVoice,
+    /if \(speechRanges\.length === 0\) \{[\s\S]*removeNonSpeakingScene/,
+  );
+  assert.match(
+    keepMainVoice,
+    /if \(retainedRanges\.length === 0\) \{[\s\S]*removeNonSpeakingScene/,
+  );
+  assert.match(
+    keepMainVoice,
+    /This is the only video in the project, so it was kept\./,
+  );
+  assert.doesNotMatch(
+    keepMainVoice,
+    /commitClipChange\(\(currentClips\) => \{\s*if \(\s*keepMainVoiceRequestRef\.current !== requestToken/,
+  );
+  assert.doesNotMatch(
+    keepMainVoice,
+    /throw new Error\("No spoken voice was detected/,
+  );
+});
+
 test("wires the captions tool into manual caption controls and preview rendering", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),

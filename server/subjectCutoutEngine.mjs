@@ -8,6 +8,11 @@ const models = {
   },
   general: {
     task: "background-removal",
+    id: "onnx-community/BiRefNet-ONNX",
+    options: {dtype: "fp16"},
+  },
+  video: {
+    task: "background-removal",
     id: "onnx-community/BiRefNet_lite-ONNX",
     options: {dtype: "fp16"},
   },
@@ -79,7 +84,8 @@ export const createSubjectCutoutEngine = ({
   const pipelineCache = new Map();
   const dtypeFallbackRoutes = new Set();
 
-  const canRetryWithoutDtype = (route, error, signal) => route === "general"
+  const canRetryWithoutDtype = (route, error, signal) =>
+    (route === "general" || route === "video")
     && !dtypeFallbackRoutes.has(route)
     && !signal?.aborted
     && !isCancellationError(error)
@@ -92,7 +98,8 @@ export const createSubjectCutoutEngine = ({
     const model = models[route];
     const options = dtypeFallbackRoutes.has(route) ? {} : model.options;
     const entry = {
-      usesFp16: route === "general" && !dtypeFallbackRoutes.has(route),
+      usesFp16: (route === "general" || route === "video")
+        && !dtypeFallbackRoutes.has(route),
       promise: undefined,
     };
     entry.promise = Promise.resolve().then(() => pipelineFactory(
@@ -135,7 +142,7 @@ export const createSubjectCutoutEngine = ({
       // ONNX Runtime on some Windows CPU providers can complete fp16
       // inference while silently returning an entirely empty alpha plane.
       // Retry with the compatible model precision before accepting it.
-      if (entry.usesFp16 && route === "general" && !hasForegroundAlpha(image)) {
+      if (entry.usesFp16 && !hasForegroundAlpha(image)) {
         enableDtypeFallback(route, entry);
         const {pipeline: fallbackPipeline} = await getPipeline(route, signal);
         const fallbackImage = await fallbackPipeline(inputPath);
@@ -188,17 +195,26 @@ export const createSubjectCutoutEngine = ({
       throwIfAborted(signal);
 
       if (mode === "image") {
-        const result = await processRoute({
+        const generalResult = await processRoute({
           inputPath,
           route: "general",
           originalImage,
           previousSubject,
           signal,
         });
-        return result;
+        if (generalResult.confidence) return generalResult;
+
+        const portraitResult = await processRoute({
+          inputPath,
+          route: "portrait",
+          originalImage,
+          previousSubject,
+          signal,
+        });
+        return portraitResult.confidence ? portraitResult : generalResult;
       }
 
-      const initialRoute = previousSubject?.route ?? "general";
+      const initialRoute = previousSubject?.route ?? "portrait";
       const result = await processRoute({
         inputPath,
         route: initialRoute,
@@ -206,19 +222,21 @@ export const createSubjectCutoutEngine = ({
         previousSubject,
         signal,
       });
-      if (initialRoute !== "portrait" || result.confidence) {
+      if (result.confidence) {
         const {confidence: _confidence, ...output} = result;
         return output;
       }
 
+      const fallbackRoute = initialRoute === "portrait" ? "video" : "portrait";
       const fallback = await processRoute({
         inputPath,
-        route: "general",
+        route: fallbackRoute,
         originalImage,
         previousSubject,
         signal,
       });
-      const {confidence: _confidence, ...output} = fallback;
+      const selectedResult = fallback.confidence ? fallback : result;
+      const {confidence: _confidence, ...output} = selectedResult;
       return output;
     },
   };

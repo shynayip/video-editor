@@ -76,6 +76,7 @@ import {
   replaceGeneratedCaptionBatch,
   replaceFirstClipOnTrack,
   removeBrowserOnlySavedMedia,
+  ensureLinkedAudioForVideo,
   keepDominantVoiceInLinkedVideo,
   removeSilenceFromLinkedVideo,
   redoTimelineHistory,
@@ -94,6 +95,7 @@ import {
   setClipEffectById,
   setClipFilterById,
   setClipAnimationById,
+  setClipAdjustmentById,
   setCutoutChromaKeyById,
   setTextStyleById,
   setTextContentById,
@@ -104,6 +106,7 @@ import {
   setTextRotationById,
   setCaptionStyleById,
   splitSceneMediaItemAtFrame,
+  intersectSourceRanges,
   subtractSourceRanges,
   appendCutoutMaskStroke,
   applyAutomaticCutoutById,
@@ -131,6 +134,7 @@ import {
   shouldMovePlayheadDuringScrub,
   shouldShowAudioTrackForSelection,
   trimClipById,
+  trimMediaItemRange,
   synchronizeOriginalAudio,
   undoTimelineHistory,
 } from "../src/editorLogic.ts";
@@ -380,6 +384,92 @@ test("rejects manual scene splits at invalid boundaries", () => {
     }),
     scenes,
   );
+});
+
+test("trims imported media to a selected source range", () => {
+  const media = {
+    id: "clip-1",
+    label: "Interview.mp4",
+    src: "uploads/interview.mp4",
+    duration: "00:10",
+    durationInFrames: 300,
+    sourceStart: 60,
+    sourceDurationInFrames: 600,
+    kind: "public" as const,
+    mediaType: "video" as const,
+  };
+
+  const result = trimMediaItemRange({
+    mediaItems: [media],
+    mediaId: media.id,
+    startFrame: 30,
+    endFrame: 210,
+  });
+
+  assert.deepEqual(result[0], {
+    ...media,
+    sourceStart: 90,
+    durationInFrames: 180,
+    duration: "00:06",
+  });
+});
+
+test("rejects invalid or unchanged media trim ranges", () => {
+  const media = {
+    id: "clip-1",
+    label: "Interview.mp4",
+    src: "uploads/interview.mp4",
+    duration: "00:10",
+    durationInFrames: 300,
+    kind: "public" as const,
+    mediaType: "video" as const,
+  };
+  const mediaItems = [media];
+
+  assert.strictEqual(
+    trimMediaItemRange({
+      mediaItems,
+      mediaId: media.id,
+      startFrame: 0,
+      endFrame: 300,
+    }),
+    mediaItems,
+  );
+  assert.strictEqual(
+    trimMediaItemRange({
+      mediaItems,
+      mediaId: media.id,
+      startFrame: 180,
+      endFrame: 120,
+    }),
+    mediaItems,
+  );
+});
+
+test("clamps canvas zoom pan and rotation adjustments", () => {
+  const clip: TimelineClip = {
+    id: "video-1",
+    label: "Video",
+    track: "main",
+    start: 0,
+    duration: 90,
+    color: "#0891b2",
+  };
+
+  const result = setClipAdjustmentById([clip], clip.id, {
+    scale: 8,
+    positionX: 140,
+    positionY: -140,
+    rotation: 220,
+  });
+
+  assert.deepEqual(result[0].adjustment, {
+    ...defaultClipAdjustment,
+    scale: 4,
+    positionX: 100,
+    positionY: -100,
+    rotation: 180,
+  });
 });
 
 test("calculates project duration from the furthest clip on any track", () => {
@@ -3412,6 +3502,104 @@ test("subtracts detected silence from retained main voice ranges", () => {
   );
 });
 
+test("keeps only ranges containing both the main speaker and spoken words", () => {
+  assert.deepEqual(
+    intersectSourceRanges(
+      [
+        {startSeconds: 0, endSeconds: 5},
+        {startSeconds: 7, endSeconds: 12},
+      ],
+      [
+        {startSeconds: 1, endSeconds: 2.5},
+        {startSeconds: 4, endSeconds: 8},
+        {startSeconds: 10, endSeconds: 11},
+      ],
+      12,
+    ),
+    [
+      {startSeconds: 1, endSeconds: 2.5},
+      {startSeconds: 4, endSeconds: 5},
+      {startSeconds: 7, endSeconds: 8},
+      {startSeconds: 10, endSeconds: 11},
+    ],
+  );
+});
+
+test("restores missing linked audio before main voice cleanup", () => {
+  const video: TimelineClip = {
+    id: "legacy-video",
+    label: "Legacy video",
+    track: "main",
+    start: 45,
+    duration: 180,
+    sourceStart: 30,
+    src: "legacy.mp4",
+    mediaType: "video",
+    color: "#0891b2",
+    speed: 1.25,
+    volume: 0.8,
+  };
+
+  const result = ensureLinkedAudioForVideo([video], video.id);
+  const restoredVideo = result.find((clip) => clip.id === video.id);
+  const restoredAudio = result.find((clip) => clip.track === "audio");
+
+  assert.equal(result.length, 2);
+  assert.equal(restoredVideo?.linkedClipId, restoredAudio?.id);
+  assert.equal(restoredAudio?.linkedClipId, video.id);
+  assert.equal(restoredAudio?.src, video.src);
+  assert.equal(restoredAudio?.start, video.start);
+  assert.equal(restoredAudio?.duration, video.duration);
+  assert.equal(restoredAudio?.sourceStart, video.sourceStart);
+  assert.equal(restoredAudio?.speed, video.speed);
+  assert.equal(restoredAudio?.volume, video.volume);
+});
+
+test("keeps voice ranges in an overlay without shifting the main track", () => {
+  const overlay: TimelineClip = {
+    id: "overlay-video",
+    label: "Overlay",
+    track: "upper",
+    start: 60,
+    duration: 180,
+    sourceStart: 0,
+    src: "overlay.mp4",
+    mediaType: "video",
+    color: "#7c3aed",
+    overlayLane: 1,
+  };
+  const main: TimelineClip = {
+    id: "main-video",
+    label: "Main",
+    track: "main",
+    start: 240,
+    duration: 90,
+    src: "main.mp4",
+    mediaType: "video",
+    color: "#0891b2",
+  };
+  const linked = ensureLinkedAudioForVideo([overlay, main], overlay.id);
+  const result = keepDominantVoiceInLinkedVideo(
+    linked,
+    overlay.id,
+    [{startSeconds: 1, endSeconds: 3}],
+    30,
+  );
+
+  assert.deepEqual(
+    result
+      .filter((clip) => clip.track === "upper")
+      .map(({start, duration, sourceStart, overlayLane}) => ({
+        start,
+        duration,
+        sourceStart,
+        overlayLane,
+      })),
+    [{start: 60, duration: 60, sourceStart: 30, overlayLane: 1}],
+  );
+  assert.equal(result.find((clip) => clip.id === main.id)?.start, 240);
+});
+
 test("keeps dominant voice ranges in a main video and reciprocal audio only", () => {
   const video: TimelineClip = {
     id: "video",
@@ -3739,6 +3927,55 @@ test("keeps dominant voice ranges with speed-aware source offsets", () => {
     [
       { start: 10, duration: 60, sourceStart: 90 },
       { start: 70, duration: 60, sourceStart: 150 },
+    ],
+  );
+});
+
+test("uses cleaned audio for retained video scenes and their linked audio", () => {
+  const video: TimelineClip = {
+    id: "video",
+    label: "Video",
+    track: "main",
+    start: 0,
+    duration: 180,
+    src: "original.mp4",
+    mediaType: "video",
+    color: "#0891b2",
+    linkedClipId: "audio",
+  };
+  const audio: TimelineClip = {
+    id: "audio",
+    label: "Video audio",
+    track: "audio",
+    start: 0,
+    duration: 180,
+    src: "original.mp4",
+    color: "#2563eb",
+    linkedClipId: "video",
+  };
+
+  const result = keepDominantVoiceInLinkedVideo(
+    [video, audio],
+    video.id,
+    [
+      {startSeconds: 0, endSeconds: 2},
+      {startSeconds: 3, endSeconds: 6},
+    ],
+    30,
+    "uploads/cleaned.mp4",
+  );
+
+  assert.equal(result.length, 4);
+  assert.ok(result.every((clip) => clip.src === "uploads/cleaned.mp4"));
+  assert.deepEqual(
+    result.filter((clip) => clip.track === "main").map((clip) => ({
+      start: clip.start,
+      duration: clip.duration,
+      sourceStart: clip.sourceStart,
+    })),
+    [
+      {start: 0, duration: 60, sourceStart: 0},
+      {start: 60, duration: 90, sourceStart: 90},
     ],
   );
 });

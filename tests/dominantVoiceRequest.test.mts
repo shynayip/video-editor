@@ -66,7 +66,7 @@ test("rejects snapshots when analysis or linked-audio fields change", () => {
   }
 });
 
-test("rejects every reciprocal audio identity, timing, source, track, and link mutation", () => {
+test("keeps the request current when only the repairable audio link changes", () => {
   const clip = mainVideo({sourceStart: 45, speed: 1.25});
   const audio = reciprocalAudio({sourceStart: 45, speed: 1.25});
   const snapshot = createDominantVoiceRequestSnapshot(clip, [clip, audio])!;
@@ -82,17 +82,21 @@ test("rejects every reciprocal audio identity, timing, source, track, and link m
   ]) {
     assert.equal(
       isDominantVoiceRequestCurrent(snapshot, clip.id, [clip, changedAudio]),
-      false,
+      true,
     );
   }
 });
 
-test("rejects deleted clips and non-main videos", () => {
+test("accepts overlay videos and rejects deleted or unsupported clips", () => {
   const clip = mainVideo();
   const audio = reciprocalAudio();
   const snapshot = createDominantVoiceRequestSnapshot(clip, [clip, audio])!;
 
-  assert.equal(createDominantVoiceRequestSnapshot({...clip, track: "upper"}, [clip, audio]), null);
+  assert.notEqual(
+    createDominantVoiceRequestSnapshot({...clip, track: "upper"}, [clip, audio]),
+    null,
+  );
   assert.equal(createDominantVoiceRequestSnapshot({...clip, mediaType: "image"}, [clip, audio]), null);
+  assert.equal(createDominantVoiceRequestSnapshot({...clip, track: "audio"}, [clip, audio]), null);
   assert.equal(isDominantVoiceRequestCurrent(snapshot, clip.id, []), false);
 });

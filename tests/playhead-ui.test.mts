@@ -1287,12 +1287,19 @@ test("wires effects and filters tabs to selected clip visual controls", () => {
   assert.match(compositionSource, /activeTool === "filters"/);
   assert.match(compositionSource, /updateSelectedClipEffect\(option\.id\)/);
   assert.match(compositionSource, /updateSelectedClipFilter\(option\.id\)/);
+  assert.match(compositionSource, /label: "Featured"/);
+  assert.match(compositionSource, /label: "Photo Booth"/);
+  assert.match(compositionSource, /label: "Pet"/);
+  assert.match(compositionSource, /className="filter-card-row"/);
+  assert.match(compositionSource, /getClipFilterCss\(option\.id\)/);
   assert.match(
     compositionSource,
     /getClipFrameStyle\(videoClip, playheadFrame\)/,
   );
   assert.match(compositionSource, /getClipAdjustmentStyle\(videoClip\)/);
   assert.match(stylesheetSource, /\.visual-option-grid/);
+  assert.match(stylesheetSource, /\.filter-card-row/);
+  assert.match(stylesheetSource, /grid-auto-flow: column/);
 });
 
 test("offers an on-canvas rotation handle in manual adjustment mode", () => {

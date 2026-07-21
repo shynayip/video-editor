@@ -94,6 +94,7 @@ import {
   normalizeMediaSceneLabels,
   getNextVideoLayer,
   getClipAnimationPreviewFrame,
+  getClipFilterCss,
   getVideoLayer,
   getVideoLayerControlState,
   getVideoLayerEnd,
@@ -504,27 +505,42 @@ const seekTimelineThumbnail = (
   video.currentTime = Math.max(0, Math.min(requestedTime, latestSeekTime));
 };
 
-const createWaveformLinePoints = (clipId: string, duration: number) => {
+const TimelineWaveform = ({
+  clipId,
+  duration,
+}: {
+  clipId: string;
+  duration: number;
+}) => {
   const amplitudes = createWaveformBars(
     clipId,
-    Math.max(20, Math.min(72, Math.round(duration / 8))),
+    Math.max(28, Math.min(120, Math.round(duration / 4))),
   );
-  const seed = Array.from(clipId).reduce(
-    (total, character) => total + character.charCodeAt(0),
-    0,
-  );
+  const step = 100 / amplitudes.length;
+  const barWidth = Math.max(0.38, Math.min(1.4, step * 0.42));
 
-  return amplitudes
-    .map((amplitude, index) => {
-      const x =
-        amplitudes.length === 1 ? 0 : (index / (amplitudes.length - 1)) * 100;
-      const isQuiet = (index + seed) % 13 < 3;
-      const direction = (index * 7 + seed) % 9 === 0 ? 1 : -1;
-      const height = isQuiet ? amplitude * 1.1 : amplitude * 11.5;
-      const y = Math.max(1, Math.min(19, 14 + direction * height));
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
+  return (
+    <svg
+      className="audio-waveform-svg"
+      viewBox="0 0 100 20"
+      preserveAspectRatio="none"
+    >
+      {amplitudes.map((amplitude, index) => {
+        const height = Math.max(2, amplitude * 18);
+        return (
+          <rect
+            className="audio-waveform-bar"
+            key={`${clipId}-wave-${index}`}
+            x={index * step + (step - barWidth) / 2}
+            y={10 - height / 2}
+            width={barWidth}
+            height={height}
+            rx={barWidth / 2}
+          />
+        );
+      })}
+    </svg>
+  );
 };
 
 const durationToFrames = (durationInSeconds: number) => {
@@ -598,49 +614,16 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
   const filters: string[] = [];
   let opacity = 1;
   let scale = 1;
+  let translateX = 0;
+  let translateY = 0;
+  let rotate = 0;
 
-  switch (visual?.filter ?? "none") {
-    case "warm":
-      filters.push(
-        `sepia(${0.14 * filterIntensity})`,
-        `saturate(${1 + 0.18 * filterIntensity})`,
-      );
-      break;
-    case "cool":
-      filters.push(
-        `hue-rotate(${-8 * filterIntensity}deg)`,
-        `saturate(${1 + 0.1 * filterIntensity})`,
-      );
-      break;
-    case "vivid":
-      filters.push(
-        `contrast(${1 + 0.24 * filterIntensity})`,
-        `saturate(${1 + 0.28 * filterIntensity})`,
-      );
-      break;
-    case "vintage":
-      filters.push(
-        `sepia(${0.32 * filterIntensity})`,
-        `contrast(${1 - 0.08 * filterIntensity})`,
-      );
-      break;
-    case "sepia":
-      filters.push(`sepia(${0.7 * filterIntensity})`);
-      break;
-    case "cinema":
-      filters.push(
-        `contrast(${1 + 0.18 * filterIntensity})`,
-        `brightness(${1 - 0.06 * filterIntensity})`,
-      );
-      break;
-    case "soft":
-      filters.push(
-        `brightness(${1 + 0.08 * filterIntensity})`,
-        `saturate(${1 - 0.08 * filterIntensity})`,
-      );
-      break;
-    default:
-      break;
+  const filterCss = getClipFilterCss(
+    visual?.filter ?? "none",
+    filterIntensity * 100,
+  );
+  if (filterCss !== "none") {
+    filters.push(filterCss);
   }
 
   switch (visual?.effect ?? "none") {
@@ -692,6 +675,20 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
       );
       break;
     }
+    case "moving-white-outline": {
+      const angle = ((frame % 72) / 72) * Math.PI * 2;
+      const distance = Math.max(2, 5 * effectIntensity);
+      const x = Math.cos(angle) * distance;
+      const y = Math.sin(angle) * distance;
+      const oppositeX = Math.cos(angle + Math.PI) * distance;
+      const oppositeY = Math.sin(angle + Math.PI) * distance;
+      filters.push(
+        `drop-shadow(${x}px ${y}px 0 rgba(255, 255, 255, 1))`,
+        `drop-shadow(${oppositeX}px ${oppositeY}px 0 rgba(255, 255, 255, 0.78))`,
+        `drop-shadow(0 0 ${7 * effectIntensity}px rgba(255, 255, 255, 0.92))`,
+      );
+      break;
+    }
     case "neon-outline": {
       const width = Math.max(1, 3 * effectIntensity);
       filters.push(
@@ -703,8 +700,148 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
       );
       break;
     }
+    case "hand-drawn": {
+      const jitterX = Math.sin(frame * 2.17) * 1.6 * effectIntensity;
+      const jitterY = Math.cos(frame * 1.83) * 1.3 * effectIntensity;
+      translateX = jitterX * 0.18;
+      translateY = jitterY * 0.18;
+      rotate = Math.sin(frame * 1.11) * 0.45 * effectIntensity;
+      filters.push(
+        `contrast(${1 + 0.16 * effectIntensity})`,
+        `saturate(${1 - 0.22 * effectIntensity})`,
+        `drop-shadow(${2 + jitterX}px ${jitterY}px 0 rgba(15, 23, 42, 0.95))`,
+        `drop-shadow(${-2 - jitterX}px ${-jitterY}px 0 rgba(255, 255, 255, 0.9))`,
+      );
+      break;
+    }
+    case "scribble": {
+      const angle = frame * 0.19;
+      const x = Math.cos(angle) * 4 * effectIntensity;
+      const y = Math.sin(angle * 1.3) * 4 * effectIntensity;
+      filters.push(
+        `drop-shadow(${x}px ${y}px 0 rgba(250, 204, 21, 0.95))`,
+        `drop-shadow(${-y}px ${x}px 0 rgba(244, 114, 182, 0.9))`,
+        `drop-shadow(${-x}px ${-y}px 0 rgba(34, 211, 238, 0.9))`,
+      );
+      rotate = Math.sin(frame * 0.27) * 0.65 * effectIntensity;
+      break;
+    }
+    case "float":
+      translateY = Math.sin(frame * 0.08) * -3.2 * effectIntensity;
+      rotate = Math.sin(frame * 0.055) * 1.8 * effectIntensity;
+      break;
+    case "bounce": {
+      const bounce = Math.abs(Math.sin(frame * 0.13));
+      translateY = -5 * bounce * effectIntensity;
+      scale *= 1 + bounce * 0.055 * effectIntensity;
+      break;
+    }
+    case "motion-trail": {
+      const trail = 5 + Math.abs(Math.sin(frame * 0.1)) * 7;
+      filters.push(
+        `drop-shadow(${-trail * effectIntensity}px 0 0 rgba(34, 211, 238, 0.58))`,
+        `drop-shadow(${-trail * 1.8 * effectIntensity}px 1px 0 rgba(244, 114, 182, 0.38))`,
+        `drop-shadow(${-trail * 2.6 * effectIntensity}px 2px 0 rgba(250, 204, 21, 0.24))`,
+      );
+      translateX = Math.sin(frame * 0.12) * 0.9 * effectIntensity;
+      break;
+    }
+    case "rainbow-edge": {
+      const angle = frame * 0.09;
+      const radius = Math.max(2, 4 * effectIntensity);
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+      filters.push(
+        `drop-shadow(${x}px ${y}px 0 rgba(34, 211, 238, 0.95))`,
+        `drop-shadow(${-y}px ${x}px 0 rgba(250, 204, 21, 0.92))`,
+        `drop-shadow(${-x}px ${-y}px 0 rgba(244, 63, 94, 0.92))`,
+        `drop-shadow(${y}px ${-x}px 0 rgba(168, 85, 247, 0.92))`,
+      );
+      break;
+    }
+    case "electric-glow": {
+      const spark = 0.72 + Math.abs(Math.sin(frame * 0.48)) * 0.28;
+      filters.push(
+        `brightness(${1 + 0.12 * spark * effectIntensity})`,
+        `drop-shadow(0 0 ${5 * spark * effectIntensity}px rgba(255, 255, 255, 0.98))`,
+        `drop-shadow(0 0 ${18 * spark * effectIntensity}px rgba(34, 211, 238, 0.92))`,
+      );
+      break;
+    }
+    case "comic-pop": {
+      const beat = Math.pow(Math.abs(Math.sin(frame * 0.16)), 5);
+      scale *= 1 + beat * 0.13 * effectIntensity;
+      rotate = Math.sin(frame * 0.16) * beat * 1.8 * effectIntensity;
+      filters.push(`contrast(${1 + 0.2 * effectIntensity})`, `saturate(${1 + 0.3 * effectIntensity})`);
+      break;
+    }
+    case "sway":
+      translateX = Math.sin(frame * 0.065) * 2.4 * effectIntensity;
+      translateY = Math.cos(frame * 0.065) * 0.7 * effectIntensity;
+      rotate = Math.sin(frame * 0.065) * 3.2 * effectIntensity;
+      break;
+    case "flicker-outline": {
+      const flicker = 0.35 + Math.abs(Math.sin(frame * 0.83)) * 0.65;
+      const width = Math.max(1, 3.5 * flicker * effectIntensity);
+      filters.push(
+        `drop-shadow(${width}px 0 0 rgba(255, 255, 255, ${flicker}))`,
+        `drop-shadow(${-width}px 0 0 rgba(255, 255, 255, ${flicker}))`,
+        `drop-shadow(0 ${width}px 0 rgba(255, 255, 255, ${flicker}))`,
+        `drop-shadow(0 ${-width}px 0 rgba(255, 255, 255, ${flicker}))`,
+      );
+      break;
+    }
     case "silhouette":
       filters.push("brightness(0)");
+      break;
+    case "retro":
+      filters.push(`sepia(${0.55 * effectIntensity})`, `contrast(${1 + 0.18 * effectIntensity})`, `saturate(${1 - 0.28 * effectIntensity})`);
+      break;
+    case "halo-blur":
+      filters.push(`blur(${1.4 * effectIntensity}px)`, `brightness(${1 + 0.12 * effectIntensity})`, `drop-shadow(0 0 ${20 * effectIntensity}px rgba(255,255,255,0.7))`);
+      break;
+    case "glass-flare":
+      filters.push(`brightness(${1 + 0.22 * effectIntensity})`, `saturate(${1 + 0.22 * effectIntensity})`, `drop-shadow(${12 * effectIntensity}px ${-8 * effectIntensity}px ${18 * effectIntensity}px rgba(125,211,252,0.7))`);
+      break;
+    case "colors-off":
+      filters.push(`grayscale(${0.82 * effectIntensity})`, `contrast(${1 + 0.18 * effectIntensity})`);
+      break;
+    case "shake":
+      translateX = Math.sin(frame * 1.73) * 1.6 * effectIntensity;
+      translateY = Math.cos(frame * 2.11) * 1.1 * effectIntensity;
+      rotate = Math.sin(frame * 1.31) * 0.8 * effectIntensity;
+      break;
+    case "dynamic":
+      scale *= 1 + Math.abs(Math.sin(frame * 0.16)) * 0.08 * effectIntensity;
+      filters.push(`saturate(${1 + 0.28 * effectIntensity})`);
+      break;
+    case "glitch":
+      translateX = Math.sin(frame * 2.7) * 1.8 * effectIntensity;
+      filters.push(`hue-rotate(${Math.sin(frame * 0.7) * 28 * effectIntensity}deg)`, `contrast(${1 + 0.24 * effectIntensity})`);
+      break;
+    case "dream":
+      filters.push(`blur(${1.2 * effectIntensity}px)`, `brightness(${1 + 0.14 * effectIntensity})`, `saturate(${1 - 0.16 * effectIntensity})`);
+      break;
+    case "vivid-pop":
+      filters.push(`saturate(${1 + 0.65 * effectIntensity})`, `contrast(${1 + 0.22 * effectIntensity})`);
+      break;
+    case "pulse":
+      scale *= 1 + Math.abs(Math.sin(frame * 0.2)) * 0.1 * effectIntensity;
+      break;
+    case "flash":
+      filters.push(`brightness(${1 + Math.abs(Math.sin(frame * 0.24)) * 0.55 * effectIntensity})`);
+      break;
+    case "soft-focus":
+      filters.push(`blur(${2.2 * effectIntensity}px)`, `contrast(${1 - 0.08 * effectIntensity})`, `brightness(${1 + 0.1 * effectIntensity})`);
+      break;
+    case "warm-glow":
+      filters.push(`sepia(${0.24 * effectIntensity})`, `saturate(${1 + 0.3 * effectIntensity})`, `drop-shadow(0 0 ${16 * effectIntensity}px rgba(251,191,36,0.65))`);
+      break;
+    case "cool-glow":
+      filters.push(`hue-rotate(${10 * effectIntensity}deg)`, `brightness(${1 + 0.08 * effectIntensity})`, `drop-shadow(0 0 ${16 * effectIntensity}px rgba(34,211,238,0.65))`);
+      break;
+    case "contrast-pop":
+      filters.push(`contrast(${1 + 0.42 * effectIntensity})`, `saturate(${1 + 0.18 * effectIntensity})`);
       break;
     case "zoom":
       scale = 1 + 0.12 * effectIntensity;
@@ -717,6 +854,9 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
     filter: filters.join(" "),
     opacity,
     scale,
+    translateX,
+    translateY,
+    rotate,
   };
 };
 
@@ -725,7 +865,13 @@ const getClipAnimationPresentation = (
   playheadFrame: number,
 ) => {
   if (!clip) {
-    return { opacity: 1, translateX: 0, translateY: 0, scale: 1 };
+    return {
+      opacity: 1,
+      translateX: 0,
+      translateY: 0,
+      scale: 1,
+      rotation: 0,
+    };
   }
 
   const animation = {
@@ -733,7 +879,13 @@ const getClipAnimationPresentation = (
     ...clip.animation,
   };
   if (animation.preset === "none") {
-    return { opacity: 1, translateX: 0, translateY: 0, scale: 1 };
+    return {
+      opacity: 1,
+      translateX: 0,
+      translateY: 0,
+      scale: 1,
+      rotation: 0,
+    };
   }
 
   const endFrame = clip.start + clip.duration;
@@ -751,9 +903,10 @@ const getClipAnimationPresentation = (
   const useEndWindow =
     animation.timing === "end" || animation.timing === "both";
   let opacity = 1;
-  const translateX = 0;
+  let translateX = 0;
   let translateY = 0;
   let scale = 1;
+  let rotation = 0;
 
   switch (animation.preset) {
     case "fade-in":
@@ -770,6 +923,22 @@ const getClipAnimationPresentation = (
       translateY = useEndWindow ? (1 - endProgress) * 18 : 0;
       opacity = useEndWindow ? Math.max(0.3, endProgress) : 1;
       break;
+    case "slide-left-in":
+      translateX = useStartWindow ? (1 - startProgress) * -24 : 0;
+      opacity = useStartWindow ? Math.max(0.3, startProgress) : 1;
+      break;
+    case "slide-right-in":
+      translateX = useStartWindow ? (1 - startProgress) * 24 : 0;
+      opacity = useStartWindow ? Math.max(0.3, startProgress) : 1;
+      break;
+    case "slide-up-in":
+      translateY = useStartWindow ? (1 - startProgress) * -24 : 0;
+      opacity = useStartWindow ? Math.max(0.3, startProgress) : 1;
+      break;
+    case "slide-down-in":
+      translateY = useStartWindow ? (1 - startProgress) * 24 : 0;
+      opacity = useStartWindow ? Math.max(0.3, startProgress) : 1;
+      break;
     case "zoom-in":
       scale = useStartWindow ? 0.9 + startProgress * 0.1 : 1;
       opacity = useStartWindow ? Math.max(0.4, startProgress) : 1;
@@ -782,11 +951,139 @@ const getClipAnimationPresentation = (
       scale = useStartWindow ? 0.86 + startProgress * 0.14 : 1;
       opacity = useStartWindow ? Math.max(0.45, startProgress) : 1;
       break;
+    case "spin-in":
+      scale = useStartWindow ? 0.74 + startProgress * 0.26 : 1;
+      rotation = useStartWindow ? -180 * (1 - startProgress) : 0;
+      opacity = useStartWindow ? Math.max(0.35, startProgress) : 1;
+      break;
+    case "tilt-in":
+      translateY = useStartWindow ? 10 * (1 - startProgress) : 0;
+      rotation = useStartWindow ? -14 * (1 - startProgress) : 0;
+      opacity = useStartWindow ? Math.max(0.4, startProgress) : 1;
+      break;
+    case "bounce":
+      translateY = useStartWindow
+        ? -Math.abs(Math.sin(startProgress * Math.PI * 2.5)) *
+          (1 - startProgress) *
+          14
+        : 0;
+      opacity = useStartWindow ? Math.max(0.45, startProgress) : 1;
+      break;
+    case "shake":
+      translateX = useStartWindow
+        ? Math.sin(startProgress * Math.PI * 8) * (1 - startProgress) * 9
+        : 0;
+      opacity = useStartWindow ? Math.max(0.6, startProgress) : 1;
+      break;
+    case "pulse":
+      scale = useStartWindow
+        ? 1 + Math.sin(startProgress * Math.PI) * 0.18
+        : 1;
+      opacity = useStartWindow ? Math.max(0.6, startProgress) : 1;
+      break;
+    case "flash":
+      opacity = useStartWindow
+        ? startProgress < 0.25
+          ? 0.25
+          : startProgress < 0.5
+            ? 1
+            : startProgress < 0.72
+              ? 0.42
+              : 1
+        : 1;
+      break;
+    case "elastic-in":
+      scale = useStartWindow
+        ? 1 - Math.sin(startProgress * Math.PI * 3) * (1 - startProgress) * 0.28
+        : 1;
+      opacity = useStartWindow ? Math.max(0.3, startProgress) : 1;
+      break;
+    case "swing-in":
+      rotation = useStartWindow
+        ? Math.cos(startProgress * Math.PI * 3.5) * (1 - startProgress) * -24
+        : 0;
+      opacity = useStartWindow ? Math.max(0.35, startProgress) : 1;
+      break;
+    case "flip-horizontal":
+      scale = useStartWindow
+        ? Math.max(
+            0.08,
+            Math.abs(Math.cos((1 - startProgress) * Math.PI * 0.5)),
+          )
+        : 1;
+      opacity = useStartWindow ? Math.max(0.35, startProgress) : 1;
+      break;
+    case "flip-vertical":
+      scale = useStartWindow ? 0.72 + 0.28 * startProgress : 1;
+      rotation = useStartWindow ? 90 * (1 - startProgress) : 0;
+      opacity = useStartWindow ? Math.max(0.35, startProgress) : 1;
+      break;
+    case "cube-turn":
+      translateX = useStartWindow ? -18 * (1 - startProgress) : 0;
+      scale = useStartWindow ? 0.76 + 0.24 * startProgress : 1;
+      rotation = useStartWindow ? -42 * (1 - startProgress) : 0;
+      opacity = useStartWindow ? Math.max(0.3, startProgress) : 1;
+      break;
+    case "roll-in":
+      translateX = useStartWindow ? -34 * (1 - startProgress) : 0;
+      rotation = useStartWindow ? -270 * (1 - startProgress) : 0;
+      opacity = useStartWindow ? Math.max(0.3, startProgress) : 1;
+      break;
+    case "drop-in":
+      translateY = useStartWindow
+        ? -38 * (1 - startProgress) +
+          Math.sin(startProgress * Math.PI * 3) * (1 - startProgress) * 7
+        : 0;
+      opacity = useStartWindow ? Math.max(0.3, startProgress) : 1;
+      break;
+    case "whip-pan":
+      translateX = useStartWindow ? -58 * (1 - startProgress) : 0;
+      rotation = useStartWindow ? -5 * (1 - startProgress) : 0;
+      opacity = useStartWindow ? Math.max(0.25, startProgress) : 1;
+      break;
+    case "spiral-in":
+      scale = useStartWindow ? 0.35 + 0.65 * startProgress : 1;
+      rotation = useStartWindow ? -360 * (1 - startProgress) : 0;
+      opacity = useStartWindow ? Math.max(0.2, startProgress) : 1;
+      break;
+    case "drift":
+      if (useStartWindow) {
+        translateX = Math.sin(startProgress * Math.PI * 2) * 5;
+        translateY = Math.cos(startProgress * Math.PI * 2) * 3;
+        rotation = Math.sin(startProgress * Math.PI * 2) * 2;
+      }
+      break;
+    case "heartbeat":
+      scale = useStartWindow
+        ? 1 +
+          Math.max(0, Math.sin(startProgress * Math.PI * 4)) *
+            0.16 *
+            (1 - startProgress * 0.35)
+        : 1;
+      break;
+    case "strobe":
+      opacity =
+        useStartWindow && Math.sin(startProgress * Math.PI * 10) <= -0.1
+          ? 0.22
+          : 1;
+      break;
+    case "wobble":
+      if (useStartWindow) {
+        translateX =
+          Math.sin(startProgress * Math.PI * 6) * (1 - startProgress) * 6;
+        rotation =
+          Math.sin(startProgress * Math.PI * 6) * (1 - startProgress) * 9;
+      }
+      break;
+    case "zoom-burst":
+      scale = useStartWindow ? 1.7 - 0.7 * startProgress : 1;
+      opacity = useStartWindow ? Math.max(0.25, startProgress) : 1;
+      break;
     default:
       break;
   }
 
-  return { opacity, translateX, translateY, scale };
+  return { opacity, translateX, translateY, scale, rotation };
 };
 
 const setClipEffectIntensityById = (
@@ -961,9 +1258,95 @@ const animationOptions: Array<{ id: ClipAnimationPreset; label: string }> = [
   { id: "fade-out", label: "Fade out" },
   { id: "slide-in", label: "Slide in" },
   { id: "slide-out", label: "Slide out" },
+  { id: "slide-left-in", label: "Slide left" },
+  { id: "slide-right-in", label: "Slide right" },
+  { id: "slide-up-in", label: "Slide up" },
+  { id: "slide-down-in", label: "Slide down" },
   { id: "zoom-in", label: "Zoom in" },
   { id: "zoom-out", label: "Zoom out" },
   { id: "pop", label: "Pop" },
+  { id: "spin-in", label: "Spin in" },
+  { id: "tilt-in", label: "Tilt in" },
+  { id: "bounce", label: "Bounce" },
+  { id: "shake", label: "Shake" },
+  { id: "pulse", label: "Pulse" },
+  { id: "flash", label: "Flash" },
+  { id: "elastic-in", label: "Elastic" },
+  { id: "swing-in", label: "Swing" },
+  { id: "flip-horizontal", label: "Flip H" },
+  { id: "flip-vertical", label: "Flip V" },
+  { id: "cube-turn", label: "Cube turn" },
+  { id: "roll-in", label: "Roll in" },
+  { id: "drop-in", label: "Drop in" },
+  { id: "whip-pan", label: "Whip pan" },
+  { id: "spiral-in", label: "Spiral" },
+  { id: "drift", label: "Drift" },
+  { id: "heartbeat", label: "Heartbeat" },
+  { id: "strobe", label: "Strobe" },
+  { id: "wobble", label: "Wobble" },
+  { id: "zoom-burst", label: "Zoom burst" },
+];
+
+const animationCategories: Array<{
+  id: string;
+  label: string;
+  optionIds: ClipAnimationPreset[];
+}> = [
+  {
+    id: "trending",
+    label: "Trending",
+    optionIds: [
+      "pop",
+      "spin-in",
+      "elastic-in",
+      "whip-pan",
+      "zoom-burst",
+      "strobe",
+      "bounce",
+      "shake",
+    ],
+  },
+  {
+    id: "three-d",
+    label: "3D & Flip",
+    optionIds: [
+      "flip-horizontal",
+      "flip-vertical",
+      "cube-turn",
+      "roll-in",
+      "spiral-in",
+    ],
+  },
+  {
+    id: "movement",
+    label: "Movement",
+    optionIds: [
+      "slide-left-in",
+      "slide-right-in",
+      "slide-up-in",
+      "slide-down-in",
+      "tilt-in",
+      "drop-in",
+      "swing-in",
+      "wobble",
+      "drift",
+    ],
+  },
+  {
+    id: "rhythm",
+    label: "Rhythm",
+    optionIds: ["pulse", "heartbeat", "flash", "strobe", "bounce", "shake"],
+  },
+  {
+    id: "classic",
+    label: "Classic",
+    optionIds: ["fade-in", "slide-in", "zoom-in"],
+  },
+  {
+    id: "exit",
+    label: "Exit",
+    optionIds: ["fade-out", "slide-out", "zoom-out"],
+  },
 ];
 
 const animationTimingOptions: Array<{
@@ -984,23 +1367,63 @@ const animationEasingOptions: Array<{
   { id: "slow", label: "Slow" },
 ];
 
-const effectOptions: Array<{ id: ClipEffect; label: string }> = [
-  { id: "none", label: "None" },
-  { id: "blur", label: "Blur" },
-  { id: "glow", label: "Glow" },
-  { id: "grayscale", label: "B/W" },
-  { id: "invert", label: "Invert" },
-  { id: "fade", label: "Fade" },
-  { id: "shadow", label: "Shadow" },
-  { id: "outline", label: "Outline" },
-  { id: "zoom", label: "Zoom" },
+const effectOptions: Array<{ id: ClipEffect; label: string; preview: string }> = [
+  { id: "none", label: "None", preview: "NO" },
+  { id: "blur", label: "Blur", preview: "BL" },
+  { id: "glow", label: "Glow", preview: "GL" },
+  { id: "shake", label: "Shake", preview: "SH" },
+  { id: "dynamic", label: "Dynamic", preview: "DY" },
+  { id: "glitch", label: "Glitch", preview: "GX" },
+  { id: "retro", label: "Retro", preview: "RT" },
+  { id: "halo-blur", label: "Halo Blur", preview: "HB" },
+  { id: "glass-flare", label: "Glass Flare", preview: "GF" },
+  { id: "dream", label: "Dream", preview: "DR" },
+  { id: "vivid-pop", label: "Vivid Pop", preview: "VP" },
+  { id: "pulse", label: "Pulse", preview: "PL" },
+  { id: "flash", label: "Flash", preview: "FL" },
+  { id: "soft-focus", label: "Soft Focus", preview: "SF" },
+  { id: "warm-glow", label: "Warm Glow", preview: "WG" },
+  { id: "cool-glow", label: "Cool Glow", preview: "CG" },
+  { id: "contrast-pop", label: "Contrast", preview: "CP" },
+  { id: "colors-off", label: "Colors Off", preview: "BW" },
+  { id: "grayscale", label: "B/W", preview: "BW" },
+  { id: "invert", label: "Invert", preview: "IN" },
+  { id: "fade", label: "Fade", preview: "FA" },
+  { id: "shadow", label: "Shadow", preview: "SD" },
+  { id: "outline", label: "Outline", preview: "OL" },
+  { id: "zoom", label: "Zoom", preview: "ZM" },
 ];
 
-const cutoutEffectOptions: Array<{ id: ClipEffect; label: string }> = [
+const cutoutEffectOptions: Array<{ id: ClipEffect; label: string; preview: string }> = [
   ...effectOptions,
-  { id: "moving-outline", label: "Moving Outline" },
-  { id: "neon-outline", label: "Neon Edge" },
-  { id: "silhouette", label: "Silhouette" },
+  { id: "moving-outline", label: "Moving Outline", preview: "MO" },
+  {
+    id: "moving-white-outline",
+    label: "Moving White Outline",
+    preview: "WO",
+  },
+  { id: "neon-outline", label: "Neon Edge", preview: "NE" },
+  { id: "hand-drawn", label: "Sketch Wobble", preview: "SK" },
+  { id: "scribble", label: "Doodle Edge", preview: "DO" },
+  { id: "float", label: "Float", preview: "FT" },
+  { id: "bounce", label: "Bounce", preview: "BO" },
+  { id: "motion-trail", label: "Motion Trail", preview: "MT" },
+  { id: "rainbow-edge", label: "Rainbow Edge", preview: "RE" },
+  { id: "electric-glow", label: "Electric Glow", preview: "EG" },
+  { id: "comic-pop", label: "Comic Pop", preview: "CP" },
+  { id: "sway", label: "Sway", preview: "SW" },
+  { id: "flicker-outline", label: "Flicker Outline", preview: "FO" },
+  { id: "silhouette", label: "Silhouette", preview: "SI" },
+];
+
+const effectSections: Array<{
+  label: string;
+  ids: ClipEffect[];
+}> = [
+  { label: "Trending", ids: ["blur", "shake", "dynamic", "glitch", "halo-blur", "glass-flare"] },
+  { label: "Classic", ids: ["retro", "colors-off", "soft-focus", "shadow", "outline", "zoom"] },
+  { label: "Hits", ids: ["vivid-pop", "pulse", "flash", "dream", "warm-glow", "cool-glow", "contrast-pop"] },
+  { label: "More", ids: ["glow", "grayscale", "invert", "fade"] },
 ];
 
 const filterOptions: Array<{ id: ClipFilter; label: string }> = [
@@ -1012,15 +1435,241 @@ const filterOptions: Array<{ id: ClipFilter; label: string }> = [
   { id: "sepia", label: "Sepia" },
   { id: "cinema", label: "Cinema" },
   { id: "soft", label: "Soft" },
+  { id: "classic-mv", label: "Classic MV" },
+  { id: "summer-glow", label: "Summer Glow" },
+  { id: "bare-skin", label: "Bare Skin" },
+  { id: "filmic-haze", label: "Filmic Haze" },
+  { id: "plum-haze", label: "Plum Haze" },
+  { id: "flash-night", label: "Flash Night" },
+  { id: "light-boost", label: "Light Boost" },
+  { id: "cyber-soft", label: "Cyber Soft" },
+  { id: "tokyo", label: "Tokyo" },
+  { id: "dreamy-rose", label: "Dreamy Rose" },
+  { id: "pearl-glow", label: "Pearl Glow" },
+  { id: "lavender-dream", label: "Lavender Dream" },
+  { id: "stage-light", label: "Stage Light" },
+  { id: "violet-rush", label: "Violet Rush" },
+  { id: "y2k", label: "Y2K Interlude" },
+  { id: "stranger", label: "Stranger" },
+  { id: "burgundy", label: "Burgundy" },
+  { id: "misty-pink", label: "Misty Pink" },
+  { id: "nude-tone", label: "Nude Tone" },
+  { id: "olive-film", label: "Olive Film" },
+  { id: "muted-gray", label: "Muted Gray" },
+  { id: "coral-mood", label: "Coral Mood" },
+  { id: "film-fade", label: "Film Fade" },
+  { id: "ocean-glow", label: "Ocean Glow" },
+  { id: "low-res", label: "Low Res Story" },
+  { id: "gentle-cream", label: "Gentle Cream" },
+  { id: "amorous", label: "Amorous" },
+  { id: "timeless", label: "Timeless" },
+  { id: "newspaper", label: "Newspaper" },
+  { id: "hollywood", label: "Hollywood" },
+  { id: "old-flame", label: "Old Flame" },
+  { id: "light-pastel", label: "Light Pastel" },
+  { id: "fluffy-snap", label: "Fluffy Snap" },
+  { id: "sweet-paws", label: "Sweet Paws" },
+  { id: "warm-caramel", label: "Warm Caramel" },
+  { id: "cuddle-shade", label: "Cuddle Shade" },
+  { id: "chestnut", label: "Chestnut" },
+  { id: "soft-ginger", label: "Soft Ginger" },
+];
+
+const filterSections: Array<{ label: string; ids: ClipFilter[] }> = [
+  {
+    label: "Basic",
+    ids: ["warm", "cool", "vivid", "vintage", "sepia", "cinema", "soft"],
+  },
+  {
+    label: "Featured",
+    ids: [
+      "classic-mv",
+      "summer-glow",
+      "bare-skin",
+      "filmic-haze",
+      "plum-haze",
+      "flash-night",
+      "light-boost",
+      "cyber-soft",
+      "tokyo",
+    ],
+  },
+  {
+    label: "Hits",
+    ids: [
+      "dreamy-rose",
+      "pearl-glow",
+      "lavender-dream",
+      "stage-light",
+      "violet-rush",
+      "y2k",
+      "stranger",
+      "burgundy",
+    ],
+  },
+  {
+    label: "Life",
+    ids: [
+      "misty-pink",
+      "nude-tone",
+      "olive-film",
+      "muted-gray",
+      "coral-mood",
+      "film-fade",
+      "ocean-glow",
+    ],
+  },
+  {
+    label: "Photo Booth",
+    ids: [
+      "low-res",
+      "gentle-cream",
+      "amorous",
+      "burgundy",
+      "timeless",
+      "newspaper",
+      "hollywood",
+      "old-flame",
+    ],
+  },
+  {
+    label: "Pet",
+    ids: [
+      "light-pastel",
+      "fluffy-snap",
+      "sweet-paws",
+      "warm-caramel",
+      "cuddle-shade",
+      "chestnut",
+      "soft-ginger",
+    ],
+  },
 ];
 
 const textFontOptions = [
   "Inter",
   "Arial",
+  "Arial Black",
+  "Segoe UI",
+  "Impact",
   "Georgia",
+  "Garamond",
+  "Palatino Linotype",
   "Verdana",
   "Trebuchet MS",
+  "Century Gothic",
+  "Franklin Gothic Medium",
+  "Comic Sans MS",
+  "Times New Roman",
   "Courier New",
+  "Lucida Console",
+  "Brush Script MT",
+];
+
+type TextStylePreset = {
+  id: string;
+  label: string;
+  sample: string;
+  style: Parameters<typeof setTextStyleById>[2];
+};
+
+const textStylePresets: TextStylePreset[] = [
+  {
+    id: "clean",
+    label: "Clean",
+    sample: "Simple title",
+    style: {
+      fontFamily: "Segoe UI",
+      fontWeight: "700",
+      fontStyle: "normal",
+      color: "#ffffff",
+      effect: "none",
+    },
+  },
+  {
+    id: "editorial",
+    label: "Editorial",
+    sample: "New story",
+    style: {
+      fontFamily: "Georgia",
+      fontWeight: "700",
+      fontStyle: "italic",
+      color: "#fff7ed",
+      effect: "shadow",
+    },
+  },
+  {
+    id: "impact",
+    label: "Impact",
+    sample: "WATCH THIS",
+    style: {
+      fontFamily: "Impact",
+      fontWeight: "900",
+      fontStyle: "normal",
+      color: "#ffffff",
+      effect: "outline",
+    },
+  },
+  {
+    id: "neon",
+    label: "Neon",
+    sample: "Glow up",
+    style: {
+      fontFamily: "Trebuchet MS",
+      fontWeight: "900",
+      fontStyle: "normal",
+      color: "#5eead4",
+      effect: "glow",
+    },
+  },
+  {
+    id: "comic",
+    label: "Comic",
+    sample: "WOW!",
+    style: {
+      fontFamily: "Comic Sans MS",
+      fontWeight: "900",
+      fontStyle: "normal",
+      color: "#fde047",
+      effect: "outline",
+    },
+  },
+  {
+    id: "retro",
+    label: "Retro",
+    sample: "PLAY BACK",
+    style: {
+      fontFamily: "Courier New",
+      fontWeight: "900",
+      fontStyle: "normal",
+      color: "#fb923c",
+      effect: "shadow",
+    },
+  },
+  {
+    id: "sport",
+    label: "Sport",
+    sample: "GAME ON",
+    style: {
+      fontFamily: "Arial Black",
+      fontWeight: "900",
+      fontStyle: "italic",
+      color: "#f8fafc",
+      effect: "outline",
+    },
+  },
+  {
+    id: "holiday",
+    label: "Holiday",
+    sample: "Celebrate",
+    style: {
+      fontFamily: "Brush Script MT",
+      fontWeight: "700",
+      fontStyle: "normal",
+      color: "#f87171",
+      effect: "outline",
+    },
+  },
 ];
 
 const textEffectOptions: Array<{ id: TextEffect; label: string }> = [
@@ -1134,10 +1783,11 @@ const getClipFrameStyle = (
   };
 
   return {
-    ...visual,
+    filter: visual.filter,
     opacity: visual.opacity * animation.opacity * transition.opacity,
-    translate: `${animation.translateX + transition.translateX}% ${animation.translateY}%`,
+    translate: `${visual.translateX + animation.translateX + transition.translateX}% ${visual.translateY + animation.translateY}%`,
     scale: visual.scale * animation.scale * transition.scale,
+    rotate: `${visual.rotate + animation.rotation}deg`,
   };
 };
 
@@ -1641,6 +2291,9 @@ type CutoutInteraction = {
   handle?: CaptionResizeHandle;
   startX: number;
   startY: number;
+  centerX: number;
+  centerY: number;
+  rotationOffset: number;
   baseWidth: number;
   baseHeight: number;
   originalClips: TimelineClip[];
@@ -3929,8 +4582,22 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   void selectVideoLayerClipAtFrame;
 
   const selectWholeVideoLayer = (videoLayer: number) => {
+    const selectedClipIsOnLayer =
+      selectedClip &&
+      (selectedClip.track === "main" || selectedClip.track === "upper") &&
+      getVideoLayer(selectedClip) === videoLayer;
+    const clip =
+      selectedClipIsOnLayer
+        ? selectedClip
+        : clips.find(
+            (candidate) =>
+              getVideoLayer(candidate) === videoLayer &&
+              playheadFrame >= candidate.start &&
+              playheadFrame < candidate.start + candidate.duration,
+          ) ?? clips.find((candidate) => getVideoLayer(candidate) === videoLayer);
+
     setSelectedVideoLayer(videoLayer);
-    setSelectedClipId(null);
+    setSelectedClipId(clip?.id ?? null);
     setSelectedTrack(videoLayer === 0 ? "main" : "upper");
     setIsAudioTrackVisible(
       clips.some(
@@ -4188,6 +4855,32 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setIsAudioTrackVisible(false);
     setPreviewMode("timeline");
     setTextDraft("");
+  };
+
+  const applyTextStylePreset = (preset: TextStylePreset) => {
+    if (selectedTextClip?.text) {
+      updateSelectedTextStyle(preset.style);
+      setProjectStatus(`${preset.label} text style applied`);
+      return;
+    }
+
+    const content = textDraft.trim();
+    if (!content) {
+      setProjectStatus("Type your text before choosing a style");
+      return;
+    }
+
+    const id = `text-${Date.now()}`;
+    const textClip = createTextClip({ id, content, playheadFrame });
+    commitClipChange((currentClips) =>
+      setTextStyleById([...currentClips, textClip], id, preset.style),
+    );
+    setSelectedClipId(id);
+    setSelectedTrack("text");
+    setIsAudioTrackVisible(false);
+    setPreviewMode("timeline");
+    setTextDraft("");
+    setProjectStatus(`${preset.label} text added at the playhead`);
   };
 
   const commitSelectedTextContent = () => {
@@ -5188,6 +5881,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     event.currentTarget.setPointerCapture(event.pointerId);
     const cutoutElement =
       event.currentTarget.closest<HTMLElement>(".preview-cutout");
+    const cutoutBounds = cutoutElement?.getBoundingClientRect();
+    const centerX = cutoutBounds
+      ? cutoutBounds.left + cutoutBounds.width / 2
+      : event.clientX;
+    const centerY = cutoutBounds
+      ? cutoutBounds.top + cutoutBounds.height / 2
+      : event.clientY;
     selectTimelineClip(clip);
     setCutoutInteraction({
       clipId: clip.id,
@@ -5195,6 +5895,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       handle,
       startX: event.clientX,
       startY: event.clientY,
+      centerX,
+      centerY,
+      rotationOffset:
+        (clip.cutout?.rotation ?? 0) -
+        getManualRotationAngle(
+          centerX,
+          centerY,
+          event.clientX,
+          event.clientY,
+          0,
+        ),
       baseWidth: cutoutElement?.offsetWidth ?? 1,
       baseHeight: cutoutElement?.offsetHeight ?? 1,
       originalClips: clips,
@@ -7381,7 +8092,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       } else {
         nextTransform = {
           ...originalTransform,
-          rotation: originalTransform.rotation + deltaX,
+          rotation: getManualRotationAngle(
+            cutoutInteraction.centerX,
+            cutoutInteraction.centerY,
+            event.clientX,
+            event.clientY,
+            cutoutInteraction.rotationOffset,
+          ),
         };
       }
 
@@ -8206,6 +8923,53 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 >
                   {selectedTextClip ? "Commit changes" : "Add text at playhead"}
                 </button>
+                <section className="text-preset-section">
+                  <div className="text-preset-heading">
+                    <strong>Text styles</strong>
+                    <span>
+                      {selectedTextClip ? "Apply to selected" : "Add at playhead"}
+                    </span>
+                  </div>
+                  <div className="text-preset-grid" aria-label="Text styles">
+                    {textStylePresets.map((preset) => {
+                      const isActive = Boolean(
+                        selectedTextClip?.text &&
+                          Object.entries(preset.style).every(
+                            ([property, value]) =>
+                              selectedTextClip.text?.[
+                                property as keyof typeof preset.style
+                              ] === value,
+                          ),
+                      );
+                      return (
+                        <button
+                          className={`text-preset-card ${
+                            isActive ? "active-text-preset" : ""
+                          }`}
+                          key={preset.id}
+                          type="button"
+                          aria-label={`Apply ${preset.label} text style`}
+                          aria-pressed={isActive}
+                          onClick={() => applyTextStylePreset(preset)}
+                        >
+                          <span
+                            className="text-preset-preview"
+                            style={{
+                              color: preset.style.color,
+                              fontFamily: preset.style.fontFamily,
+                              fontWeight: preset.style.fontWeight,
+                              fontStyle: preset.style.fontStyle,
+                              ...getTextEffectStyle(preset.style.effect),
+                            }}
+                          >
+                            {preset.sample}
+                          </span>
+                          <small>{preset.label}</small>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
               </div>
             ) : activeTool === "transcript" ? (
               <div className="transcript-tool-panel">
@@ -8469,50 +9233,95 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 <span>
                   Select a main or overlay clip, then choose how it appears.
                 </span>
-                <div className="visual-option-grid">
-                  {animationOptions.map((option) => {
-                    const isFavorite = favoriteAnimationIds.includes(option.id);
-                    return (
-                      <div
-                        className={`animation-option-card ${
-                          selectedClipAnimation.preset === option.id
-                            ? "active-visual-option"
-                            : ""
-                        }`}
-                        key={option.id}
-                      >
-                        <button
-                          className="animation-apply-button"
-                          type="button"
-                          disabled={!canEditSelectedVisual}
-                          onClick={() => updateSelectedClipAnimation(option.id)}
-                        >
-                          {option.label}
-                        </button>
-                        {option.id !== "none" ? (
-                          <button
-                            className={`animation-favorite-button ${
-                              isFavorite ? "is-favorite" : ""
-                            }`}
-                            type="button"
-                            aria-label={
-                              isFavorite
-                                ? `Remove ${option.label} from favorites`
-                                : `Favorite ${option.label}`
-                            }
-                            title={
-                              isFavorite
-                                ? "Remove from favorites"
-                                : "Add to favorites"
-                            }
-                            onClick={() => toggleFavoriteAnimation(option.id)}
-                          >
-                            {isFavorite ? "\u2665" : "\u2661"}
-                          </button>
-                        ) : null}
+                <button
+                  aria-label="Remove animation"
+                  className={`visual-none-option ${
+                    selectedClipAnimation.preset === "none"
+                      ? "active-visual-option"
+                      : ""
+                  }`}
+                  type="button"
+                  disabled={!canEditSelectedVisual}
+                  onClick={() => updateSelectedClipAnimation("none")}
+                >
+                  <span aria-hidden="true">×</span>
+                  <strong>None</strong>
+                  <em>Remove animation</em>
+                </button>
+                <div className="animation-category-list">
+                  {animationCategories.map((category) => (
+                    <section className="animation-category" key={category.id}>
+                      <div className="animation-category-heading">
+                        <strong>{category.label}</strong>
+                        <span>{category.optionIds.length}</span>
                       </div>
-                    );
-                  })}
+                      <div className="animation-category-row">
+                        {category.optionIds.map((optionId) => {
+                          const option = animationOptions.find(
+                            (candidate) => candidate.id === optionId,
+                          );
+                          if (!option) {
+                            return null;
+                          }
+                          const isFavorite =
+                            favoriteAnimationIds.includes(option.id);
+                          return (
+                            <div
+                              className={`animation-option-card animation-thumbnail-card ${
+                                selectedClipAnimation.preset === option.id
+                                  ? "active-visual-option"
+                                  : ""
+                              }`}
+                              key={option.id}
+                            >
+                              <button
+                                className="animation-apply-button"
+                                type="button"
+                                disabled={!canEditSelectedVisual}
+                                aria-label={`Apply ${option.label} animation`}
+                                onClick={() =>
+                                  updateSelectedClipAnimation(option.id)
+                                }
+                              >
+                                <span
+                                  className={`animation-option-preview animation-preview-${option.id}`}
+                                  aria-hidden="true"
+                                >
+                                  <span />
+                                </span>
+                                <span className="animation-option-label">
+                                  {option.label}
+                                </span>
+                              </button>
+                              {option.id !== "none" ? (
+                                <button
+                                  className={`animation-favorite-button ${
+                                    isFavorite ? "is-favorite" : ""
+                                  }`}
+                                  type="button"
+                                  aria-label={
+                                    isFavorite
+                                      ? `Remove ${option.label} from favorites`
+                                      : `Favorite ${option.label}`
+                                  }
+                                  title={
+                                    isFavorite
+                                      ? "Remove from favorites"
+                                      : "Add to favorites"
+                                  }
+                                  onClick={() =>
+                                    toggleFavoriteAnimation(option.id)
+                                  }
+                                >
+                                  {isFavorite ? "\u2665" : "\u2661"}
+                                </button>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
                 </div>
                 <div
                   className="animation-segment-control"
@@ -8589,25 +9398,108 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 <span>
                   Select a main or overlay clip, then choose an effect.
                 </span>
-                <div className="visual-option-grid">
-                  {(clipControlTarget?.track === "cutout"
-                    ? cutoutEffectOptions
-                    : effectOptions
-                  ).map((option) => (
-                    <button
-                      className={
-                        selectedClipEffect === option.id
-                          ? "active-visual-option"
-                          : ""
-                      }
-                      key={option.id}
-                      type="button"
-                      disabled={!canEditSelectedVisual}
-                      onClick={() => updateSelectedClipEffect(option.id)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
+                <button
+                  aria-label="Remove effect"
+                  className={`visual-none-option ${
+                    selectedClipEffect === "none"
+                      ? "active-visual-option"
+                      : ""
+                  }`}
+                  type="button"
+                  disabled={!canEditSelectedVisual}
+                  onClick={() => updateSelectedClipEffect("none")}
+                >
+                  <span aria-hidden="true">×</span>
+                  <strong>None</strong>
+                  <em>Remove effect</em>
+                </button>
+                <div className="effect-library" aria-label="Video effects">
+                  {effectSections.map((section) => {
+                    const availableOptions = section.ids
+                      .map((effectId) =>
+                        effectOptions.find((option) => option.id === effectId),
+                      )
+                      .filter(
+                        (option): option is (typeof effectOptions)[number] =>
+                          Boolean(option),
+                      );
+
+                    return (
+                      <section className="effect-library-section" key={section.label}>
+                        <h3>{section.label}</h3>
+                        <div className="effect-card-grid">
+                          {availableOptions.map((option) => (
+                            <button
+                              aria-label={`Apply ${option.label} effect`}
+                              className={
+                                selectedClipEffect === option.id
+                                  ? "effect-card active-visual-option"
+                                  : "effect-card"
+                              }
+                              data-effect={option.id}
+                              key={option.id}
+                              type="button"
+                              disabled={!canEditSelectedVisual}
+                              onClick={() => updateSelectedClipEffect(option.id)}
+                            >
+                              <span className="effect-card-preview" aria-hidden="true">
+                                {option.preview}
+                              </span>
+                              <strong>{option.label}</strong>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })}
+                  {clipControlTarget?.track === "cutout" ? (
+                    <section className="effect-library-section">
+                      <h3>Cutout motion &amp; doodles</h3>
+                      <div className="effect-card-grid">
+                        {cutoutEffectOptions
+                          .filter((option) =>
+                            [
+                              "moving-outline",
+                              "moving-white-outline",
+                              "neon-outline",
+                              "hand-drawn",
+                              "scribble",
+                              "float",
+                              "bounce",
+                              "motion-trail",
+                              "rainbow-edge",
+                              "electric-glow",
+                              "comic-pop",
+                              "sway",
+                              "flicker-outline",
+                              "silhouette",
+                            ].includes(
+                              option.id,
+                            ),
+                          )
+                          .map((option) => (
+                            <button
+                              aria-label={`Apply ${option.label} effect`}
+                              className={
+                                selectedClipEffect === option.id
+                                  ? "effect-card active-visual-option"
+                                  : "effect-card"
+                              }
+                              data-effect={option.id}
+                              key={option.id}
+                              type="button"
+                              disabled={!canEditSelectedVisual}
+                              onClick={() => updateSelectedClipEffect(option.id)}
+                            >
+                              <span className="effect-card-preview" aria-hidden="true">
+                                {option.preview}
+                              </span>
+                              <strong>{option.label}</strong>
+                            </button>
+                          ))}
+                      </div>
+                    </section>
+                  ) : null}
                 </div>
                 <label className="visual-intensity-control">
                   <span>
@@ -8632,25 +9524,92 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 </label>
               </div>
             ) : activeTool === "filters" ? (
-              <div className="visual-tool-panel">
-                <strong>Filters</strong>
-                <span>Select a main or overlay clip, then choose a look.</span>
-                <div className="visual-option-grid">
-                  {filterOptions.map((option) => (
-                    <button
-                      className={
-                        selectedClipFilter === option.id
-                          ? "active-visual-option"
-                          : ""
-                      }
-                      key={option.id}
-                      type="button"
-                      disabled={!canEditSelectedVisual}
-                      onClick={() => updateSelectedClipFilter(option.id)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
+              <div className="visual-tool-panel filter-tool-panel">
+                <div className="filter-panel-heading">
+                  <strong>Filters</strong>
+                  <span>Select a video clip, then choose a look.</span>
+                </div>
+                <button
+                  aria-label="Remove filter"
+                  className={`visual-none-option ${
+                    selectedClipFilter === "none"
+                      ? "active-visual-option"
+                      : ""
+                  }`}
+                  type="button"
+                  disabled={!canEditSelectedVisual}
+                  onClick={() => updateSelectedClipFilter("none")}
+                >
+                  <span aria-hidden="true">×</span>
+                  <strong>None</strong>
+                  <em>Restore original color</em>
+                </button>
+                <div className="filter-library" aria-label="Video filters">
+                  {filterSections.map((section) => {
+                    const availableOptions = section.ids
+                      .map((filterId) =>
+                        filterOptions.find((option) => option.id === filterId),
+                      )
+                      .filter(
+                        (option): option is (typeof filterOptions)[number] =>
+                          Boolean(option),
+                      );
+
+                    return (
+                      <section className="filter-library-section" key={section.label}>
+                        <h3>{section.label}</h3>
+                        <div className="filter-card-row">
+                          {availableOptions.map((option) => (
+                            <button
+                              aria-label={`Apply ${option.label} filter`}
+                              className={
+                                selectedClipFilter === option.id
+                                  ? "filter-card active-visual-option"
+                                  : "filter-card"
+                              }
+                              data-filter={option.id}
+                              key={option.id}
+                              type="button"
+                              disabled={!canEditSelectedVisual}
+                              onClick={() => updateSelectedClipFilter(option.id)}
+                            >
+                              <span className="filter-card-preview" aria-hidden="true">
+                                {clipControlTarget?.src ? (
+                                  isImageClip(clipControlTarget) ? (
+                                    <Img
+                                      src={resolveMediaSource(clipControlTarget.src)}
+                                      style={{
+                                        filter: getClipFilterCss(option.id),
+                                      }}
+                                    />
+                                  ) : (
+                                    // eslint-disable-next-line @remotion/warn-native-media-tag
+                                    <video
+                                      src={resolveMediaSource(clipControlTarget.src)}
+                                      muted
+                                      playsInline
+                                      preload="metadata"
+                                      style={{
+                                        filter: getClipFilterCss(option.id),
+                                      }}
+                                    />
+                                  )
+                                ) : (
+                                  <span
+                                    className="filter-card-placeholder"
+                                    style={{
+                                      filter: getClipFilterCss(option.id),
+                                    }}
+                                  />
+                                )}
+                              </span>
+                              <strong title={option.label}>{option.label}</strong>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })}
                 </div>
                 <label className="visual-intensity-control">
                   <span>
@@ -8853,6 +9812,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             <div
               className="preview-window"
               ref={previewWindowRef}
+              onPointerDown={(event) => {
+                const target = event.target;
+                if (
+                  target instanceof HTMLElement &&
+                  target.closest(
+                    "button, input, select, textarea, [contenteditable='true']",
+                  )
+                ) {
+                  return;
+                }
+                setSelectedClipId(null);
+                setSelectedVideoLayer(null);
+                setCutoutInteraction(null);
+              }}
               onMouseLeave={closeMediaPreviewVolumeIfInactive}
               onBlurCapture={handleMediaPreviewBlur}
             >
@@ -9052,6 +10025,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           cutoutClip,
                           playheadFrame,
                         );
+                        const cutoutAnimation = getClipAnimationPresentation(
+                          cutoutClip,
+                          playheadFrame,
+                        );
                         const cutoutChroma = getCutoutChromaKeyStyle(transform);
                         const cutoutFilters = [
                           cutoutChroma.filter,
@@ -9063,8 +10040,18 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           ...maskStyle,
                           ...cutoutChroma,
                           filter: cutoutFilters || undefined,
-                          opacity: cutoutVisual.opacity,
-                          scale: cutoutVisual.scale,
+                          opacity:
+                            cutoutVisual.opacity * cutoutAnimation.opacity,
+                          translate: `${
+                            cutoutVisual.translateX +
+                            cutoutAnimation.translateX
+                          }% ${
+                            cutoutVisual.translateY +
+                            cutoutAnimation.translateY
+                          }%`,
+                          scale:
+                            cutoutVisual.scale * cutoutAnimation.scale,
+                          rotate: `${cutoutVisual.rotate}deg`,
                         };
 
                         return (
@@ -10386,19 +11373,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               } as CSSProperties
             }
           >
-            <div
-              className="timeline-playhead"
-              role="slider"
-              aria-label="Timeline playhead"
-              aria-valuemin={0}
-              aria-valuemax={Math.max(0, projectDuration - 1)}
-              aria-valuenow={playheadFrame}
-              tabIndex={0}
-              onPointerDown={startTimelineScrub}
-              style={{
-                left: `calc(${timelineOrigin}px + ${playheadFrame * timelineScale}px)`,
-              }}
-            />
             <div className="timeline-ruler" onPointerDown={startTimelineScrub}>
               {timelineTicks.map((tick) => (
                 <span
@@ -10548,22 +11522,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           }}
                         >
                           <div className="audio-waveform" aria-hidden="true">
-                            <svg
-                              className="audio-waveform-svg"
-                              viewBox="0 0 100 20"
-                              preserveAspectRatio="none"
-                            >
-                              <polyline
-                                className="audio-waveform-line"
-                                points={createWaveformLinePoints(
-                                  "voice-recording-live",
-                                  Math.max(
-                                    1,
-                                    playheadFrame - voiceRecordingStartFrame,
-                                  ),
-                                )}
-                              />
-                            </svg>
+                            <TimelineWaveform
+                              clipId="voice-recording-live"
+                              duration={Math.max(
+                                1,
+                                playheadFrame - voiceRecordingStartFrame,
+                              )}
+                            />
                           </div>
                           <span>Recording...</span>
                         </div>
@@ -10936,19 +11901,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 className="audio-waveform"
                                 aria-hidden="true"
                               >
-                                <svg
-                                  className="audio-waveform-svg"
-                                  viewBox="0 0 100 20"
-                                  preserveAspectRatio="none"
-                                >
-                                  <polyline
-                                    className="audio-waveform-line"
-                                    points={createWaveformLinePoints(
-                                      clip.id,
-                                      clip.duration,
-                                    )}
-                                  />
-                                </svg>
+                                <TimelineWaveform
+                                  clipId={clip.id}
+                                  duration={clip.duration}
+                                />
                               </div>
                             ) : null}
                             {shouldShowTimelineWaveform(clip) ? (
@@ -11052,6 +12008,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 </div>
               );
             })()}
+            <div
+              className="timeline-playhead"
+              role="slider"
+              aria-label="Timeline playhead"
+              aria-valuemin={0}
+              aria-valuemax={Math.max(0, projectDuration - 1)}
+              aria-valuenow={playheadFrame}
+              tabIndex={0}
+              onPointerDown={startTimelineScrub}
+              style={{
+                left: `calc(${timelineOrigin}px + ${playheadFrame * timelineScale}px)`,
+              }}
+            />
           </div>
         </div>
       </section>

@@ -28,6 +28,7 @@ import {
   deleteClipById,
   duplicateClipById,
   getClipSourceTime,
+  getClipFilterCss,
   getClipVisualPresentation,
   getClipAnimationPreviewFrame,
   getContextualAudioClips,
@@ -2533,6 +2534,15 @@ test("applies effects and filters only to selected video clips", () => {
   assert.equal(ignoredAudio[1].visual, undefined);
 });
 
+test("builds intensity-aware CSS for the expanded filter library", () => {
+  assert.equal(getClipFilterCss("none"), "none");
+  assert.match(getClipFilterCss("filmic-haze"), /brightness\(1\.08\)/);
+  assert.match(getClipFilterCss("violet-rush"), /hue-rotate\(255deg\)/);
+  assert.match(getClipFilterCss("newspaper"), /grayscale\(1\)/);
+  assert.match(getClipFilterCss("soft-ginger"), /saturate\(1\.35\)/);
+  assert.equal(getClipFilterCss("newspaper", 0), "brightness(1) contrast(1) grayscale(0)");
+});
+
 test("applies deterministic moving outline effects to cutout clips", () => {
   const cutout: TimelineClip = {
     id: "cutout-1",
@@ -2557,6 +2567,124 @@ test("applies deterministic moving outline effects to cutout clips", () => {
   assert.equal(updated[0].visual?.effect, "moving-outline");
   assert.match(firstFrame.filter, /drop-shadow/);
   assert.notEqual(firstFrame.filter, laterFrame.filter);
+});
+
+test("moves a white outline around a cutout silhouette", () => {
+  const cutout: TimelineClip = {
+    id: "white-outline-cutout",
+    label: "White outline",
+    track: "cutout",
+    start: 0,
+    duration: 120,
+    color: "#a855f7",
+    cutout: {
+      x: 50,
+      y: 50,
+      scale: 1,
+      rotation: 0,
+      mediaKind: "image",
+    },
+  };
+
+  const [updated] = setClipEffectById(
+    [cutout],
+    cutout.id,
+    "moving-white-outline",
+  );
+  const firstFrame = getClipVisualPresentation(updated, 0);
+  const laterFrame = getClipVisualPresentation(updated, 18);
+
+  assert.match(firstFrame.filter, /255, 255, 255/);
+  assert.notEqual(firstFrame.filter, laterFrame.filter);
+});
+
+test("applies animated hand-drawn and motion presets to cutout silhouettes", () => {
+  const cutout: TimelineClip = {
+    id: "cutout-motion",
+    label: "Product cutout",
+    track: "cutout",
+    start: 0,
+    duration: 120,
+    color: "#a855f7",
+    cutout: {
+      x: 50,
+      y: 50,
+      scale: 1,
+      rotation: 0,
+      mediaKind: "image",
+    },
+  };
+
+  for (const effect of [
+    "hand-drawn",
+    "scribble",
+    "float",
+    "bounce",
+    "motion-trail",
+  ] as const) {
+    const [updated] = setClipEffectById([cutout], cutout.id, effect);
+    const firstFrame = getClipVisualPresentation(updated, 0);
+    const laterFrame = getClipVisualPresentation(updated, 17);
+
+    assert.equal(updated.visual?.effect, effect);
+    assert.notDeepEqual(firstFrame, laterFrame);
+  }
+});
+
+test("applies the expanded auto cutout effects frame by frame", () => {
+  const cutout: TimelineClip = {
+    id: "expanded-cutout-effects",
+    label: "Person and product",
+    track: "cutout",
+    start: 0,
+    duration: 120,
+    color: "#a855f7",
+    cutout: {
+      x: 50,
+      y: 50,
+      scale: 1,
+      rotation: 0,
+      mediaKind: "image",
+    },
+  };
+
+  for (const effect of [
+    "rainbow-edge",
+    "electric-glow",
+    "comic-pop",
+    "sway",
+    "flicker-outline",
+  ] as const) {
+    const [updated] = setClipEffectById([cutout], cutout.id, effect);
+    const firstFrame = getClipVisualPresentation(updated, 0);
+    const laterFrame = getClipVisualPresentation(updated, 19);
+
+    assert.equal(updated.visual?.effect, effect);
+    assert.notDeepEqual(firstFrame, laterFrame);
+  }
+});
+
+test("stores entrance animation presets on image and video cutouts", () => {
+  const cutout: TimelineClip = {
+    id: "animated-cutout",
+    label: "Person cutout",
+    track: "cutout",
+    start: 30,
+    duration: 150,
+    color: "#a855f7",
+    cutout: {
+      x: 50,
+      y: 50,
+      scale: 1,
+      rotation: 0,
+      mediaKind: "video",
+    },
+  };
+
+  const [animated] = setClipAnimationById([cutout], cutout.id, "pop");
+
+  assert.equal(animated.animation?.preset, "pop");
+  assert.equal(animated.animation?.timing, "start");
 });
 
 test("left trim advances linked video and audio source timing without trimming narration", () => {
@@ -8145,4 +8273,26 @@ test("timeline keyboard navigation treats each video layer as its own row", () =
 
   assert.equal(getTimelineKeyboardNavigationTarget({ clips, selectedClipId: "upper-two", direction: "down" })?.id, "upper-one");
   assert.equal(getTimelineKeyboardNavigationTarget({ clips, selectedClipId: "upper-one", direction: "down" })?.id, "main");
+});
+
+test("expanded video effects provide deterministic motion and visual styling", () => {
+  const clip: TimelineClip = {
+    id: "effect-video",
+    label: "Effect video",
+    track: "main",
+    start: 0,
+    duration: 180,
+    color: "#0891b2",
+    src: "/media/effect.mp4",
+  };
+  const [shakenClip] = setClipEffectById([clip], clip.id, "shake");
+  const shakeStart = getClipVisualPresentation(shakenClip, 0);
+  const shakeLater = getClipVisualPresentation(shakenClip, 7);
+  assert.notEqual(shakeStart.translateX, shakeLater.translateX);
+  assert.notEqual(shakeStart.rotate, shakeLater.rotate);
+
+  const [retroClip] = setClipEffectById([clip], clip.id, "retro");
+  const retroPresentation = getClipVisualPresentation(retroClip, 0);
+  assert.match(retroPresentation.filter, /sepia/);
+  assert.equal(retroPresentation.opacity, 1);
 });

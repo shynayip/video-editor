@@ -400,8 +400,34 @@ export type ClipEffect =
   | "shadow"
   | "outline"
   | "moving-outline"
+  | "moving-white-outline"
   | "neon-outline"
+  | "hand-drawn"
+  | "scribble"
+  | "float"
+  | "bounce"
+  | "motion-trail"
+  | "rainbow-edge"
+  | "electric-glow"
+  | "comic-pop"
+  | "sway"
+  | "flicker-outline"
   | "silhouette"
+  | "retro"
+  | "halo-blur"
+  | "glass-flare"
+  | "colors-off"
+  | "shake"
+  | "dynamic"
+  | "glitch"
+  | "dream"
+  | "vivid-pop"
+  | "pulse"
+  | "flash"
+  | "soft-focus"
+  | "warm-glow"
+  | "cool-glow"
+  | "contrast-pop"
   | "zoom";
 export type ClipFilter =
   | "none"
@@ -411,7 +437,138 @@ export type ClipFilter =
   | "vintage"
   | "sepia"
   | "cinema"
-  | "soft";
+  | "soft"
+  | "classic-mv"
+  | "summer-glow"
+  | "bare-skin"
+  | "filmic-haze"
+  | "plum-haze"
+  | "flash-night"
+  | "light-boost"
+  | "cyber-soft"
+  | "tokyo"
+  | "dreamy-rose"
+  | "pearl-glow"
+  | "lavender-dream"
+  | "stage-light"
+  | "violet-rush"
+  | "y2k"
+  | "stranger"
+  | "burgundy"
+  | "misty-pink"
+  | "nude-tone"
+  | "olive-film"
+  | "muted-gray"
+  | "coral-mood"
+  | "film-fade"
+  | "ocean-glow"
+  | "low-res"
+  | "gentle-cream"
+  | "amorous"
+  | "timeless"
+  | "newspaper"
+  | "hollywood"
+  | "old-flame"
+  | "light-pastel"
+  | "fluffy-snap"
+  | "sweet-paws"
+  | "warm-caramel"
+  | "cuddle-shade"
+  | "chestnut"
+  | "soft-ginger";
+
+type ClipFilterFormula = {
+  brightness?: number;
+  contrast?: number;
+  grayscale?: number;
+  hueRotate?: number;
+  saturate?: number;
+  sepia?: number;
+  blur?: number;
+};
+
+const clipFilterFormulas: Record<ClipFilter, ClipFilterFormula> = {
+  none: {},
+  warm: { sepia: 0.28, saturate: 1.25, hueRotate: -10 },
+  cool: { saturate: 1.12, hueRotate: 14, brightness: 1.05 },
+  vivid: { contrast: 1.2, saturate: 1.45 },
+  vintage: { sepia: 0.45, contrast: 0.92, saturate: 0.82 },
+  sepia: { sepia: 1 },
+  cinema: { contrast: 1.18, saturate: 0.88, brightness: 0.94 },
+  soft: { contrast: 0.88, brightness: 1.08, blur: 0.8 },
+  "classic-mv": { contrast: 1.12, saturate: 0.9, sepia: 0.08 },
+  "summer-glow": { brightness: 1.08, saturate: 1.25, sepia: 0.12 },
+  "bare-skin": { brightness: 1.06, contrast: 0.94, saturate: 0.88 },
+  "filmic-haze": { contrast: 0.88, brightness: 1.08, saturate: 0.82 },
+  "plum-haze": { sepia: 0.12, hueRotate: 285, saturate: 1.15 },
+  "flash-night": { contrast: 1.28, brightness: 0.86, saturate: 0.9 },
+  "light-boost": { brightness: 1.16, contrast: 1.08, saturate: 1.1 },
+  "cyber-soft": { hueRotate: 165, saturate: 1.25, brightness: 1.05 },
+  tokyo: { contrast: 1.2, saturate: 1.35, hueRotate: -8 },
+  "dreamy-rose": { brightness: 1.08, saturate: 1.12, sepia: 0.16, hueRotate: 315 },
+  "pearl-glow": { brightness: 1.14, contrast: 0.92, saturate: 0.8 },
+  "lavender-dream": { hueRotate: 250, saturate: 0.95, brightness: 1.06 },
+  "stage-light": { contrast: 1.15, brightness: 0.96, saturate: 0.78 },
+  "violet-rush": { hueRotate: 255, saturate: 1.45, contrast: 1.08 },
+  y2k: { contrast: 1.22, saturate: 1.4, brightness: 1.06 },
+  stranger: { sepia: 0.35, contrast: 1.2, brightness: 0.8 },
+  burgundy: { sepia: 0.25, hueRotate: 305, saturate: 1.35, contrast: 1.08 },
+  "misty-pink": { brightness: 1.1, contrast: 0.88, sepia: 0.1, hueRotate: 320 },
+  "nude-tone": { sepia: 0.22, saturate: 0.8, brightness: 1.04 },
+  "olive-film": { sepia: 0.3, hueRotate: 45, saturate: 0.75, contrast: 1.08 },
+  "muted-gray": { grayscale: 0.35, saturate: 0.55, contrast: 0.95 },
+  "coral-mood": { sepia: 0.18, saturate: 1.18, hueRotate: 330 },
+  "film-fade": { contrast: 0.82, brightness: 1.08, saturate: 0.72 },
+  "ocean-glow": { hueRotate: 155, saturate: 1.2, brightness: 1.06 },
+  "low-res": { contrast: 1.3, saturate: 0.7, grayscale: 0.1 },
+  "gentle-cream": { sepia: 0.2, brightness: 1.12, contrast: 0.9 },
+  amorous: { sepia: 0.15, hueRotate: 325, saturate: 1.1, brightness: 1.05 },
+  timeless: { grayscale: 1, contrast: 1.08 },
+  newspaper: { grayscale: 1, contrast: 1.45, brightness: 0.92 },
+  hollywood: { grayscale: 0.75, sepia: 0.15, contrast: 1.25 },
+  "old-flame": { grayscale: 0.65, sepia: 0.45, contrast: 1.15 },
+  "light-pastel": { brightness: 1.12, contrast: 0.88, saturate: 0.9 },
+  "fluffy-snap": { saturate: 1.3, brightness: 1.08 },
+  "sweet-paws": { sepia: 0.2, saturate: 1.18 },
+  "warm-caramel": { sepia: 0.38, saturate: 1.15, brightness: 0.98 },
+  "cuddle-shade": { brightness: 0.94, contrast: 0.92, saturate: 0.85 },
+  chestnut: { sepia: 0.5, hueRotate: 345, saturate: 0.9 },
+  "soft-ginger": { sepia: 0.25, saturate: 1.35, brightness: 1.05 },
+};
+
+export const getClipFilterCss = (
+  filter: ClipFilter,
+  intensity = 100,
+): string => {
+  const amount = Math.max(0, Math.min(100, intensity)) / 100;
+  const formula = clipFilterFormulas[filter];
+  const parts: string[] = [];
+  const interpolateFromOne = (target: number) => 1 + (target - 1) * amount;
+
+  if (formula.brightness !== undefined) {
+    parts.push(`brightness(${interpolateFromOne(formula.brightness)})`);
+  }
+  if (formula.contrast !== undefined) {
+    parts.push(`contrast(${interpolateFromOne(formula.contrast)})`);
+  }
+  if (formula.saturate !== undefined) {
+    parts.push(`saturate(${interpolateFromOne(formula.saturate)})`);
+  }
+  if (formula.sepia !== undefined) {
+    parts.push(`sepia(${formula.sepia * amount})`);
+  }
+  if (formula.grayscale !== undefined) {
+    parts.push(`grayscale(${formula.grayscale * amount})`);
+  }
+  if (formula.hueRotate !== undefined) {
+    parts.push(`hue-rotate(${formula.hueRotate * amount}deg)`);
+  }
+  if (formula.blur !== undefined) {
+    parts.push(`blur(${formula.blur * amount}px)`);
+  }
+
+  return parts.length > 0 ? parts.join(" ") : "none";
+};
 
 export type ClipVisualStyle = {
   effect: ClipEffect;
@@ -424,6 +581,9 @@ export type ClipVisualPresentation = {
   filter: string;
   opacity: number;
   scale: number;
+  translateX: number;
+  translateY: number;
+  rotate: number;
 };
 
 export type ClipAnimationPreset =
@@ -432,9 +592,33 @@ export type ClipAnimationPreset =
   | "fade-out"
   | "slide-in"
   | "slide-out"
+  | "slide-left-in"
+  | "slide-right-in"
+  | "slide-up-in"
+  | "slide-down-in"
   | "zoom-in"
   | "zoom-out"
-  | "pop";
+  | "pop"
+  | "spin-in"
+  | "tilt-in"
+  | "bounce"
+  | "shake"
+  | "pulse"
+  | "flash"
+  | "elastic-in"
+  | "swing-in"
+  | "flip-horizontal"
+  | "flip-vertical"
+  | "cube-turn"
+  | "roll-in"
+  | "drop-in"
+  | "whip-pan"
+  | "spiral-in"
+  | "drift"
+  | "heartbeat"
+  | "strobe"
+  | "wobble"
+  | "zoom-burst";
 
 export type ClipAnimationTiming = "start" | "end" | "both";
 
@@ -470,6 +654,7 @@ export type ClipAnimationPresentation = {
   translateX: number;
   translateY: number;
   scale: number;
+  rotation: number;
 };
 
 export type ClipAdjustment = {
@@ -820,7 +1005,7 @@ export const getManualRotationAngle = (
 export const getVisibleRotateHandleTop = (cropTopPercent: number): number => {
   const frameOffset = Number.isFinite(cropTopPercent) ? 0 : 0;
 
-  return 18 + frameOffset;
+  return 4 + frameOffset;
 };
 
 export const clampPlayheadFrame = (
@@ -2293,18 +2478,30 @@ export const parseSavedEditorProject = (
 export const createWaveformBars = (
   clipId: string,
   numberOfBars: number,
-): number[] =>
-  Array.from({ length: Math.max(1, numberOfBars) }, (_, index) => {
-    const seed = Array.from(clipId).reduce(
-      (total, character) => total + character.charCodeAt(0),
-      0,
-    );
-    const value =
-      Math.sin((index + 1) * 1.73 + seed * 0.07) * 0.5 +
-      Math.sin((index + 1) * 0.61 + seed * 0.13) * 0.5;
+): number[] => {
+  const count = Math.max(1, numberOfBars);
+  const seed = Array.from(clipId).reduce(
+    (total, character) => total + character.charCodeAt(0),
+    0,
+  );
 
-    return Math.max(0.18, Math.min(1, 0.55 + value * 0.35));
+  return Array.from({ length: count }, (_, index) => {
+    const position = count === 1 ? 0.5 : index / (count - 1);
+    const edgeEnvelope = Math.pow(Math.sin(Math.PI * position), 0.48);
+    const firstPeak = Math.exp(-Math.pow((position - 0.24) / 0.12, 2));
+    const secondPeak = Math.exp(-Math.pow((position - 0.69) / 0.14, 2));
+    const clusteredEnergy = 0.38 + Math.max(firstPeak, secondPeak) * 0.62;
+    const fineDetail =
+      0.82 +
+      Math.sin((index + 1) * 1.91 + seed * 0.07) * 0.1 +
+      Math.sin((index + 1) * 0.73 + seed * 0.11) * 0.08;
+
+    return Math.max(
+      0.1,
+      Math.min(1, (0.1 + edgeEnvelope * 0.9) * clusteredEnergy * fineDetail),
+    );
   });
+};
 
 export const moveTextClip = (
   clips: TimelineClip[],
@@ -3330,7 +3527,8 @@ export const getTimelineTransitionBoundaries = (
 
 const withoutClipTransition = (clip: TimelineClip): TimelineClip => {
   if (!clip.transition) return clip;
-  const { transition: _transition, ...clipWithoutTransition } = clip;
+  const clipWithoutTransition = {...clip};
+  delete clipWithoutTransition.transition;
   return clipWithoutTransition;
 };
 
@@ -5594,50 +5792,15 @@ export const getClipVisualPresentation = (
   const effectAmount = presetIntensity(effect, visual?.effectIntensity) / 100;
   const filterAmount = presetIntensity(filter, visual?.filterIntensity) / 100;
   const parts: string[] = [];
+  const opacity = effect === "fade" ? 1 - 0.45 * effectAmount : 1;
+  let scale = effect === "zoom" ? 1 + 0.08 * effectAmount : 1;
+  let translateX = 0;
+  let translateY = 0;
+  let rotate = 0;
 
-  if (filter === "warm") {
-    parts.push(
-      `sepia(${0.28 * filterAmount})`,
-      `saturate(${1 + 0.25 * filterAmount})`,
-      `hue-rotate(${-10 * filterAmount}deg)`,
-    );
-  }
-  if (filter === "cool") {
-    parts.push(
-      `saturate(${1 + 0.12 * filterAmount})`,
-      `hue-rotate(${14 * filterAmount}deg)`,
-      `brightness(${1 + 0.05 * filterAmount})`,
-    );
-  }
-  if (filter === "vivid") {
-    parts.push(
-      `contrast(${1 + 0.2 * filterAmount})`,
-      `saturate(${1 + 0.45 * filterAmount})`,
-    );
-  }
-  if (filter === "vintage") {
-    parts.push(
-      `sepia(${0.45 * filterAmount})`,
-      `contrast(${1 - 0.08 * filterAmount})`,
-      `saturate(${1 - 0.18 * filterAmount})`,
-    );
-  }
-  if (filter === "sepia") {
-    parts.push(`sepia(${filterAmount})`);
-  }
-  if (filter === "cinema") {
-    parts.push(
-      `contrast(${1 + 0.18 * filterAmount})`,
-      `saturate(${1 - 0.12 * filterAmount})`,
-      `brightness(${1 - 0.06 * filterAmount})`,
-    );
-  }
-  if (filter === "soft") {
-    parts.push(
-      `contrast(${1 - 0.12 * filterAmount})`,
-      `brightness(${1 + 0.08 * filterAmount})`,
-      `blur(${0.8 * filterAmount}px)`,
-    );
+  const filterCss = getClipFilterCss(filter, filterAmount * 100);
+  if (filterCss !== "none") {
+    parts.push(filterCss);
   }
 
   if (effect === "blur") {
@@ -5684,6 +5847,19 @@ export const getClipVisualPresentation = (
       `drop-shadow(0 0 ${8 * effectAmount}px rgba(255, 255, 255, 0.75))`,
     );
   }
+  if (effect === "moving-white-outline") {
+    const angle = ((frame % 72) / 72) * Math.PI * 2;
+    const distance = Math.max(2, 5 * effectAmount);
+    const x = Math.cos(angle) * distance;
+    const y = Math.sin(angle) * distance;
+    const oppositeX = Math.cos(angle + Math.PI) * distance;
+    const oppositeY = Math.sin(angle + Math.PI) * distance;
+    parts.push(
+      `drop-shadow(${x}px ${y}px 0 rgba(255, 255, 255, 1))`,
+      `drop-shadow(${oppositeX}px ${oppositeY}px 0 rgba(255, 255, 255, 0.78))`,
+      `drop-shadow(0 0 ${7 * effectAmount}px rgba(255, 255, 255, 0.92))`,
+    );
+  }
   if (effect === "neon-outline") {
     const width = Math.max(1, 3 * effectAmount);
     parts.push(
@@ -5694,14 +5870,191 @@ export const getClipVisualPresentation = (
       `drop-shadow(0 0 ${14 * effectAmount}px rgba(34, 211, 238, 0.9))`,
     );
   }
+  if (effect === "hand-drawn") {
+    const jitterX = Math.sin(frame * 2.17) * 1.6 * effectAmount;
+    const jitterY = Math.cos(frame * 1.83) * 1.3 * effectAmount;
+    translateX = jitterX * 0.18;
+    translateY = jitterY * 0.18;
+    rotate = Math.sin(frame * 1.11) * 0.45 * effectAmount;
+    parts.push(
+      `contrast(${1 + 0.16 * effectAmount})`,
+      `saturate(${1 - 0.22 * effectAmount})`,
+      `drop-shadow(${2 + jitterX}px ${jitterY}px 0 rgba(15, 23, 42, 0.95))`,
+      `drop-shadow(${-2 - jitterX}px ${-jitterY}px 0 rgba(255, 255, 255, 0.9))`,
+    );
+  }
+  if (effect === "scribble") {
+    const angle = frame * 0.19;
+    const x = Math.cos(angle) * 4 * effectAmount;
+    const y = Math.sin(angle * 1.3) * 4 * effectAmount;
+    parts.push(
+      `drop-shadow(${x}px ${y}px 0 rgba(250, 204, 21, 0.95))`,
+      `drop-shadow(${-y}px ${x}px 0 rgba(244, 114, 182, 0.9))`,
+      `drop-shadow(${-x}px ${-y}px 0 rgba(34, 211, 238, 0.9))`,
+    );
+    rotate = Math.sin(frame * 0.27) * 0.65 * effectAmount;
+  }
+  if (effect === "float") {
+    translateY = Math.sin(frame * 0.08) * -3.2 * effectAmount;
+    rotate = Math.sin(frame * 0.055) * 1.8 * effectAmount;
+  }
+  if (effect === "bounce") {
+    const bounce = Math.abs(Math.sin(frame * 0.13));
+    translateY = -5 * bounce * effectAmount;
+    scale *= 1 + bounce * 0.055 * effectAmount;
+  }
+  if (effect === "motion-trail") {
+    const trail = 5 + Math.abs(Math.sin(frame * 0.1)) * 7;
+    parts.push(
+      `drop-shadow(${-trail * effectAmount}px 0 0 rgba(34, 211, 238, 0.58))`,
+      `drop-shadow(${-trail * 1.8 * effectAmount}px 1px 0 rgba(244, 114, 182, 0.38))`,
+      `drop-shadow(${-trail * 2.6 * effectAmount}px 2px 0 rgba(250, 204, 21, 0.24))`,
+    );
+    translateX = Math.sin(frame * 0.12) * 0.9 * effectAmount;
+  }
+  if (effect === "rainbow-edge") {
+    const angle = frame * 0.09;
+    const radius = Math.max(2, 4 * effectAmount);
+    const x = Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius;
+    parts.push(
+      `drop-shadow(${x}px ${y}px 0 rgba(34, 211, 238, 0.95))`,
+      `drop-shadow(${-y}px ${x}px 0 rgba(250, 204, 21, 0.92))`,
+      `drop-shadow(${-x}px ${-y}px 0 rgba(244, 63, 94, 0.92))`,
+      `drop-shadow(${y}px ${-x}px 0 rgba(168, 85, 247, 0.92))`,
+    );
+  }
+  if (effect === "electric-glow") {
+    const spark = 0.72 + Math.abs(Math.sin(frame * 0.48)) * 0.28;
+    parts.push(
+      `brightness(${1 + 0.12 * spark * effectAmount})`,
+      `drop-shadow(0 0 ${5 * spark * effectAmount}px rgba(255, 255, 255, 0.98))`,
+      `drop-shadow(0 0 ${18 * spark * effectAmount}px rgba(34, 211, 238, 0.92))`,
+    );
+  }
+  if (effect === "comic-pop") {
+    const beat = Math.pow(Math.abs(Math.sin(frame * 0.16)), 5);
+    scale *= 1 + beat * 0.13 * effectAmount;
+    rotate = Math.sin(frame * 0.16) * beat * 1.8 * effectAmount;
+    parts.push(`contrast(${1 + 0.2 * effectAmount})`, `saturate(${1 + 0.3 * effectAmount})`);
+  }
+  if (effect === "sway") {
+    translateX = Math.sin(frame * 0.065) * 2.4 * effectAmount;
+    translateY = Math.cos(frame * 0.065) * 0.7 * effectAmount;
+    rotate = Math.sin(frame * 0.065) * 3.2 * effectAmount;
+  }
+  if (effect === "flicker-outline") {
+    const flicker = 0.35 + Math.abs(Math.sin(frame * 0.83)) * 0.65;
+    const width = Math.max(1, 3.5 * flicker * effectAmount);
+    parts.push(
+      `drop-shadow(${width}px 0 0 rgba(255, 255, 255, ${flicker}))`,
+      `drop-shadow(${-width}px 0 0 rgba(255, 255, 255, ${flicker}))`,
+      `drop-shadow(0 ${width}px 0 rgba(255, 255, 255, ${flicker}))`,
+      `drop-shadow(0 ${-width}px 0 rgba(255, 255, 255, ${flicker}))`,
+    );
+  }
   if (effect === "silhouette") {
     parts.push("brightness(0)");
+  }
+  if (effect === "retro") {
+    parts.push(
+      `sepia(${0.55 * effectAmount})`,
+      `contrast(${1 + 0.18 * effectAmount})`,
+      `saturate(${1 - 0.28 * effectAmount})`,
+    );
+  }
+  if (effect === "halo-blur") {
+    parts.push(
+      `blur(${1.4 * effectAmount}px)`,
+      `brightness(${1 + 0.12 * effectAmount})`,
+      `drop-shadow(0 0 ${20 * effectAmount}px rgba(255,255,255,0.7))`,
+    );
+  }
+  if (effect === "glass-flare") {
+    parts.push(
+      `brightness(${1 + 0.22 * effectAmount})`,
+      `saturate(${1 + 0.22 * effectAmount})`,
+      `drop-shadow(${12 * effectAmount}px ${-8 * effectAmount}px ${18 * effectAmount}px rgba(125,211,252,0.7))`,
+    );
+  }
+  if (effect === "colors-off") {
+    parts.push(
+      `grayscale(${0.82 * effectAmount})`,
+      `contrast(${1 + 0.18 * effectAmount})`,
+    );
+  }
+  if (effect === "shake") {
+    translateX = Math.sin(frame * 1.73) * 1.6 * effectAmount;
+    translateY = Math.cos(frame * 2.11) * 1.1 * effectAmount;
+    rotate = Math.sin(frame * 1.31) * 0.8 * effectAmount;
+  }
+  if (effect === "dynamic") {
+    scale *= 1 + Math.abs(Math.sin(frame * 0.16)) * 0.08 * effectAmount;
+    parts.push(`saturate(${1 + 0.28 * effectAmount})`);
+  }
+  if (effect === "glitch") {
+    translateX = Math.sin(frame * 2.7) * 1.8 * effectAmount;
+    parts.push(
+      `hue-rotate(${Math.sin(frame * 0.7) * 28 * effectAmount}deg)`,
+      `contrast(${1 + 0.24 * effectAmount})`,
+    );
+  }
+  if (effect === "dream") {
+    parts.push(
+      `blur(${1.2 * effectAmount}px)`,
+      `brightness(${1 + 0.14 * effectAmount})`,
+      `saturate(${1 - 0.16 * effectAmount})`,
+    );
+  }
+  if (effect === "vivid-pop") {
+    parts.push(
+      `saturate(${1 + 0.65 * effectAmount})`,
+      `contrast(${1 + 0.22 * effectAmount})`,
+    );
+  }
+  if (effect === "pulse") {
+    scale *= 1 + Math.abs(Math.sin(frame * 0.2)) * 0.1 * effectAmount;
+  }
+  if (effect === "flash") {
+    parts.push(
+      `brightness(${1 + Math.abs(Math.sin(frame * 0.24)) * 0.55 * effectAmount})`,
+    );
+  }
+  if (effect === "soft-focus") {
+    parts.push(
+      `blur(${2.2 * effectAmount}px)`,
+      `contrast(${1 - 0.08 * effectAmount})`,
+      `brightness(${1 + 0.1 * effectAmount})`,
+    );
+  }
+  if (effect === "warm-glow") {
+    parts.push(
+      `sepia(${0.24 * effectAmount})`,
+      `saturate(${1 + 0.3 * effectAmount})`,
+      `drop-shadow(0 0 ${16 * effectAmount}px rgba(251,191,36,0.65))`,
+    );
+  }
+  if (effect === "cool-glow") {
+    parts.push(
+      `hue-rotate(${10 * effectAmount}deg)`,
+      `brightness(${1 + 0.08 * effectAmount})`,
+      `drop-shadow(0 0 ${16 * effectAmount}px rgba(34,211,238,0.65))`,
+    );
+  }
+  if (effect === "contrast-pop") {
+    parts.push(
+      `contrast(${1 + 0.42 * effectAmount})`,
+      `saturate(${1 + 0.18 * effectAmount})`,
+    );
   }
 
   return {
     filter: parts.length ? parts.join(" ") : "none",
-    opacity: effect === "fade" ? 1 - 0.45 * effectAmount : 1,
-    scale: effect === "zoom" ? 1 + 0.08 * effectAmount : 1,
+    opacity,
+    scale,
+    translateX,
+    translateY,
+    rotate,
   };
 };
 
@@ -5710,6 +6063,7 @@ const neutralAnimationPresentation: ClipAnimationPresentation = {
   translateX: 0,
   translateY: 0,
   scale: 1,
+  rotation: 0,
 };
 
 const clampAnimationDuration = (duration: number) =>
@@ -5727,7 +6081,9 @@ const updateAnimationVideoClip = (
   return clips.map((clip) => {
     if (
       clip.id !== clipId ||
-      (clip.track !== "main" && clip.track !== "upper")
+      (clip.track !== "main" &&
+        clip.track !== "upper" &&
+        clip.track !== "cutout")
     ) {
       return clip;
     }
@@ -5848,10 +6204,25 @@ const applyAnimationPreset = (
   }
 
   if (preset.startsWith("slide")) {
+    const offset = 24 * (1 - progress);
+    const translateX =
+      preset === "slide-right-in"
+        ? offset
+        : preset === "slide-up-in" || preset === "slide-down-in"
+          ? 0
+          : -offset;
+    const translateY =
+      preset === "slide-up-in"
+        ? -offset
+        : preset === "slide-down-in"
+          ? offset
+          : 0;
     return {
       ...neutralAnimationPresentation,
       opacity: amount,
-      translateX: direction === "in" ? -24 * (1 - progress) : 24 * progress,
+      translateX:
+        direction === "in" ? translateX : Math.abs(translateX || 24) * progress,
+      translateY: direction === "in" ? translateY : 0,
     };
   }
 
@@ -5868,6 +6239,185 @@ const applyAnimationPreset = (
       ...neutralAnimationPresentation,
       opacity: amount,
       scale: 0.72 + 0.34 * progress,
+    };
+  }
+
+  if (preset === "spin-in") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: amount,
+      scale: 0.74 + 0.26 * progress,
+      rotation: -180 * (1 - progress),
+    };
+  }
+
+  if (preset === "tilt-in") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: amount,
+      translateY: 10 * (1 - progress),
+      rotation: -14 * (1 - progress),
+    };
+  }
+
+  if (preset === "bounce") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.45, amount),
+      translateY:
+        -Math.abs(Math.sin(progress * Math.PI * 2.5)) *
+        (1 - progress) *
+        14,
+    };
+  }
+
+  if (preset === "shake") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.6, amount),
+      translateX:
+        Math.sin(progress * Math.PI * 8) * (1 - progress) * 9,
+    };
+  }
+
+  if (preset === "pulse") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.6, amount),
+      scale: 1 + Math.sin(progress * Math.PI) * 0.18,
+    };
+  }
+
+  if (preset === "flash") {
+    const flashOpacity =
+      progress < 0.25
+        ? 0.25
+        : progress < 0.5
+          ? 1
+          : progress < 0.72
+            ? 0.42
+            : 1;
+    return {
+      ...neutralAnimationPresentation,
+      opacity: flashOpacity,
+    };
+  }
+
+  if (preset === "elastic-in") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.3, amount),
+      scale: 1 - Math.sin(progress * Math.PI * 3) * (1 - progress) * 0.28,
+    };
+  }
+
+  if (preset === "swing-in") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.35, amount),
+      rotation: Math.cos(progress * Math.PI * 3.5) * (1 - progress) * -24,
+    };
+  }
+
+  if (preset === "flip-horizontal") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.35, amount),
+      scale: Math.max(0.08, Math.abs(Math.cos((1 - progress) * Math.PI * 0.5))),
+    };
+  }
+
+  if (preset === "flip-vertical") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.35, amount),
+      scale: 0.72 + 0.28 * progress,
+      rotation: 90 * (1 - progress),
+    };
+  }
+
+  if (preset === "cube-turn") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.3, amount),
+      translateX: -18 * (1 - progress),
+      scale: 0.76 + 0.24 * progress,
+      rotation: -42 * (1 - progress),
+    };
+  }
+
+  if (preset === "roll-in") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.3, amount),
+      translateX: -34 * (1 - progress),
+      rotation: -270 * (1 - progress),
+    };
+  }
+
+  if (preset === "drop-in") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.3, amount),
+      translateY: -38 * (1 - progress) + Math.sin(progress * Math.PI * 3) * (1 - progress) * 7,
+    };
+  }
+
+  if (preset === "whip-pan") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.25, amount),
+      translateX: -58 * (1 - progress),
+      rotation: -5 * (1 - progress),
+    };
+  }
+
+  if (preset === "spiral-in") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.2, amount),
+      scale: 0.35 + 0.65 * progress,
+      rotation: -360 * (1 - progress),
+    };
+  }
+
+  if (preset === "drift") {
+    return {
+      ...neutralAnimationPresentation,
+      translateX: Math.sin(progress * Math.PI * 2) * 5,
+      translateY: Math.cos(progress * Math.PI * 2) * 3,
+      rotation: Math.sin(progress * Math.PI * 2) * 2,
+    };
+  }
+
+  if (preset === "heartbeat") {
+    const beat = Math.max(0, Math.sin(progress * Math.PI * 4));
+    return {
+      ...neutralAnimationPresentation,
+      scale: 1 + beat * 0.16 * (1 - progress * 0.35),
+    };
+  }
+
+  if (preset === "strobe") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.sin(progress * Math.PI * 10) > -0.1 ? 1 : 0.22,
+    };
+  }
+
+  if (preset === "wobble") {
+    return {
+      ...neutralAnimationPresentation,
+      translateX: Math.sin(progress * Math.PI * 6) * (1 - progress) * 6,
+      rotation: Math.sin(progress * Math.PI * 6) * (1 - progress) * 9,
+    };
+  }
+
+  if (preset === "zoom-burst") {
+    return {
+      ...neutralAnimationPresentation,
+      opacity: Math.max(0.25, amount),
+      scale: 1.7 - 0.7 * progress,
     };
   }
 

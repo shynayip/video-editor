@@ -51,6 +51,7 @@ import {
   getActiveClipsAtFrame,
   getActiveVideoLayersAtFrame,
   getClipSourceTime,
+  getClipAudioFadeMultiplier,
   getClipTransitionPresentation,
   getPublicMediaFallbackSource,
   isPlayableMediaResponse,
@@ -95,6 +96,7 @@ import {
   getNextVideoLayer,
   getClipAnimationPreviewFrame,
   getClipFilterCss,
+  getCutoutLineEffectCss,
   getVideoLayer,
   getVideoLayerControlState,
   getVideoLayerEnd,
@@ -115,10 +117,12 @@ import {
   resizeCaptionOverlayById,
   resizeCutoutTransform,
   setClipEffectById,
+  setCutoutLineStyleById,
   setClipFilterById,
   setClipAdjustmentById,
   setClipSpeedById,
   setClipVolumeById,
+  setClipAudioFadeById,
   setVideoLayerSpeed,
   setVideoLayerVolume,
   finishVideoLayerControlHistoryGesture,
@@ -144,6 +148,7 @@ import {
   ClipTransitionPresentation,
   ClipEffect,
   ClipFilter,
+  CutoutLineStyle,
   TextEffect,
   TextEntranceAnimation,
   CaptionStyle,
@@ -152,6 +157,8 @@ import {
   ClipAdjustment,
   CutoutTransform,
   CutoutMaskStroke,
+  defaultCutoutLineStyle,
+  isCustomizableCutoutLineEffect,
   SavedEditorProject,
   TimelineClip,
   TrackName,
@@ -559,19 +566,130 @@ const seekTimelineThumbnail = (
   video.currentTime = Math.max(0, Math.min(requestedTime, latestSeekTime));
 };
 
+const decodedWaveformAudio = new Map<string, Promise<AudioBuffer | null>>();
+
+const decodeWaveformAudio = (src: string) => {
+  const resolvedSrc = resolveMediaSource(src);
+  const cached = decodedWaveformAudio.get(resolvedSrc);
+  if (cached) return cached;
+
+  const pending = (async () => {
+    if (typeof window === "undefined") return null;
+    const AudioContextConstructor =
+      window.AudioContext ??
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioContextConstructor) return null;
+
+    const response = await fetch(resolvedSrc);
+    if (!response.ok) return null;
+    const context = new AudioContextConstructor();
+    try {
+      return await context.decodeAudioData(await response.arrayBuffer());
+    } catch {
+      return null;
+    } finally {
+      void context.close();
+    }
+  })();
+
+  decodedWaveformAudio.set(resolvedSrc, pending);
+  return pending;
+};
+
+const sampleWaveformAudio = async (
+  src: string,
+  count: number,
+  sourceStartFrames: number,
+  sourceDurationFrames: number,
+) => {
+  const audioBuffer = await decodeWaveformAudio(src);
+  if (!audioBuffer || audioBuffer.length === 0) return null;
+
+  const channel = audioBuffer.getChannelData(0);
+  const startSample = Math.max(
+    0,
+    Math.min(
+      channel.length - 1,
+      Math.round((sourceStartFrames / fps) * audioBuffer.sampleRate),
+    ),
+  );
+  const availableSamples = channel.length - startSample;
+  const requestedSamples = Math.max(
+    1,
+    Math.round((sourceDurationFrames / fps) * audioBuffer.sampleRate),
+  );
+  const sampleLength = Math.min(availableSamples, requestedSamples);
+  const levels = Array.from({ length: count }, (_, index) => {
+    const bucketStart = startSample + Math.floor((index / count) * sampleLength);
+    const bucketEnd = Math.max(
+      bucketStart + 1,
+      startSample + Math.floor(((index + 1) / count) * sampleLength),
+    );
+    const stride = Math.max(1, Math.floor((bucketEnd - bucketStart) / 180));
+    let sumSquares = 0;
+    let samples = 0;
+    for (let sample = bucketStart; sample < bucketEnd; sample += stride) {
+      const value = channel[sample] ?? 0;
+      sumSquares += value * value;
+      samples += 1;
+    }
+    return Math.sqrt(sumSquares / Math.max(1, samples));
+  });
+  const sortedLevels = [...levels].sort((left, right) => left - right);
+  const referenceLevel = Math.max(
+    0.001,
+    sortedLevels[Math.floor(sortedLevels.length * 0.92)] ?? 0,
+  );
+
+  return levels.map((level) =>
+    Math.max(0.035, Math.min(1, Math.pow(level / referenceLevel, 0.72))),
+  );
+};
+
 const TimelineWaveform = ({
   clipId,
   duration,
+  src,
+  sourceStart = 0,
+  speed = 1,
 }: {
   clipId: string;
   duration: number;
+  src?: string;
+  sourceStart?: number;
+  speed?: number;
 }) => {
-  const amplitudes = createWaveformBars(
-    clipId,
-    Math.max(28, Math.min(120, Math.round(duration / 4))),
+  const lineCount = Math.max(16, Math.min(100, Math.round(duration / 6)));
+  const fallbackAmplitudes = useMemo(
+    () => createWaveformBars(clipId, lineCount),
+    [clipId, lineCount],
   );
+  const [amplitudes, setAmplitudes] = useState(fallbackAmplitudes);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAmplitudes(fallbackAmplitudes);
+    if (!src) return () => undefined;
+
+    void sampleWaveformAudio(
+      src,
+      lineCount,
+      sourceStart,
+      duration * speed,
+    ).then((sampledAmplitudes) => {
+      if (!cancelled && sampledAmplitudes) {
+        setAmplitudes(sampledAmplitudes);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [duration, fallbackAmplitudes, lineCount, sourceStart, speed, src]);
+
   const step = 100 / amplitudes.length;
-  const barWidth = Math.max(0.38, Math.min(1.4, step * 0.42));
+  const centerY = 10;
 
   return (
     <svg
@@ -580,16 +698,16 @@ const TimelineWaveform = ({
       preserveAspectRatio="none"
     >
       {amplitudes.map((amplitude, index) => {
-        const height = Math.max(2, amplitude * 18);
+        const height = Math.max(2, amplitude * 17);
+        const x = index * step + step / 2;
         return (
-          <rect
-            className="audio-waveform-bar"
+          <line
+            className="audio-waveform-line"
             key={`${clipId}-wave-${index}`}
-            x={index * step + (step - barWidth) / 2}
-            y={10 - height / 2}
-            width={barWidth}
-            height={height}
-            rx={barWidth / 2}
+            x1={x}
+            x2={x}
+            y1={centerY - height / 2}
+            y2={centerY + height / 2}
           />
         );
       })}
@@ -671,6 +789,11 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
   let translateX = 0;
   let translateY = 0;
   let rotate = 0;
+  const cutoutLineEffect = getCutoutLineEffectCss(
+    clip,
+    frame,
+    effectIntensity,
+  );
 
   const filterCss = getClipFilterCss(
     visual?.filter ?? "none",
@@ -704,6 +827,7 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
       );
       break;
     case "outline": {
+      if (cutoutLineEffect) break;
       const width = Math.max(1, 4 * effectIntensity);
       filters.push(
         `drop-shadow(${width}px 0 0 white)`,
@@ -718,6 +842,7 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
       break;
     }
     case "moving-outline": {
+      if (cutoutLineEffect) break;
       const angle = ((frame % 90) / 90) * Math.PI * 2;
       const distance = Math.max(2, 5 * effectIntensity);
       const x = Math.cos(angle) * distance;
@@ -730,6 +855,7 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
       break;
     }
     case "moving-white-outline": {
+      if (cutoutLineEffect) break;
       const angle = ((frame % 72) / 72) * Math.PI * 2;
       const distance = Math.max(2, 5 * effectIntensity);
       const x = Math.cos(angle) * distance;
@@ -744,6 +870,7 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
       break;
     }
     case "neon-outline": {
+      if (cutoutLineEffect) break;
       const width = Math.max(1, 3 * effectIntensity);
       filters.push(
         `drop-shadow(${width}px 0 0 #22d3ee)`,
@@ -801,6 +928,7 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
       break;
     }
     case "rainbow-edge": {
+      if (cutoutLineEffect) break;
       const angle = frame * 0.09;
       const radius = Math.max(2, 4 * effectIntensity);
       const x = Math.cos(angle) * radius;
@@ -814,6 +942,7 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
       break;
     }
     case "electric-glow": {
+      if (cutoutLineEffect) break;
       const spark = 0.72 + Math.abs(Math.sin(frame * 0.48)) * 0.28;
       filters.push(
         `brightness(${1 + 0.12 * spark * effectIntensity})`,
@@ -835,6 +964,7 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
       rotate = Math.sin(frame * 0.065) * 3.2 * effectIntensity;
       break;
     case "flicker-outline": {
+      if (cutoutLineEffect) break;
       const flicker = 0.35 + Math.abs(Math.sin(frame * 0.83)) * 0.65;
       const width = Math.max(1, 3.5 * flicker * effectIntensity);
       filters.push(
@@ -902,6 +1032,10 @@ const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
       break;
     default:
       break;
+  }
+
+  if (cutoutLineEffect) {
+    filters.push(cutoutLineEffect);
   }
 
   return {
@@ -1468,6 +1602,16 @@ const cutoutEffectOptions: Array<{ id: ClipEffect; label: string; preview: strin
   { id: "sway", label: "Sway", preview: "SW" },
   { id: "flicker-outline", label: "Flicker Outline", preview: "FO" },
   { id: "silhouette", label: "Silhouette", preview: "SI" },
+];
+
+const cutoutLineStyleOptions: Array<{
+  id: CutoutLineStyle;
+  label: string;
+}> = [
+  { id: "solid", label: "Solid" },
+  { id: "glow", label: "Glow" },
+  { id: "double", label: "Double" },
+  { id: "sketch", label: "Sketch" },
 ];
 
 const effectSections: Array<{
@@ -2567,6 +2711,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [workspaceLayout, setWorkspaceLayout] =
     useState<WorkspaceLayout>(readWorkspaceLayout);
   const [playheadFrame, setPlayheadFrame] = useState(0);
+  const [timelineHoverFrame, setTimelineHoverFrame] = useState<number | null>(
+    null,
+  );
   const [selectedTrack, setSelectedTrack] = useState<TrackName>("main");
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [selectedVideoLayer, setSelectedVideoLayer] = useState<number | null>(
@@ -3069,12 +3216,34 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     clipControlTarget?.speed ?? selectedVideoLayerControlState.speed;
   const selectedClipVolume =
     clipControlTarget?.volume ?? selectedVideoLayerControlState.volume;
+  const selectedClipFadeInFrames = clipControlTarget?.audioFadeInFrames ?? 0;
+  const selectedClipFadeOutFrames = clipControlTarget?.audioFadeOutFrames ?? 0;
   const selectedClipEffect = clipControlTarget?.visual?.effect ?? "none";
   const selectedClipFilter = clipControlTarget?.visual?.filter ?? "none";
   const selectedEffectIntensity =
     selectedClipEffect === "none"
       ? 0
       : (clipControlTarget?.visual?.effectIntensity ?? 100);
+  const selectedCutoutLineColor =
+    clipControlTarget?.visual?.cutoutLineColor ??
+    (selectedClipEffect === "outline" ||
+    selectedClipEffect === "moving-white-outline"
+      ? "#ffffff"
+      : defaultCutoutLineStyle.color);
+  const selectedCutoutLineOpacity =
+    clipControlTarget?.visual?.cutoutLineOpacity ??
+    defaultCutoutLineStyle.opacity;
+  const selectedCutoutLineWidth =
+    clipControlTarget?.visual?.cutoutLineWidth ?? defaultCutoutLineStyle.width;
+  const selectedCutoutLineStyle =
+    clipControlTarget?.visual?.cutoutLineStyle ??
+    (selectedClipEffect === "neon-outline" ||
+    selectedClipEffect === "electric-glow"
+      ? "glow"
+      : defaultCutoutLineStyle.style);
+  const canEditSelectedCutoutLine =
+    clipControlTarget?.track === "cutout" &&
+    isCustomizableCutoutLineEffect(selectedClipEffect);
   const selectedFilterIntensity =
     selectedClipFilter === "none"
       ? 0
@@ -3113,6 +3282,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       clipControlTarget.track !== "sticker" &&
       clipControlTarget.cutout?.mediaKind !== "image",
     );
+  const canEditSelectedAudioFade = Boolean(
+    clipControlTarget &&
+      (clipControlTarget.track === "main" ||
+        clipControlTarget.track === "upper" ||
+        clipControlTarget.track === "cutout" ||
+        clipControlTarget.track === "audio") &&
+      clipControlTarget.mediaType !== "image" &&
+      clipControlTarget.cutout?.mediaKind !== "image",
+  );
+  const selectedClipDurationSeconds = Math.max(
+    0,
+    (clipControlTarget?.duration ?? 0) / fps,
+  );
   const layerControlLabel =
     selectedVideoLayer === 0
       ? "Main track"
@@ -3203,7 +3385,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     (getVideoLayer(firstClip) ?? 0) - (getVideoLayer(secondClip) ?? 0) ||
     firstClip.start - secondClip.start ||
     firstClip.id.localeCompare(secondClip.id);
-  const activeVideoLayers = getActiveVideoLayersAtFrame(clips, playheadFrame);
+  const timelinePreviewFrame =
+    !isPreviewPlaying && !isScrubbing && timelineHoverFrame !== null
+      ? timelineHoverFrame
+      : playheadFrame;
+  const activeVideoLayers = getActiveVideoLayersAtFrame(
+    clips,
+    timelinePreviewFrame,
+  );
   const activeVideoClipIds = new Set(activeVideoLayers.map((clip) => clip.id));
   const timelinePreviewVideoClips = clips
     .filter((clip) => {
@@ -3219,15 +3408,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       const transitionPresentation = getClipTransitionPresentation(
         clips,
         clip.id,
-        playheadFrame,
+        timelinePreviewFrame,
       );
       const participatesInTransition =
         transitionPresentation.opacity !== 1 ||
         transitionPresentation.translateX !== 0 ||
         transitionPresentation.scale !== 1;
       const isNearPlayhead =
-        clip.start <= playheadFrame + fps * 5 &&
-        clip.start + clip.duration >= playheadFrame - fps;
+        clip.start <= timelinePreviewFrame + fps * 5 &&
+        clip.start + clip.duration >= timelinePreviewFrame - fps;
 
       return (
         activeVideoClipIds.has(clip.id) ||
@@ -3257,22 +3446,22 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const activeStickerClips = getActiveClipsAtFrame(
     clips,
     "sticker",
-    playheadFrame,
+    timelinePreviewFrame,
   ).filter((clip) => clip.src);
   const activeCutoutClips = getActiveClipsAtFrame(
     clips,
     "cutout",
-    playheadFrame,
+    timelinePreviewFrame,
   ).filter((clip) => clip.src && clip.cutout);
   const activeTextClips = getActiveClipsAtFrame(
     clips,
     "text",
-    playheadFrame,
+    timelinePreviewFrame,
   ).filter((clip) => clip.text);
   const activeCaptionClips = getActiveClipsAtFrame(
     clips,
     "caption",
-    playheadFrame,
+    timelinePreviewFrame,
   ).filter((clip) => clip.caption);
   const transcriptClips = useMemo(
     () =>
@@ -3424,14 +3613,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       : mainClipSpeed;
   const previewVolume =
     previewMode === "timeline"
-      ? (topVisibleVideoClip?.volume ?? 1)
+      ? (topVisibleVideoClip?.volume ?? 1) *
+        (topVisibleVideoClip
+          ? getClipAudioFadeMultiplier(topVisibleVideoClip, timelinePreviewFrame)
+          : 1)
       : mainClipVolume;
   const previewVideoMuted =
     previewVolume === 0 ||
     (previewMode === "timeline" &&
       shouldMuteVideoNativeAudio(
         clips,
-        playheadFrame,
+        timelinePreviewFrame,
         topVisibleVideoClip?.id ?? null,
       ));
   useEffect(() => {
@@ -4055,6 +4247,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     );
   };
 
+  const updateSelectedClipAudioFade = (
+    property: "fadeInFrames" | "fadeOutFrames",
+    seconds: number,
+  ) => {
+    if (!clipControlTarget) return;
+
+    commitClipChange((currentClips) =>
+      setClipAudioFadeById(currentClips, clipControlTarget.id, {
+        [property]: Math.round(seconds * fps),
+      }),
+    );
+  };
+
   const updateSelectedTextStyle = (
     style: Parameters<typeof setTextStyleById>[2],
   ) => {
@@ -4255,6 +4460,24 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         currentClips,
         clipControlTarget?.id ?? null,
         intensity,
+      ),
+    );
+    setPreviewMode("timeline");
+  };
+
+  const updateSelectedCutoutLineStyle = (
+    updates: Partial<{
+      color: string;
+      opacity: number;
+      width: number;
+      style: CutoutLineStyle;
+    }>,
+  ) => {
+    commitClipChange((currentClips) =>
+      setCutoutLineStyleById(
+        currentClips,
+        clipControlTarget?.id ?? null,
+        updates,
       ),
     );
     setPreviewMode("timeline");
@@ -6654,13 +6877,16 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     [commitClipChange],
   );
 
-  const togglePreviewPlayback = () => {
+  const togglePreviewPlayback = (requestedStartFrame?: number) => {
     previewVideoRef.current?.pause();
     setIsMediaPreviewPlaying(false);
     setPreviewMode("timeline");
     if (!isPreviewPlaying || previewMode !== "timeline") {
-      if (playheadFrame >= videoPlaybackDuration - 1) {
+      const nextStartFrame = requestedStartFrame ?? playheadFrame;
+      if (nextStartFrame >= videoPlaybackDuration - 1) {
         setPlayheadFrame(0);
+      } else if (requestedStartFrame !== undefined) {
+        setPlayheadFrame(requestedStartFrame);
       }
       setIsPreviewPlaying(true);
       return;
@@ -6669,7 +6895,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setIsPreviewPlaying(false);
   };
 
-  const toggleTimelinePlayback = togglePreviewPlayback;
+  const toggleTimelinePlayback = () => {
+    const previewStartFrame = timelineHoverFrame ?? undefined;
+    setTimelineHoverFrame(null);
+    togglePreviewPlayback(previewStartFrame);
+  };
 
   const toggleMediaPreviewPlayback = () => {
     if (
@@ -7192,6 +7422,63 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       setPreviewMode("timeline");
     },
     [getPointerTimelineFrame, projectDuration],
+  );
+
+  const updateTimelineHoverFromPointer = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (isPreviewPlaying || isScrubbing) {
+        setTimelineHoverFrame(null);
+        return;
+      }
+      if (event.buttons !== 0) return;
+
+      const bounds = timelineContentRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+
+      const timelineStart = bounds.left + timelineOrigin;
+      const timelineEnd =
+        timelineStart + Math.max(0, projectDuration - 1) * timelineScale;
+      if (event.clientX < timelineStart || event.clientX > timelineEnd) {
+        setTimelineHoverFrame(null);
+        return;
+      }
+
+      const frame = getPointerTimelineFrame(event.clientX);
+      if (frame === null) return;
+      setTimelineHoverFrame(
+        Math.max(0, Math.min(Math.max(0, projectDuration - 1), frame)),
+      );
+      setPreviewMode("timeline");
+    },
+    [
+      getPointerTimelineFrame,
+      isPreviewPlaying,
+      isScrubbing,
+      projectDuration,
+    ],
+  );
+
+  const holdTimelinePreviewFromPointer = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0 || isPreviewPlaying || isScrubbing) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        target.closest(
+          "button, input, select, textarea, [contenteditable='true'], .timeline-playhead, .timeline-trim-handle, .timeline-transition-button",
+        )
+      ) {
+        return;
+      }
+
+      const frame = getPointerTimelineFrame(event.clientX);
+      if (frame === null) return;
+      setTimelineHoverFrame(
+        Math.max(0, Math.min(Math.max(0, projectDuration - 1), frame)),
+      );
+      setPreviewMode("timeline");
+    },
+    [getPointerTimelineFrame, isPreviewPlaying, isScrubbing, projectDuration],
   );
 
   const startTimelineScrub = (event: PointerEvent<HTMLElement>) => {
@@ -8359,7 +8646,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         ? topVisibleVideoClip
           ? Math.max(
               0,
-              getClipSourceTime(topVisibleVideoClip, playheadFrame, fps),
+              getClipSourceTime(topVisibleVideoClip, timelinePreviewFrame, fps),
             )
           : 0
         : mediaPreviewTime;
@@ -8380,7 +8667,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     isMediaPreviewPlaying,
     mediaPreviewTime,
     mediaPreviewVolume,
-    playheadFrame,
+    timelinePreviewFrame,
     previewSource?.src,
     previewSpeed,
     previewVolume,
@@ -8408,21 +8695,21 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       const transitionPresentation = getClipTransitionPresentation(
         clips,
         clipId,
-        playheadFrame,
+        timelinePreviewFrame,
       );
       const participatesInTransition =
         transitionPresentation.opacity !== 1 ||
         transitionPresentation.translateX !== 0 ||
         transitionPresentation.scale !== 1;
       const previewFrame = isActive
-        ? playheadFrame
-        : playheadFrame < videoClip.start
+        ? timelinePreviewFrame
+        : timelinePreviewFrame < videoClip.start
           ? videoClip.start
           : videoClip.start + videoClip.duration - 1;
       const videoMuted =
         !isActive ||
         (videoClip.volume ?? 1) === 0 ||
-        shouldMuteVideoNativeAudio(clips, playheadFrame, clipId);
+        shouldMuteVideoNativeAudio(clips, timelinePreviewFrame, clipId);
       const desiredTime = Math.max(
         0,
         getClipSourceTime(videoClip, previewFrame, fps),
@@ -8430,7 +8717,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       const seekTolerance = isPreviewPlaying && isActive ? 0.45 : 0.04;
 
       video.playbackRate = videoClip.speed ?? 1;
-      video.volume = Math.min(videoClip.volume ?? 1, 1);
+      video.volume = Math.min(
+        (videoClip.volume ?? 1) *
+          getClipAudioFadeMultiplier(videoClip, timelinePreviewFrame),
+        1,
+      );
       video.muted = videoMuted;
       if (Math.abs(video.currentTime - desiredTime) > seekTolerance) {
         video.currentTime = desiredTime;
@@ -8448,7 +8739,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     activeVideoLayers,
     clips,
     isPreviewPlaying,
-    playheadFrame,
+    timelinePreviewFrame,
     timelinePreviewVideoClips,
   ]);
 
@@ -8471,7 +8762,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       );
       const seekTolerance = isPreviewPlaying ? 0.45 : 0.04;
       audio.playbackRate = audioClip.speed ?? 1;
-      audio.volume = Math.min(audioClip.volume ?? 1, 1);
+      audio.volume = Math.min(
+        (audioClip.volume ?? 1) *
+          getClipAudioFadeMultiplier(audioClip, playheadFrame),
+        1,
+      );
       if (Math.abs(audio.currentTime - desiredTime) > seekTolerance) {
         audio.currentTime = desiredTime;
       }
@@ -8527,9 +8822,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
   useEffect(() => {
     if (
-      !isPreviewPlaying ||
       previewMode !== "timeline" ||
-      isScrubbing ||
       pointerDrag ||
       trimDrag
     ) {
@@ -8553,8 +8846,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     });
     return () => window.cancelAnimationFrame(animationFrame);
   }, [
-    isPreviewPlaying,
-    isScrubbing,
     playheadFrame,
     pointerDrag,
     previewMode,
@@ -9703,6 +9994,88 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     }
                   />
                 </label>
+                {canEditSelectedCutoutLine ? (
+                  <section
+                    className="cutout-line-controls"
+                    aria-label="Cutout line controls"
+                  >
+                    <div className="cutout-line-heading">
+                      <strong>Object line</strong>
+                      <span>Customize the selected cutout edge.</span>
+                    </div>
+                    <label className="cutout-line-color-control">
+                      <span>Line color</span>
+                      <input
+                        aria-label="Cutout line color"
+                        type="color"
+                        value={selectedCutoutLineColor}
+                        onChange={(event) =>
+                          updateSelectedCutoutLineStyle({
+                            color: event.currentTarget.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="cutout-line-range-control">
+                      <span>
+                        Opacity <em>{selectedCutoutLineOpacity}%</em>
+                      </span>
+                      <input
+                        aria-label="Cutout line opacity"
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={selectedCutoutLineOpacity}
+                        onChange={(event) =>
+                          updateSelectedCutoutLineStyle({
+                            opacity: Number(event.currentTarget.value),
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="cutout-line-range-control">
+                      <span>
+                        Thickness <em>{selectedCutoutLineWidth}px</em>
+                      </span>
+                      <input
+                        aria-label="Cutout line thickness"
+                        type="range"
+                        min={1}
+                        max={12}
+                        step={1}
+                        value={selectedCutoutLineWidth}
+                        onChange={(event) =>
+                          updateSelectedCutoutLineStyle({
+                            width: Number(event.currentTarget.value),
+                          })
+                        }
+                      />
+                    </label>
+                    <div className="cutout-line-style-control">
+                      <span>Line style</span>
+                      <div role="group" aria-label="Cutout line style">
+                        {cutoutLineStyleOptions.map((option) => (
+                          <button
+                            aria-pressed={selectedCutoutLineStyle === option.id}
+                            className={
+                              selectedCutoutLineStyle === option.id
+                                ? "active-cutout-line-style"
+                                : ""
+                            }
+                            key={option.id}
+                            type="button"
+                            onClick={() =>
+                              updateSelectedCutoutLineStyle({ style: option.id })
+                            }
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </section>
+                ) : null}
               </div>
             ) : activeTool === "filters" ? (
               <div className="visual-tool-panel filter-tool-panel">
@@ -10045,7 +10418,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             data-video-layer={getVideoLayer(videoClip)}
                             src={resolveMediaSource(videoClip.src ?? "")}
                             style={{
-                              ...getClipFrameStyle(videoClip, playheadFrame),
+                              ...getClipFrameStyle(
+                                videoClip,
+                                timelinePreviewFrame,
+                              ),
                               ...getClipAdjustmentStyle(videoClip),
                               ...getCutoutChromaKeyStyle(videoClip),
                               zIndex: getPreviewVideoLayerZIndex(videoClip),
@@ -10061,7 +10437,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           getClipTransitionPresentation(
                             clips,
                             videoClip.id,
-                            playheadFrame,
+                            timelinePreviewFrame,
                           );
                         const isTransitionPreviewClip =
                           transitionPresentation.opacity !== 1 ||
@@ -10074,7 +10450,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           (videoClip.volume ?? 1) === 0 ||
                           shouldMuteVideoNativeAudio(
                             clips,
-                            playheadFrame,
+                            timelinePreviewFrame,
                             videoClip.id,
                           );
 
@@ -10100,7 +10476,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             style={{
                               ...getClipFrameStyle(
                                 videoClip,
-                                playheadFrame,
+                                timelinePreviewFrame,
                                 transitionPresentation,
                               ),
                               ...getClipAdjustmentStyle(videoClip),
@@ -10130,7 +10506,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       className="preview-image"
                       src={resolveMediaSource(previewSource.src)}
                       style={{
-                        ...getClipFrameStyle(undefined, playheadFrame),
+                        ...getClipFrameStyle(undefined, timelinePreviewFrame),
                         ...getClipAdjustmentStyle(),
                       }}
                     />
@@ -10148,7 +10524,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       onTimeUpdate={handleMediaPreviewTimeUpdate}
                       onEnded={handleMediaPreviewEnded}
                       style={{
-                        ...getClipFrameStyle(undefined, playheadFrame),
+                        ...getClipFrameStyle(undefined, timelinePreviewFrame),
                         ...getClipAdjustmentStyle(),
                       }}
                     />
@@ -10226,11 +10602,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           : {};
                         const cutoutVisual = getClipVisualPresentation(
                           cutoutClip,
-                          playheadFrame,
+                          timelinePreviewFrame,
                         );
                         const cutoutAnimation = getClipAnimationPresentation(
                           cutoutClip,
-                          playheadFrame,
+                          timelinePreviewFrame,
                         );
                         const cutoutChroma = getCutoutChromaKeyStyle(transform);
                         const cutoutFilters = [
@@ -10304,7 +10680,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                     0,
                                     getClipSourceTime(
                                       cutoutClip,
-                                      playheadFrame,
+                                      timelinePreviewFrame,
                                       fps,
                                     ),
                                   );
@@ -10532,7 +10908,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               ...getCaptionAnimationStyle(
                                 caption,
                                 captionClip,
-                                playheadFrame,
+                                timelinePreviewFrame,
                               ),
                               zIndex: 24 + captionIndex,
                             }}
@@ -10736,7 +11112,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           getTextualClipDisplayColors(textClip);
                         const textAnimation = getTextAnimationPresentation(
                           textClip,
-                          playheadFrame,
+                          timelinePreviewFrame,
                         );
                         const rendersWords = [
                           "star-jump",
@@ -10795,7 +11171,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                     0,
                                     getTextAnimationVisibleCharacterCount(
                                       textClip,
-                                      playheadFrame,
+                                      timelinePreviewFrame,
                                     ),
                                   )
                                 : rendersWords
@@ -10815,13 +11191,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                       const wordAnimation =
                                         getTextAnimationWordPresentation(
                                           textClip,
-                                          playheadFrame,
+                                          timelinePreviewFrame,
                                           currentWordIndex,
                                           wordCount,
                                         );
                                       const stars = getTextAnimationStars(
                                         textClip,
-                                        playheadFrame,
+                                        timelinePreviewFrame,
                                         currentWordIndex,
                                         wordCount,
                                       );
@@ -11470,6 +11846,46 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   }}
                 />
               </label>
+              {canEditSelectedAudioFade ? (
+                <>
+                  <label>
+                    <strong>Audio fade in</strong>
+                    <em>{(selectedClipFadeInFrames / fps).toFixed(1)}s</em>
+                    <input
+                      aria-label="Audio fade in duration"
+                      type="range"
+                      min="0"
+                      max={selectedClipDurationSeconds}
+                      step="0.1"
+                      value={selectedClipFadeInFrames / fps}
+                      onChange={(event) =>
+                        updateSelectedClipAudioFade(
+                          "fadeInFrames",
+                          Number(event.currentTarget.value),
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    <strong>Audio fade out</strong>
+                    <em>{(selectedClipFadeOutFrames / fps).toFixed(1)}s</em>
+                    <input
+                      aria-label="Audio fade out duration"
+                      type="range"
+                      min="0"
+                      max={selectedClipDurationSeconds}
+                      step="0.1"
+                      value={selectedClipFadeOutFrames / fps}
+                      onChange={(event) =>
+                        updateSelectedClipAudioFade(
+                          "fadeOutFrames",
+                          Number(event.currentTarget.value),
+                        )
+                      }
+                    />
+                  </label>
+                </>
+              ) : null}
             </div>
           ) : null}
         </aside>
@@ -11611,6 +12027,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           <div
             className="timeline-content"
             ref={timelineContentRef}
+            onPointerMove={updateTimelineHoverFromPointer}
+            onPointerDownCapture={holdTimelinePreviewFromPointer}
+            onPointerLeave={() => setTimelineHoverFrame(null)}
             style={
               {
                 "--timeline-origin": `${timelineOrigin}px`,
@@ -12149,6 +12568,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 <TimelineWaveform
                                   clipId={clip.id}
                                   duration={clip.duration}
+                                  src={clip.src}
+                                  sourceStart={clip.sourceStart}
+                                  speed={clip.speed}
                                 />
                               </div>
                             ) : null}
@@ -12253,8 +12675,21 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 </div>
               );
             })()}
+            {timelineHoverFrame !== null &&
+            !isPreviewPlaying &&
+            !isScrubbing ? (
+              <div
+                className="timeline-hover-playhead"
+                aria-hidden="true"
+                style={{
+                  left: `calc(${timelineOrigin}px + ${timelineHoverFrame * timelineScale}px)`,
+                }}
+              />
+            ) : null}
             <div
-              className="timeline-playhead"
+              className={`timeline-playhead ${
+                isPreviewPlaying ? "playing-playhead" : ""
+              }`}
               role="slider"
               aria-label="Timeline playhead"
               aria-valuemin={0}

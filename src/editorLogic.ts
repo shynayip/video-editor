@@ -575,7 +575,33 @@ export type ClipVisualStyle = {
   filter: ClipFilter;
   effectIntensity?: number;
   filterIntensity?: number;
+  cutoutLineColor?: string;
+  cutoutLineOpacity?: number;
+  cutoutLineWidth?: number;
+  cutoutLineStyle?: CutoutLineStyle;
 };
+
+export type CutoutLineStyle = "solid" | "glow" | "double" | "sketch";
+
+export const defaultCutoutLineStyle = {
+  color: "#22d3ee",
+  opacity: 90,
+  width: 4,
+  style: "solid" as CutoutLineStyle,
+};
+
+const customizableCutoutLineEffects: ClipEffect[] = [
+  "outline",
+  "moving-outline",
+  "moving-white-outline",
+  "neon-outline",
+  "rainbow-edge",
+  "electric-glow",
+  "flicker-outline",
+];
+
+export const isCustomizableCutoutLineEffect = (effect: ClipEffect) =>
+  customizableCutoutLineEffects.includes(effect);
 
 export type ClipVisualPresentation = {
   filter: string;
@@ -730,6 +756,8 @@ export type TimelineClip = {
   hidden?: boolean;
   speed?: number;
   volume?: number;
+  audioFadeInFrames?: number;
+  audioFadeOutFrames?: number;
   sourceStart?: number;
   sourceDuration?: number;
   linkedClipId?: string;
@@ -5705,6 +5733,75 @@ export const setClipVolumeById = (
   );
 };
 
+const clampAudioFadeFrames = (frames: number, duration: number): number =>
+  Math.min(Math.max(0, Math.round(frames)), Math.max(0, duration));
+
+export const setClipAudioFadeById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+  fade: { fadeInFrames?: number; fadeOutFrames?: number },
+): TimelineClip[] => {
+  if (!clipId) return clips;
+
+  const selectedClip = clips.find((clip) => clip.id === clipId);
+  if (!selectedClip) return clips;
+
+  const target = resolvePairOperationTarget(clips, selectedClip);
+  const linkedAudio = getReciprocalLinkedAudio(clips, target);
+  const targetIds = new Set([target.id, linkedAudio?.id]);
+
+  return clips.map((clip) => {
+    if (!targetIds.has(clip.id)) return clip;
+
+    return {
+      ...clip,
+      ...(fade.fadeInFrames === undefined
+        ? null
+        : {
+            audioFadeInFrames: clampAudioFadeFrames(
+              fade.fadeInFrames,
+              clip.duration,
+            ),
+          }),
+      ...(fade.fadeOutFrames === undefined
+        ? null
+        : {
+            audioFadeOutFrames: clampAudioFadeFrames(
+              fade.fadeOutFrames,
+              clip.duration,
+            ),
+          }),
+    };
+  });
+};
+
+export const getClipAudioFadeMultiplier = (
+  clip: Pick<
+    TimelineClip,
+    "start" | "duration" | "audioFadeInFrames" | "audioFadeOutFrames"
+  >,
+  timelineFrame: number,
+): number => {
+  const localFrame = timelineFrame - clip.start;
+  if (localFrame < 0 || localFrame >= clip.duration) return 0;
+
+  const fadeInFrames = clampAudioFadeFrames(
+    clip.audioFadeInFrames ?? 0,
+    clip.duration,
+  );
+  const fadeOutFrames = clampAudioFadeFrames(
+    clip.audioFadeOutFrames ?? 0,
+    clip.duration,
+  );
+  const fadeInMultiplier =
+    fadeInFrames > 0 ? Math.min(1, localFrame / fadeInFrames) : 1;
+  const framesBeforeEnd = clip.duration - 1 - localFrame;
+  const fadeOutMultiplier =
+    fadeOutFrames > 0 ? Math.min(1, framesBeforeEnd / fadeOutFrames) : 1;
+
+  return Math.max(0, Math.min(fadeInMultiplier, fadeOutMultiplier));
+};
+
 const clampVisualIntensity = (value: number) =>
   Math.min(100, Math.max(0, Math.round(value)));
 
@@ -5782,6 +5879,141 @@ export const setClipFilterIntensityById = (
     filterIntensity: clampVisualIntensity(intensity),
   }));
 
+export const setCutoutLineStyleById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+  updates: Partial<{
+    color: string;
+    opacity: number;
+    width: number;
+    style: CutoutLineStyle;
+  }>,
+): TimelineClip[] =>
+  clips.map((clip) => {
+    if (clip.id !== clipId || clip.track !== "cutout") {
+      return clip;
+    }
+
+    const visual = clip.visual ?? {
+      effect: "none" as ClipEffect,
+      filter: "none" as ClipFilter,
+    };
+
+    return {
+      ...clip,
+      visual: {
+        ...visual,
+        cutoutLineColor:
+          updates.color === undefined
+            ? visual.cutoutLineColor
+            : /^#[0-9a-f]{6}$/i.test(updates.color)
+              ? updates.color
+              : defaultCutoutLineStyle.color,
+        cutoutLineOpacity:
+          updates.opacity === undefined
+            ? visual.cutoutLineOpacity
+            : Math.max(0, Math.min(100, Math.round(updates.opacity))),
+        cutoutLineWidth:
+          updates.width === undefined
+            ? visual.cutoutLineWidth
+            : Math.max(1, Math.min(12, Math.round(updates.width))),
+        cutoutLineStyle: updates.style ?? visual.cutoutLineStyle,
+      },
+    };
+  });
+
+const hexColorToRgba = (hex: string, opacity: number) => {
+  const normalized = /^#[0-9a-f]{6}$/i.test(hex)
+    ? hex.slice(1)
+    : defaultCutoutLineStyle.color.slice(1);
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
+};
+
+export const getCutoutLineEffectCss = (
+  clip: Pick<TimelineClip, "track" | "visual"> | undefined,
+  frame = 0,
+  effectAmount = 1,
+): string | null => {
+  const effect = clip?.visual?.effect ?? "none";
+  if (clip?.track !== "cutout" || !isCustomizableCutoutLineEffect(effect)) {
+    return null;
+  }
+
+  const visual = clip.visual;
+  const color = visual?.cutoutLineColor ??
+    (effect === "moving-white-outline" || effect === "outline"
+      ? "#ffffff"
+      : defaultCutoutLineStyle.color);
+  const baseOpacity = Math.max(
+    0,
+    Math.min(1, (visual?.cutoutLineOpacity ?? defaultCutoutLineStyle.opacity) / 100),
+  );
+  const flicker = effect === "flicker-outline"
+    ? 0.35 + Math.abs(Math.sin(frame * 0.83)) * 0.65
+    : 1;
+  const opacity = baseOpacity * flicker * Math.max(0, Math.min(1, effectAmount));
+  const width = Math.max(
+    0.5,
+    (visual?.cutoutLineWidth ?? defaultCutoutLineStyle.width) *
+      Math.max(0.15, effectAmount),
+  );
+  const style = visual?.cutoutLineStyle ??
+    (effect === "neon-outline" || effect === "electric-glow"
+      ? "glow"
+      : defaultCutoutLineStyle.style);
+  const lineColor = hexColorToRgba(color, opacity);
+  const softColor = hexColorToRgba(color, opacity * 0.48);
+  const shadows: string[] = [];
+  const formatOffset = (value: number) => Math.round(value * 1000) / 1000;
+  const addOutline = (distance: number, shadowColor: string) => {
+    const offset = formatOffset(distance);
+    shadows.push(
+      `drop-shadow(${offset}px 0 0 ${shadowColor})`,
+      `drop-shadow(${-offset}px 0 0 ${shadowColor})`,
+      `drop-shadow(0 ${offset}px 0 ${shadowColor})`,
+      `drop-shadow(0 ${-offset}px 0 ${shadowColor})`,
+      `drop-shadow(${offset}px ${offset}px 0 ${shadowColor})`,
+      `drop-shadow(${-offset}px ${offset}px 0 ${shadowColor})`,
+      `drop-shadow(${offset}px ${-offset}px 0 ${shadowColor})`,
+      `drop-shadow(${-offset}px ${-offset}px 0 ${shadowColor})`,
+    );
+  };
+
+  if (style === "sketch") {
+    const jitterX = Math.sin(frame * 1.91) * width * 0.5;
+    const jitterY = Math.cos(frame * 1.57) * width * 0.45;
+    shadows.push(
+      `drop-shadow(${width + jitterX}px ${jitterY}px 0 ${lineColor})`,
+      `drop-shadow(${-width - jitterY}px ${-jitterX}px 0 ${lineColor})`,
+      `drop-shadow(${jitterY}px ${width - jitterX}px 0 ${lineColor})`,
+      `drop-shadow(${-jitterX}px ${-width - jitterY}px 0 ${lineColor})`,
+    );
+  } else {
+    addOutline(width, lineColor);
+    if (style === "double") {
+      addOutline(width * 2.05, softColor);
+    }
+    if (style === "glow") {
+      shadows.push(
+        `drop-shadow(0 0 ${Math.max(4, width * 3.5)}px ${lineColor})`,
+      );
+    }
+  }
+
+  if (effect === "moving-outline" || effect === "moving-white-outline") {
+    const angle = ((frame % 90) / 90) * Math.PI * 2;
+    const distance = width * 1.6;
+    shadows.push(
+      `drop-shadow(${formatOffset(Math.cos(angle) * distance)}px ${formatOffset(Math.sin(angle) * distance)}px 0 ${lineColor})`,
+    );
+  }
+
+  return shadows.join(" ");
+};
+
 export const getClipVisualPresentation = (
   clip?: TimelineClip,
   frame = 0,
@@ -5792,6 +6024,7 @@ export const getClipVisualPresentation = (
   const effectAmount = presetIntensity(effect, visual?.effectIntensity) / 100;
   const filterAmount = presetIntensity(filter, visual?.filterIntensity) / 100;
   const parts: string[] = [];
+  const cutoutLineEffect = getCutoutLineEffectCss(clip, frame, effectAmount);
   const opacity = effect === "fade" ? 1 - 0.45 * effectAmount : 1;
   let scale = effect === "zoom" ? 1 + 0.08 * effectAmount : 1;
   let translateX = 0;
@@ -5823,7 +6056,7 @@ export const getClipVisualPresentation = (
       `drop-shadow(0 ${8 * effectAmount}px ${18 * effectAmount}px rgba(0, 0, 0, ${0.65 * effectAmount}))`,
     );
   }
-  if (effect === "outline") {
+  if (effect === "outline" && !cutoutLineEffect) {
     const width = Math.max(1, 4 * effectAmount);
     parts.push(
       `drop-shadow(${width}px 0 0 white)`,
@@ -5836,7 +6069,7 @@ export const getClipVisualPresentation = (
       `drop-shadow(${-width}px ${-width}px 0 white)`,
     );
   }
-  if (effect === "moving-outline") {
+  if (effect === "moving-outline" && !cutoutLineEffect) {
     const angle = ((frame % 90) / 90) * Math.PI * 2;
     const distance = Math.max(2, 5 * effectAmount);
     const x = Math.cos(angle) * distance;
@@ -5847,7 +6080,7 @@ export const getClipVisualPresentation = (
       `drop-shadow(0 0 ${8 * effectAmount}px rgba(255, 255, 255, 0.75))`,
     );
   }
-  if (effect === "moving-white-outline") {
+  if (effect === "moving-white-outline" && !cutoutLineEffect) {
     const angle = ((frame % 72) / 72) * Math.PI * 2;
     const distance = Math.max(2, 5 * effectAmount);
     const x = Math.cos(angle) * distance;
@@ -5860,7 +6093,7 @@ export const getClipVisualPresentation = (
       `drop-shadow(0 0 ${7 * effectAmount}px rgba(255, 255, 255, 0.92))`,
     );
   }
-  if (effect === "neon-outline") {
+  if (effect === "neon-outline" && !cutoutLineEffect) {
     const width = Math.max(1, 3 * effectAmount);
     parts.push(
       `drop-shadow(${width}px 0 0 #22d3ee)`,
@@ -5912,7 +6145,7 @@ export const getClipVisualPresentation = (
     );
     translateX = Math.sin(frame * 0.12) * 0.9 * effectAmount;
   }
-  if (effect === "rainbow-edge") {
+  if (effect === "rainbow-edge" && !cutoutLineEffect) {
     const angle = frame * 0.09;
     const radius = Math.max(2, 4 * effectAmount);
     const x = Math.cos(angle) * radius;
@@ -5924,7 +6157,7 @@ export const getClipVisualPresentation = (
       `drop-shadow(${y}px ${-x}px 0 rgba(168, 85, 247, 0.92))`,
     );
   }
-  if (effect === "electric-glow") {
+  if (effect === "electric-glow" && !cutoutLineEffect) {
     const spark = 0.72 + Math.abs(Math.sin(frame * 0.48)) * 0.28;
     parts.push(
       `brightness(${1 + 0.12 * spark * effectAmount})`,
@@ -5943,7 +6176,7 @@ export const getClipVisualPresentation = (
     translateY = Math.cos(frame * 0.065) * 0.7 * effectAmount;
     rotate = Math.sin(frame * 0.065) * 3.2 * effectAmount;
   }
-  if (effect === "flicker-outline") {
+  if (effect === "flicker-outline" && !cutoutLineEffect) {
     const flicker = 0.35 + Math.abs(Math.sin(frame * 0.83)) * 0.65;
     const width = Math.max(1, 3.5 * flicker * effectAmount);
     parts.push(
@@ -5955,6 +6188,9 @@ export const getClipVisualPresentation = (
   }
   if (effect === "silhouette") {
     parts.push("brightness(0)");
+  }
+  if (cutoutLineEffect) {
+    parts.push(cutoutLineEffect);
   }
   if (effect === "retro") {
     parts.push(

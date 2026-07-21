@@ -1302,6 +1302,24 @@ test("wires effects and filters tabs to selected clip visual controls", () => {
   assert.match(stylesheetSource, /grid-auto-flow: column/);
 });
 
+test("shows customizable line controls for cutout edge effects", () => {
+  const compositionSource = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const stylesheetSource = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(compositionSource, /aria-label="Cutout line controls"/);
+  assert.match(compositionSource, /aria-label="Cutout line color"/);
+  assert.match(compositionSource, /aria-label="Cutout line opacity"/);
+  assert.match(compositionSource, /aria-label="Cutout line thickness"/);
+  assert.match(compositionSource, /updateSelectedCutoutLineStyle/);
+  assert.match(stylesheetSource, /\.cutout-line-style-control/);
+});
+
 test("offers an on-canvas rotation handle in manual adjustment mode", () => {
   const compositionSource = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),

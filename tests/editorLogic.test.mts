@@ -28,8 +28,10 @@ import {
   deleteClipById,
   duplicateClipById,
   getClipSourceTime,
+  getClipAudioFadeMultiplier,
   getClipFilterCss,
   getClipVisualPresentation,
+  getCutoutLineEffectCss,
   getClipAnimationPreviewFrame,
   getContextualAudioClips,
   getExpandedTimelineBoundary,
@@ -89,6 +91,7 @@ import {
   redoTimelineHistory,
   setClipSpeedById,
   setClipVolumeById,
+  setClipAudioFadeById,
   setClipTransitionById,
   setVideoLayerSpeed,
   setVideoLayerVolume,
@@ -102,6 +105,7 @@ import {
   toggleTrackVisibility,
   setClipEffectById,
   setClipFilterById,
+  setCutoutLineStyleById,
   setClipAnimationById,
   setClipAdjustmentById,
   setCutoutChromaKeyById,
@@ -1331,7 +1335,7 @@ test("auto-scrolls toward timeline edges only while the pointer is nearby", () =
   assert.equal(getDragEdgeAutoScrollDelta(1000, 100, 900), 0);
 });
 
-test("follows the playback playhead only after it reaches a visible edge", () => {
+test("follows the playhead in both directions after it reaches a visible edge", () => {
   assert.equal(
     getPlaybackFollowScrollLeft({
       scrollLeft: 0,
@@ -2503,6 +2507,44 @@ test("adjusts a selected overlay clip volume by id", () => {
   ]);
 });
 
+test("applies audio fades to a video and its linked audio", () => {
+  const [video, audio] = createVideoMediaPair({
+    videoId: "fade-video",
+    audioId: "fade-audio",
+    label: "Interview",
+    src: "interview.mp4",
+    start: 30,
+    duration: 300,
+    track: "main",
+  });
+
+  const result = setClipAudioFadeById([video, audio], video.id, {
+    fadeInFrames: 45,
+    fadeOutFrames: 60,
+  });
+
+  for (const clip of result) {
+    assert.equal(clip.audioFadeInFrames, 45);
+    assert.equal(clip.audioFadeOutFrames, 60);
+  }
+});
+
+test("calculates a linear audio fade that reaches silence at both edges", () => {
+  const clip = {
+    start: 30,
+    duration: 100,
+    audioFadeInFrames: 20,
+    audioFadeOutFrames: 20,
+  };
+
+  assert.equal(getClipAudioFadeMultiplier(clip, 30), 0);
+  assert.equal(getClipAudioFadeMultiplier(clip, 40), 0.5);
+  assert.equal(getClipAudioFadeMultiplier(clip, 70), 1);
+  assert.equal(getClipAudioFadeMultiplier(clip, 119), 0.5);
+  assert.equal(getClipAudioFadeMultiplier(clip, 129), 0);
+  assert.equal(getClipAudioFadeMultiplier(clip, 130), 0);
+});
+
 test("applies effects and filters only to selected video clips", () => {
   const clips: TimelineClip[] = [
     {
@@ -2541,6 +2583,60 @@ test("builds intensity-aware CSS for the expanded filter library", () => {
   assert.match(getClipFilterCss("newspaper"), /grayscale\(1\)/);
   assert.match(getClipFilterCss("soft-ginger"), /saturate\(1\.35\)/);
   assert.equal(getClipFilterCss("newspaper", 0), "brightness(1) contrast(1) grayscale(0)");
+});
+
+test("customizes cutout line color, opacity, thickness, and style", () => {
+  const cutout: TimelineClip = {
+    id: "cutout-line",
+    label: "Person cutout",
+    track: "cutout",
+    start: 0,
+    duration: 120,
+    color: "#a855f7",
+    cutout: {
+      x: 50,
+      y: 50,
+      scale: 1,
+      rotation: 0,
+      mediaKind: "video",
+    },
+    visual: { effect: "neon-outline", filter: "none" },
+  };
+
+  const [updated] = setCutoutLineStyleById([cutout], cutout.id, {
+    color: "#ff3366",
+    opacity: 64,
+    width: 7,
+    style: "double",
+  });
+  const presentation = getClipVisualPresentation(updated, 12);
+
+  assert.equal(updated.visual?.cutoutLineColor, "#ff3366");
+  assert.equal(updated.visual?.cutoutLineOpacity, 64);
+  assert.equal(updated.visual?.cutoutLineWidth, 7);
+  assert.equal(updated.visual?.cutoutLineStyle, "double");
+  assert.match(presentation.filter, /rgba\(255, 51, 102, 0\.64\)/);
+  assert.match(presentation.filter, /14\.35px/);
+  assert.match(getCutoutLineEffectCss(updated, 12), /drop-shadow/);
+});
+
+test("does not add cutout line settings to ordinary video clips", () => {
+  const mainClip: TimelineClip = {
+    id: "main-line",
+    label: "Main video",
+    track: "main",
+    start: 0,
+    duration: 120,
+    color: "#0891b2",
+    visual: { effect: "outline", filter: "none" },
+  };
+
+  const [unchanged] = setCutoutLineStyleById([mainClip], mainClip.id, {
+    color: "#ff0000",
+  });
+
+  assert.deepEqual(unchanged, mainClip);
+  assert.equal(getCutoutLineEffectCss(mainClip), null);
 });
 
 test("applies deterministic moving outline effects to cutout clips", () => {

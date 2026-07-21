@@ -57,6 +57,8 @@ import {
   isStoredUploadSource,
   getDraggedClipStart,
   getDragEdgeAutoScrollDelta,
+  getPlaybackFollowScrollLeft,
+  getMediaTrimFrameFromPointer,
   getVideoClipDragPreviewStart,
   getContextualAudioClips,
   getCaptionPosition,
@@ -73,6 +75,7 @@ import {
   getTimelineFrameFromPointer,
   getTimelineTransitionBoundaries,
   getTimelineDuration,
+  getVideoPlaybackDuration,
   formatTimelineClock,
   formatTimelineTimecode,
   hasClipsOnTrack,
@@ -80,6 +83,7 @@ import {
   getTextAnimationPresentation,
   getTextAnimationVisibleCharacterCount,
   getTextAnimationWordPresentation,
+  getTextualClipDisplayColors,
   getRotatedTextResizeDelta,
   moveTextClip,
   moveIndependentTimelineClip,
@@ -101,6 +105,8 @@ import {
   removeBrowserOnlySavedMedia,
   removeSilenceFromLinkedVideo,
   reconnectMediaSource,
+  restoreDominantVideoSources,
+  resetMediaItemEdits,
   redoTimelineHistory,
   reconcileClipSourceDuration,
   resizeTextOverlayBoxById,
@@ -179,10 +185,13 @@ type MediaItem = {
   mediaType?: "video" | "image";
   sourceStart?: number;
   sourceDurationInFrames?: number;
+  trimOriginalSourceStart?: number;
+  trimOriginalDurationInFrames?: number;
   sourceFileId?: string;
   sceneIndex?: number;
   sourceGroupIndex?: number;
   sourceLabel?: string;
+  adjustment?: ClipAdjustment;
 };
 
 export const isDetectedSceneMediaItem = (
@@ -205,6 +214,7 @@ const defaultImageDurationInFrames = 5 * fps;
 const remotionRegistrationFallbackInFrames = 24 * 60 * 60 * fps;
 const timelineScale = 1.15;
 const timelineOrigin = 148;
+const timelineDragActivationDistance = 6;
 const minimumTransitionDuration = 1;
 const savedProjectStorageKey = "video-editor-project-v1";
 const favoriteAnimationsStorageKey = "video-editor-favorite-animations-v1";
@@ -455,6 +465,12 @@ const getMediaItemType = (mediaItem: Pick<MediaItem, "mediaType" | "src">) =>
 const isImageClip = (clip?: Pick<TimelineClip, "mediaType" | "src">) =>
   clip?.mediaType === "image" || (!clip?.mediaType && isImageSource(clip?.src));
 
+const shouldShowTimelineFilmstrip = (clip: TimelineClip) =>
+  Boolean(clip.src) &&
+  (clip.track === "main" ||
+    clip.track === "upper" ||
+    (clip.track === "cutout" && clip.cutout?.mediaKind === "video"));
+
 const shouldShowTimelineWaveform = (clip: TimelineClip) =>
   clip.track === "audio" ||
   (Boolean(clip.src) &&
@@ -573,7 +589,7 @@ const updateClipById = (
   return clips.map((clip) => (clip.id === clipId ? updater(clip) : clip));
 };
 
-const getClipVisualPresentation = (clip?: TimelineClip) => {
+const getClipVisualPresentation = (clip?: TimelineClip, frame = 0) => {
   const visual = clip?.visual;
   const effectIntensity = (visual?.effectIntensity ?? 100) / 100;
   const filterIntensity = (visual?.filterIntensity ?? 100) / 100;
@@ -647,6 +663,46 @@ const getClipVisualPresentation = (clip?: TimelineClip) => {
       filters.push(
         `drop-shadow(0 ${Math.max(2, 8 * effectIntensity)}px ${Math.max(4, 24 * effectIntensity)}px rgba(15, 23, 42, 0.45))`,
       );
+      break;
+    case "outline": {
+      const width = Math.max(1, 4 * effectIntensity);
+      filters.push(
+        `drop-shadow(${width}px 0 0 white)`,
+        `drop-shadow(${-width}px 0 0 white)`,
+        `drop-shadow(0 ${width}px 0 white)`,
+        `drop-shadow(0 ${-width}px 0 white)`,
+        `drop-shadow(${width}px ${width}px 0 white)`,
+        `drop-shadow(${-width}px ${width}px 0 white)`,
+        `drop-shadow(${width}px ${-width}px 0 white)`,
+        `drop-shadow(${-width}px ${-width}px 0 white)`,
+      );
+      break;
+    }
+    case "moving-outline": {
+      const angle = ((frame % 90) / 90) * Math.PI * 2;
+      const distance = Math.max(2, 5 * effectIntensity);
+      const x = Math.cos(angle) * distance;
+      const y = Math.sin(angle) * distance;
+      filters.push(
+        `drop-shadow(${x}px ${y}px 0 rgba(34, 211, 238, 0.95))`,
+        `drop-shadow(${-x}px ${-y}px 0 rgba(244, 114, 182, 0.9))`,
+        `drop-shadow(0 0 ${8 * effectIntensity}px rgba(255, 255, 255, 0.75))`,
+      );
+      break;
+    }
+    case "neon-outline": {
+      const width = Math.max(1, 3 * effectIntensity);
+      filters.push(
+        `drop-shadow(${width}px 0 0 #22d3ee)`,
+        `drop-shadow(${-width}px 0 0 #22d3ee)`,
+        `drop-shadow(0 ${width}px 0 #f472b6)`,
+        `drop-shadow(0 ${-width}px 0 #f472b6)`,
+        `drop-shadow(0 0 ${14 * effectIntensity}px rgba(34, 211, 238, 0.9))`,
+      );
+      break;
+    }
+    case "silhouette":
+      filters.push("brightness(0)");
       break;
     case "zoom":
       scale = 1 + 0.12 * effectIntensity;
@@ -934,7 +990,15 @@ const effectOptions: Array<{ id: ClipEffect; label: string }> = [
   { id: "invert", label: "Invert" },
   { id: "fade", label: "Fade" },
   { id: "shadow", label: "Shadow" },
+  { id: "outline", label: "Outline" },
   { id: "zoom", label: "Zoom" },
+];
+
+const cutoutEffectOptions: Array<{ id: ClipEffect; label: string }> = [
+  ...effectOptions,
+  { id: "moving-outline", label: "Moving Outline" },
+  { id: "neon-outline", label: "Neon Edge" },
+  { id: "silhouette", label: "Silhouette" },
 ];
 
 const filterOptions: Array<{ id: ClipFilter; label: string }> = [
@@ -1059,7 +1123,7 @@ const getClipFrameStyle = (
   playheadFrame: number,
   transitionPresentation?: ClipTransitionPresentation,
 ): CSSProperties => {
-  const visual = getClipVisualPresentation(clip);
+  const visual = getClipVisualPresentation(clip, playheadFrame);
   const animation = getClipAnimationPresentation(clip, playheadFrame);
   const transition = transitionPresentation ?? {
     opacity: 1,
@@ -1469,6 +1533,7 @@ type VideoDropTarget =
 type PointerDrag = {
   type: "timeline" | "media";
   id: string;
+  activated: boolean;
   mediaIds?: string[];
   label: string;
   x: number;
@@ -1486,6 +1551,26 @@ type TrimDrag = {
   startFrame: number;
   contentLeft: number;
   originalClips: TimelineClip[];
+};
+
+type MediaTrimCanvasDrag = {
+  mode: "pan" | "crop" | "rotate";
+  handle?: CaptionResizeHandle;
+  startX: number;
+  startY: number;
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
+  startAngle: number;
+  adjustment: ClipAdjustment;
+};
+
+type MediaTrimRangeDrag = {
+  edge: "start" | "end";
+  pointerId: number;
+  boundsLeft: number;
+  boundsWidth: number;
 };
 
 type StickerInteraction = {
@@ -1696,13 +1781,21 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const timelineContentRef = useRef<HTMLDivElement>(null);
   const timelineScrollRef = useRef<HTMLDivElement>(null);
   const suppressMediaClickRef = useRef(false);
+  const pointerDragStartedRef = useRef(false);
   const animationQuickMenuRef = useRef<HTMLDivElement>(null);
   const voiceRecorderRef = useRef<BrowserVoiceRecorder | null>(null);
   const [initialProject] = useState<SavedEditorProject | null>(
     () => project ?? readBrowserSavedProject(),
   );
   const [timelineHistory, setTimelineHistory] = useState(() =>
-    createTimelineHistory(initialProject?.clips ?? initialClips),
+    createTimelineHistory(
+      initialProject
+        ? restoreDominantVideoSources(
+            initialProject.clips,
+            initialProject.mediaItems,
+          )
+        : initialClips,
+    ),
   );
   const clips = timelineHistory.present;
   const clipsRef = useRef(clips);
@@ -1744,7 +1837,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     mediaId: string;
     startFrame: number;
     endFrame: number;
+    adjustment: ClipAdjustment;
   } | null>(null);
+  const [mediaTrimCanvasDrag, setMediaTrimCanvasDrag] =
+    useState<MediaTrimCanvasDrag | null>(null);
+  const [mediaTrimRangeDrag, setMediaTrimRangeDrag] =
+    useState<MediaTrimRangeDrag | null>(null);
+  const [mediaTrimPreviewFrame, setMediaTrimPreviewFrame] = useState(0);
+  const [isMediaTrimPreviewPlaying, setIsMediaTrimPreviewPlaying] =
+    useState(false);
   const [isMediaPreviewVolumeOpen, setIsMediaPreviewVolumeOpen] =
     useState(false);
   const [isMediaPreviewVolumeAdjusting, setIsMediaPreviewVolumeAdjusting] =
@@ -1864,6 +1965,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   activeToolRef.current = activeTool;
 
   const projectDuration = useMemo(() => getTimelineDuration(clips), [clips]);
+  const videoPlaybackDuration = useMemo(
+    () => getVideoPlaybackDuration(clips),
+    [clips],
+  );
   const mainVideoLayerEnd = useMemo(() => getVideoLayerEnd(clips, 0), [clips]);
   const draggedMediaItems =
     pointerDrag?.type === "media"
@@ -1881,8 +1986,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       ? clips.find((clip) => clip.id === pointerDrag.id)
       : null;
   const isVideoPointerDrag = Boolean(
-    draggedMediaItem ||
-      (draggedTimelineClip && getVideoLayer(draggedTimelineClip) !== null),
+    pointerDrag?.activated &&
+      (draggedMediaItem ||
+        (draggedTimelineClip && getVideoLayer(draggedTimelineClip) !== null)),
   );
   const mainAppendTargetWidth = draggedMediaItem
     ? Math.max(
@@ -2171,7 +2277,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     clipControlTarget?.track === "cutout" ||
     clipControlTarget?.track === "audio";
   const canEditSelectedVisual =
-    clipControlTarget?.track === "main" || clipControlTarget?.track === "upper";
+    clipControlTarget?.track === "main" ||
+    clipControlTarget?.track === "upper" ||
+    clipControlTarget?.track === "cutout";
   const canEditSelectedVolume =
     hasSelectedVideoLayer ||
     Boolean(
@@ -2216,6 +2324,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     mediaPreviewStartSeconds + (selectedMedia?.durationInFrames ?? 0) / fps;
   const mediaPreviewSceneDurationSeconds =
     (selectedMedia?.durationInFrames ?? 0) / fps;
+  const hasValidStoredMediaDuration =
+    Number.isFinite(mediaPreviewSceneDurationSeconds) &&
+    mediaPreviewSceneDurationSeconds > 0;
   const mediaPreviewSeekMinSeconds = isSelectedMediaScene
     ? mediaPreviewStartSeconds
     : 0;
@@ -2227,14 +2338,16 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     mediaPreviewEndSeconds > mediaPreviewStartSeconds;
   const isMediaPreviewSeekEnabled = isSelectedMediaScene
     ? hasValidMediaPreviewSceneRange
-    : hasValidMediaPreviewDuration;
+    : hasValidMediaPreviewDuration || hasValidStoredMediaDuration;
   const mediaPreviewSeekMaxSeconds = isSelectedMediaScene
     ? hasValidMediaPreviewSceneRange
       ? mediaPreviewEndSeconds
       : mediaPreviewSeekMinSeconds
     : hasValidMediaPreviewDuration
       ? mediaPreviewDuration
-      : mediaPreviewSeekMinSeconds;
+      : hasValidStoredMediaDuration
+        ? mediaPreviewSceneDurationSeconds
+        : mediaPreviewSeekMinSeconds;
   const mediaPreviewDisplayTime = isSelectedMediaScene
     ? Math.max(
         0,
@@ -2246,7 +2359,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     : mediaPreviewTime;
   const mediaPreviewDisplayDuration = isSelectedMediaScene
     ? mediaPreviewSceneDurationSeconds
-    : mediaPreviewDuration;
+    : hasValidMediaPreviewDuration
+      ? mediaPreviewDuration
+      : mediaPreviewSceneDurationSeconds;
   const getMediaPreviewFrame = (currentTime: number) =>
     Math.max(
       0,
@@ -2285,8 +2400,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         transitionPresentation.translateX !== 0 ||
         transitionPresentation.scale !== 1;
       const isNearPlayhead =
-        clip.start <= playheadFrame + fps * 2 &&
-        clip.start + clip.duration >= playheadFrame - fps / 2;
+        clip.start <= playheadFrame + fps * 5 &&
+        clip.start + clip.duration >= playheadFrame - fps;
 
       return (
         activeVideoClipIds.has(clip.id) ||
@@ -2724,11 +2839,18 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
   const openMediaTrimEditor = (mediaItem: MediaItem) => {
     previewVideoRef.current?.pause();
+    mediaTrimVideoRef.current?.pause();
     setIsMediaPreviewPlaying(false);
+    setIsMediaTrimPreviewPlaying(false);
+    setMediaTrimPreviewFrame(0);
     setMediaTrimDraft({
       mediaId: mediaItem.id,
       startFrame: 0,
       endFrame: Math.max(1, mediaItem.durationInFrames),
+      adjustment: {
+        ...defaultClipAdjustment,
+        ...mediaItem.adjustment,
+      },
     });
     window.requestAnimationFrame(() =>
       mediaTrimDialogRef.current?.showModal(),
@@ -2737,8 +2859,177 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
   const closeMediaTrimEditor = () => {
     mediaTrimVideoRef.current?.pause();
+    setIsMediaTrimPreviewPlaying(false);
+    setMediaTrimPreviewFrame(0);
     mediaTrimDialogRef.current?.close();
     setMediaTrimDraft(null);
+    setMediaTrimCanvasDrag(null);
+    setMediaTrimRangeDrag(null);
+  };
+
+  const startMediaTrimRangeDrag = (
+    event: PointerEvent<HTMLButtonElement>,
+    edge: MediaTrimRangeDrag["edge"],
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const range = event.currentTarget.closest(".media-trim-range-visual");
+    const bounds = range?.getBoundingClientRect();
+    if (!bounds || bounds.width <= 0) return;
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setMediaTrimRangeDrag({
+      edge,
+      pointerId: event.pointerId,
+      boundsLeft: bounds.left,
+      boundsWidth: bounds.width,
+    });
+  };
+
+  const moveMediaTrimRangeDrag = (event: PointerEvent<HTMLDivElement>) => {
+    if (
+      !mediaTrimRangeDrag ||
+      event.pointerId !== mediaTrimRangeDrag.pointerId ||
+      !mediaTrimDraft ||
+      !mediaTrimItem
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    const pointerFrame = getMediaTrimFrameFromPointer({
+      clientX: event.clientX,
+      boundsLeft: mediaTrimRangeDrag.boundsLeft,
+      boundsWidth: mediaTrimRangeDrag.boundsWidth,
+      durationInFrames: mediaTrimItem.durationInFrames,
+    });
+
+    if (mediaTrimRangeDrag.edge === "start") {
+      const startFrame = Math.max(
+        0,
+        Math.min(pointerFrame, mediaTrimDraft.endFrame - 1),
+      );
+      setMediaTrimDraft((currentDraft) =>
+        currentDraft ? {...currentDraft, startFrame} : null,
+      );
+      previewMediaTrimFrame(mediaTrimItem, startFrame);
+      return;
+    }
+
+    const endFrame = Math.min(
+      mediaTrimItem.durationInFrames,
+      Math.max(pointerFrame, mediaTrimDraft.startFrame + 1),
+    );
+    setMediaTrimDraft((currentDraft) =>
+      currentDraft ? {...currentDraft, endFrame} : null,
+    );
+    previewMediaTrimFrame(mediaTrimItem, Math.max(0, endFrame - 1));
+  };
+
+  const updateMediaTrimAdjustment = (
+    adjustment: Partial<ClipAdjustment>,
+  ) => {
+    setMediaTrimDraft((currentDraft) => {
+      if (!currentDraft) return null;
+      const next = {
+        ...currentDraft.adjustment,
+        ...adjustment,
+      };
+      const clamp = (value: number, minimum: number, maximum: number) =>
+        Math.max(minimum, Math.min(maximum, value));
+
+      return {
+        ...currentDraft,
+        adjustment: {
+          scale: clamp(next.scale, 0.25, 4),
+          rotation: clamp(next.rotation, -180, 180),
+          positionX: clamp(next.positionX, -100, 100),
+          positionY: clamp(next.positionY, -100, 100),
+          cropTop: clamp(next.cropTop, 0, 45),
+          cropRight: clamp(next.cropRight, 0, 45),
+          cropBottom: clamp(next.cropBottom, 0, 45),
+          cropLeft: clamp(next.cropLeft, 0, 45),
+        },
+      };
+    });
+  };
+
+  const startMediaTrimCanvasDrag = (
+    event: PointerEvent<HTMLElement>,
+    mode: MediaTrimCanvasDrag["mode"],
+    handle?: CaptionResizeHandle,
+  ) => {
+    if (!mediaTrimDraft) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const preview = event.currentTarget.closest(".media-trim-preview");
+    const bounds = preview?.getBoundingClientRect();
+    if (!bounds) return;
+    const centerX = bounds.left + bounds.width / 2;
+    const centerY = bounds.top + bounds.height / 2;
+
+    setMediaTrimCanvasDrag({
+      mode,
+      handle,
+      startX: event.clientX,
+      startY: event.clientY,
+      width: bounds.width,
+      height: bounds.height,
+      centerX,
+      centerY,
+      startAngle:
+        (Math.atan2(event.clientY - centerY, event.clientX - centerX) * 180) /
+        Math.PI,
+      adjustment: { ...mediaTrimDraft.adjustment },
+    });
+  };
+
+  const moveMediaTrimCanvasDrag = (event: PointerEvent<HTMLElement>) => {
+    if (!mediaTrimCanvasDrag) return;
+    event.preventDefault();
+    const drag = mediaTrimCanvasDrag;
+
+    if (drag.mode === "rotate") {
+      const angle =
+        (Math.atan2(
+          event.clientY - drag.centerY,
+          event.clientX - drag.centerX,
+        ) *
+          180) /
+        Math.PI;
+      updateMediaTrimAdjustment({
+        rotation: drag.adjustment.rotation + angle - drag.startAngle,
+      });
+      return;
+    }
+
+    const deltaX = ((event.clientX - drag.startX) / drag.width) * 100;
+    const deltaY = ((event.clientY - drag.startY) / drag.height) * 100;
+    if (drag.mode === "pan") {
+      updateMediaTrimAdjustment({
+        positionX: drag.adjustment.positionX + deltaX,
+        positionY: drag.adjustment.positionY + deltaY,
+      });
+      return;
+    }
+
+    const handle = drag.handle;
+    if (!handle) return;
+    updateMediaTrimAdjustment({
+      ...(handle.includes("left") || handle === "left"
+        ? { cropLeft: drag.adjustment.cropLeft + deltaX }
+        : {}),
+      ...(handle.includes("right") || handle === "right"
+        ? { cropRight: drag.adjustment.cropRight - deltaX }
+        : {}),
+      ...(handle.includes("top") || handle === "top"
+        ? { cropTop: drag.adjustment.cropTop + deltaY }
+        : {}),
+      ...(handle.includes("bottom") || handle === "bottom"
+        ? { cropBottom: drag.adjustment.cropBottom - deltaY }
+        : {}),
+    });
   };
 
   const previewMediaTrimFrame = (
@@ -2749,8 +3040,42 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     if (!video) {
       return;
     }
+    video.pause();
+    const clampedFrame = Math.max(
+      0,
+      Math.min(relativeFrame, mediaItem.durationInFrames),
+    );
     video.currentTime =
-      ((mediaItem.sourceStart ?? 0) + Math.max(0, relativeFrame)) / fps;
+      ((mediaItem.sourceStart ?? 0) + clampedFrame) / fps;
+    setMediaTrimPreviewFrame(clampedFrame);
+    setIsMediaTrimPreviewPlaying(false);
+  };
+
+  const toggleMediaTrimPlayback = () => {
+    const video = mediaTrimVideoRef.current;
+    if (!video || !mediaTrimDraft || !mediaTrimItem) {
+      return;
+    }
+
+    if (!video.paused) {
+      video.pause();
+      setIsMediaTrimPreviewPlaying(false);
+      return;
+    }
+
+    const { startFrame, endFrame } = mediaTrimDraft;
+    const shouldRestart =
+      mediaTrimPreviewFrame < startFrame ||
+      mediaTrimPreviewFrame >= endFrame - 1;
+    if (shouldRestart) {
+      const sourceStart = mediaTrimItem.sourceStart ?? 0;
+      video.currentTime = (sourceStart + startFrame) / fps;
+      setMediaTrimPreviewFrame(startFrame);
+    }
+
+    void video.play().catch(() => {
+      setIsMediaTrimPreviewPlaying(false);
+    });
   };
 
   const applyMediaTrim = () => {
@@ -2775,7 +3100,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         mediaId: mediaTrimItem.id,
         startFrame,
         endFrame,
-      }),
+      }).map((item) =>
+        item.id === mediaTrimItem.id
+          ? { ...item, adjustment: { ...mediaTrimDraft.adjustment } }
+          : item,
+      ),
     );
     setSelectedMediaId(mediaTrimItem.id);
     setSelectedMediaIds([mediaTrimItem.id]);
@@ -2784,6 +3113,28 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setMediaPreviewFrame(0);
     setPreviewMode("media");
     setProjectStatus(`Video trimmed to ${formatMediaDuration(durationInFrames)}`);
+    closeMediaTrimEditor();
+  };
+
+  const resetMediaTrimToOriginal = () => {
+    if (!mediaTrimItem) return;
+
+    const restoredItems = resetMediaItemEdits({
+      mediaItems,
+      mediaId: mediaTrimItem.id,
+    });
+    const restoredItem =
+      restoredItems.find((item) => item.id === mediaTrimItem.id) ??
+      mediaTrimItem;
+
+    setMediaItems(restoredItems);
+    setSelectedMediaId(restoredItem.id);
+    setSelectedMediaIds([restoredItem.id]);
+    setMediaPreviewTime((restoredItem.sourceStart ?? 0) / fps);
+    setMediaPreviewDuration(0);
+    setMediaPreviewFrame(0);
+    setPreviewMode("media");
+    setProjectStatus(`${restoredItem.label} restored to the original video`);
     closeMediaTrimEditor();
   };
 
@@ -3387,7 +3738,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           ),
         ),
       );
-      setIsPreviewPlaying(false);
     }
     if (clip.track === "text") {
       setActiveTool("text");
@@ -4135,55 +4485,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         selectedClipIdRef.current,
         clipsRef.current,
       );
-    const removeNonSpeakingScene = (message: string) => {
-      if (!isCurrentRequest()) {
-        return;
-      }
-
-      const replacementClip = clipsRef.current
-        .filter(
-          (clip) =>
-            clip.id !== sourceClipId &&
-            (clip.track === "main" ||
-              clip.track === "upper" ||
-              clip.track === "cutout") &&
-            clip.mediaType !== "image" &&
-            Boolean(clip.src),
-        )
-        .sort((left, right) => {
-          const leftDistance = Math.abs(left.start - selectedMainVoiceClip.start);
-          const rightDistance = Math.abs(
-            right.start - selectedMainVoiceClip.start,
-          );
-          return leftDistance - rightDistance || left.start - right.start;
-        })[0];
-      if (!replacementClip) {
-        preserveUncertainScene(
-          "This is the only video in the project, so it was kept. Split or trim it before removing silent sections.",
-        );
-        return;
-      }
-
-      commitClipChange((currentClips) => {
-        if (
-          !isDominantVoiceRequestCurrent(
-            snapshot,
-            sourceClipId,
-            currentClips,
-          )
-        ) {
-          return currentClips;
-        }
-
-        return deleteClipById(currentClips, sourceClipId);
-      });
-      setSelectedClipId(replacementClip.id);
-      setSelectedTrack(replacementClip.track);
-      setPlayheadFrame(replacementClip.start);
-      setCaptionStatus({ kind: "success", message });
-      setPreviewMode("timeline");
-      setIsAudioTrackVisible(false);
-    };
     const preserveUncertainScene = (message: string) => {
       if (!isCurrentRequest()) return;
       setCaptionStatus({kind: "error", message});
@@ -4497,8 +4798,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         };
       });
       if (speechRanges.length === 0) {
-        removeNonSpeakingScene(
-          "Removed the selected non-speaking scene and its linked audio.",
+        preserveUncertainScene(
+          "No reliable spoken section was detected. The video was kept unchanged.",
         );
         return;
       }
@@ -4514,8 +4815,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         sourceDurationSeconds,
       );
       if (retainedRanges.length === 0) {
-        removeNonSpeakingScene(
-          "Removed the selected scene because it did not contain the main voice.",
+        preserveUncertainScene(
+          "No reliable main-voice section was detected. The video was kept unchanged.",
         );
         return;
       }
@@ -4589,13 +4890,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           currentClips,
           sourceClipId,
         );
-        return keepDominantVoiceInLinkedVideo(
+        const trimmedClips = keepDominantVoiceInLinkedVideo(
           clipsWithLinkedAudio,
           sourceClipId,
           retainedRanges,
           fps,
           cleanedSrc,
         );
+        const hasSelectedVideoSegment = trimmedClips.some(
+          (clip) =>
+            clip.id === sourceClipId ||
+            clip.id.startsWith(`${sourceClipId}-dominant-`),
+        );
+
+        return hasSelectedVideoSegment ? trimmedClips : currentClips;
       });
       setCaptionStatus({
         kind: "success",
@@ -5062,6 +5370,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               src: mediaItem.src,
               start: Math.max(0, startFrame),
               duration,
+              adjustment: mediaItem.adjustment,
             }),
           ] as TimelineClip[],
         };
@@ -5080,6 +5389,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           duration: mediaItem.durationInFrames,
           sourceStart: mediaItem.sourceStart ?? 0,
           sourceDuration: mediaItem.sourceDurationInFrames,
+          adjustment: mediaItem.adjustment,
         }) as TimelineClip[],
       };
     },
@@ -5341,7 +5651,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setIsMediaPreviewPlaying(false);
     setPreviewMode("timeline");
     if (!isPreviewPlaying || previewMode !== "timeline") {
-      if (playheadFrame >= projectDuration) {
+      if (playheadFrame >= videoPlaybackDuration - 1) {
         setPlayheadFrame(0);
       }
       setIsPreviewPlaying(true);
@@ -5937,14 +6247,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
+    pointerDragStartedRef.current = false;
     const pointerFrame = getPointerTimelineFrame(event.clientX) ?? clip.start;
     setPointerDrag({
       type: "timeline",
       id: clip.id,
+      activated: false,
       label: clip.label,
       x: event.clientX,
       y: event.clientY,
       pointerStartX: event.clientX,
+      pointerStartY: event.clientY,
       originalStart: clip.start,
       grabOffsetFrames: pointerFrame - clip.start,
     });
@@ -5957,6 +6270,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     if (event.ctrlKey || event.metaKey) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    pointerDragStartedRef.current = false;
     const mediaIds = selectedMediaIds.includes(mediaItem.id)
       ? selectedMediaIds
       : [mediaItem.id];
@@ -5967,6 +6281,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setPointerDrag({
       type: "media",
       id: mediaItem.id,
+      activated: false,
       mediaIds,
       label:
         mediaIds.length > 1
@@ -6005,24 +6320,36 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     };
 
     const handlePointerMove = (event: globalThis.PointerEvent) => {
-      if (
-        pointerDrag.type === "media" &&
-        Math.hypot(
-          event.clientX - (pointerDrag.pointerStartX ?? event.clientX),
-          event.clientY - (pointerDrag.pointerStartY ?? event.clientY),
-        ) > 5
-      ) {
+      const dragDistance = Math.hypot(
+        event.clientX - (pointerDrag.pointerStartX ?? event.clientX),
+        event.clientY - (pointerDrag.pointerStartY ?? event.clientY),
+      );
+      if (dragDistance < timelineDragActivationDistance) {
+        return;
+      }
+      pointerDragStartedRef.current = true;
+      if (pointerDrag.type === "media") {
         suppressMediaClickRef.current = true;
       }
       setPointerDrag((currentDrag) =>
         currentDrag
-          ? { ...currentDrag, x: event.clientX, y: event.clientY }
+          ? {
+              ...currentDrag,
+              activated: true,
+              x: event.clientX,
+              y: event.clientY,
+            }
           : currentDrag,
       );
       updateDropTarget(event.clientX, event.clientY);
     };
 
     const handlePointerUp = (event: globalThis.PointerEvent) => {
+      if (!pointerDragStartedRef.current) {
+        setPointerDrag(null);
+        setVideoDropTarget(null);
+        return;
+      }
       const element = document.elementFromPoint(event.clientX, event.clientY);
       const target = getVideoDropTargetFromElement(element);
       const pointerFrame = getPointerTimelineFrame(event.clientX) ?? 0;
@@ -6113,6 +6440,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
       setPointerDrag(null);
       setVideoDropTarget(null);
+      pointerDragStartedRef.current = false;
     };
 
     window.addEventListener("pointermove", handlePointerMove);
@@ -6141,6 +6469,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     const scrollWhileDragging = () => {
       const scrollArea = timelineScrollRef.current;
       if (!scrollArea) return;
+      if (!pointerDragStartedRef.current) {
+        animationFrame = requestAnimationFrame(scrollWhileDragging);
+        return;
+      }
 
       const bounds = scrollArea.getBoundingClientRect();
       const laneViewportLeft = Math.min(
@@ -6410,7 +6742,16 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     );
     if (!originalClip) return;
 
+    let dragStarted = false;
     const handlePointerMove = (event: globalThis.PointerEvent) => {
+      if (
+        !dragStarted &&
+        Math.abs(event.clientX - textTimelineDrag.startX) <
+          timelineDragActivationDistance
+      ) {
+        return;
+      }
+      dragStarted = true;
       const frameDelta = getStableTimelineFrameDelta(
         event.clientX,
         textTimelineDrag.startFrame,
@@ -6467,7 +6808,16 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     );
     if (!originalClip?.cutout) return;
 
+    let dragStarted = false;
     const handlePointerMove = (event: globalThis.PointerEvent) => {
+      if (
+        !dragStarted &&
+        Math.abs(event.clientX - cutoutTimelineDrag.startX) <
+          timelineDragActivationDistance
+      ) {
+        return;
+      }
+      dragStarted = true;
       const frameDelta = getStableTimelineFrameDelta(
         event.clientX,
         cutoutTimelineDrag.startFrame,
@@ -7144,7 +7494,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       setPlayheadFrame((currentFrame) => {
         const playbackStep = stepTimelinePlayback(
           currentFrame,
-          projectDuration,
+          videoPlaybackDuration,
+          false,
         );
 
         if (!playbackStep.continues) {
@@ -7158,7 +7509,45 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     return () => {
       window.clearInterval(playbackTimer);
     };
-  }, [isPreviewPlaying, previewMode, projectDuration]);
+  }, [isPreviewPlaying, previewMode, videoPlaybackDuration]);
+
+  useEffect(() => {
+    if (
+      !isPreviewPlaying ||
+      previewMode !== "timeline" ||
+      isScrubbing ||
+      pointerDrag ||
+      trimDrag
+    ) {
+      return;
+    }
+
+    const scrollArea = timelineScrollRef.current;
+    const timelineContent = timelineContentRef.current;
+    if (!scrollArea || !timelineContent) return;
+
+    const nextScrollLeft = getPlaybackFollowScrollLeft({
+      scrollLeft: scrollArea.scrollLeft,
+      viewportWidth: scrollArea.clientWidth,
+      contentWidth: timelineContent.scrollWidth,
+      playheadX: timelineOrigin + playheadFrame * timelineScale,
+    });
+    if (Math.abs(nextScrollLeft - scrollArea.scrollLeft) < 1) return;
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      scrollArea.scrollLeft = nextScrollLeft;
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [
+    isPreviewPlaying,
+    isScrubbing,
+    playheadFrame,
+    pointerDrag,
+    previewMode,
+    timelineOrigin,
+    timelineScale,
+    trimDrag,
+  ]);
 
   return (
     <main className="editor-shell">
@@ -8075,7 +8464,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   Select a main or overlay clip, then choose an effect.
                 </span>
                 <div className="visual-option-grid">
-                  {effectOptions.map((option) => (
+                  {(clipControlTarget?.track === "cutout"
+                    ? cutoutEffectOptions
+                    : effectOptions
+                  ).map((option) => (
                     <button
                       className={
                         selectedClipEffect === option.id
@@ -8530,6 +8922,24 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               maskRepeat: "no-repeat",
                             }
                           : {};
+                        const cutoutVisual = getClipVisualPresentation(
+                          cutoutClip,
+                          playheadFrame,
+                        );
+                        const cutoutChroma = getCutoutChromaKeyStyle(transform);
+                        const cutoutFilters = [
+                          cutoutChroma.filter,
+                          cutoutVisual.filter,
+                        ]
+                          .filter((value) => value && value !== "none")
+                          .join(" ");
+                        const cutoutMediaStyle: CSSProperties = {
+                          ...maskStyle,
+                          ...cutoutChroma,
+                          filter: cutoutFilters || undefined,
+                          opacity: cutoutVisual.opacity,
+                          scale: cutoutVisual.scale,
+                        };
 
                         return (
                           <div
@@ -8570,10 +8980,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 disablePictureInPicture
                                 controlsList="nodownload noplaybackrate nopictureinpicture"
                                 draggable={false}
-                                style={{
-                                  ...maskStyle,
-                                  ...getCutoutChromaKeyStyle(transform),
-                                }}
+                                style={cutoutMediaStyle}
                                 ref={(video) => {
                                   if (!video) return;
                                   video.playbackRate = cutoutClip.speed ?? 1;
@@ -8605,7 +9012,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 src={resolveMediaSource(cutoutClip.src ?? "")}
                                 alt={cutoutClip.label}
                                 draggable={false}
-                                style={maskStyle}
+                                style={cutoutMediaStyle}
                               />
                             )}
                             {transform.mediaKind === "image" &&
@@ -8783,6 +9190,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                         }
 
                         const captionPosition = getCaptionPosition(caption);
+                        const captionDisplayColors =
+                          getTextualClipDisplayColors(captionClip);
 
                         return (
                           <button
@@ -8797,13 +9206,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             style={{
                               left: `${captionPosition.x}%`,
                               top: `${captionPosition.y}%`,
-                              color: caption.textColor,
+                              color: captionDisplayColors.textColor,
                               fontSize: `${caption.fontSize}px`,
                               fontFamily: caption.fontFamily ?? "Inter",
                               fontWeight: caption.fontWeight ?? "900",
-                              background: caption.backgroundEnabled
-                                ? caption.backgroundColor
-                                : "transparent",
+                              background:
+                                captionDisplayColors.backgroundColor,
                               ...getTextEffectStyle(caption.effect ?? "shadow"),
                               ...getCaptionAnimationStyle(
                                 caption,
@@ -9008,6 +9416,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     ? activeTextClips.map((textClip, textIndex) => {
                         const text = textClip.text;
                         if (!text) return null;
+                        const textDisplayColors =
+                          getTextualClipDisplayColors(textClip);
                         const textAnimation = getTextAnimationPresentation(
                           textClip,
                           playheadFrame,
@@ -9041,7 +9451,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               top: `${text.y}%`,
                               rotate: `${(text.rotation ?? 0) + textAnimation.rotation}deg`,
                               opacity: textAnimation.opacity,
-                              color: text.color,
+                              color: textDisplayColors.textColor,
+                              background: textDisplayColors.backgroundColor,
                               fontFamily: text.fontFamily ?? "Inter",
                               fontSize: `${text.fontSize}px`,
                               fontStyle: text.fontStyle ?? "normal",
@@ -10031,7 +10442,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           <span>Recording...</span>
                         </div>
                       ) : null}
-                      {track.videoLayer === 0 && draggedMediaItem ? (
+                      {track.videoLayer === 0 &&
+                      draggedMediaItem &&
+                      pointerDrag?.activated ? (
                         <div
                           className={`main-track-append-target ${
                             videoDropTarget?.kind === "append-main"
@@ -10058,6 +10471,24 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             const transitionTrack =
                               track.videoLayer === 0 ? "main" : "upper";
                             const transitionLabel = `Open animations for ${boundary.incomingLabel}`;
+                            const selectedBoundaryClipId =
+                              selectedClipId === boundary.outgoingClipId
+                                ? boundary.outgoingClipId
+                                : selectedClipId === boundary.incomingClipId
+                                  ? boundary.incomingClipId
+                                  : null;
+                            const selectedBoundaryClip = selectedBoundaryClipId
+                              ? clips.find(
+                                  (clip) => clip.id === selectedBoundaryClipId,
+                                ) ?? null
+                              : null;
+                            const selectedBoundaryEdge =
+                              selectedBoundaryClipId === boundary.outgoingClipId
+                                ? "right"
+                                : selectedBoundaryClipId ===
+                                    boundary.incomingClipId
+                                  ? "left"
+                                  : null;
 
                             return (
                               <div
@@ -10071,11 +10502,49 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 }}
                               >
                                 <button
-                                  className="transition-node"
+                                  className={`transition-node ${
+                                    selectedBoundaryClip && selectedBoundaryEdge
+                                      ? "transition-trim-priority"
+                                      : ""
+                                  }`}
                                   type="button"
-                                  aria-label={`Open animations for ${boundary.incomingLabel}`}
-                                  title={transitionLabel}
+                                  aria-label={
+                                    selectedBoundaryClip && selectedBoundaryEdge
+                                      ? `Trim ${selectedBoundaryClip.label} ${
+                                          selectedBoundaryEdge === "left"
+                                            ? "start"
+                                            : "end"
+                                        }`
+                                      : `Open animations for ${boundary.incomingLabel}`
+                                  }
+                                  title={
+                                    selectedBoundaryClip && selectedBoundaryEdge
+                                      ? selectedBoundaryEdge === "left"
+                                        ? "Trim start"
+                                        : "Trim end"
+                                      : transitionLabel
+                                  }
+                                  onPointerDown={(event) => {
+                                    if (
+                                      selectedBoundaryClip &&
+                                      selectedBoundaryEdge
+                                    ) {
+                                      startTrimDrag(
+                                        event,
+                                        selectedBoundaryClip,
+                                        selectedBoundaryEdge,
+                                      );
+                                    }
+                                  }}
                                   onClick={(event) => {
+                                    if (
+                                      selectedBoundaryClip &&
+                                      selectedBoundaryEdge
+                                    ) {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      return;
+                                    }
                                     const bounds =
                                       event.currentTarget.getBoundingClientRect();
                                     selectTransitionBoundary(
@@ -10101,7 +10570,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                     });
                                   }}
                                 >
-                                  +
+                                  {selectedBoundaryClip && selectedBoundaryEdge
+                                    ? ""
+                                    : "+"}
                                 </button>
                               </div>
                             );
@@ -10134,13 +10605,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               shouldShowTimelineWaveform(clip)
                                 ? "has-timeline-waveform"
                                 : ""
-                            } ${clip.track === "audio" ? "audio-timeline-clip" : ""} ${isVoiceoverClip(clip) ? "voiceover-timeline-clip" : ""} ${
-                              clip.track === "main" || clip.track === "upper"
+                            } ${clip.track === "audio" ? "audio-timeline-clip" : ""} ${isImportedAudioClip(clip) ? "imported-audio-timeline-clip" : ""} ${isVoiceoverClip(clip) ? "voiceover-timeline-clip" : ""} ${
+                              shouldShowTimelineFilmstrip(clip)
                                 ? "video-timeline-clip"
                                 : ""
                             } ${
-                              (clip.track === "main" ||
-                                clip.track === "upper") &&
+                              shouldShowTimelineFilmstrip(clip) &&
                               clip.duration * timelineScale < 180
                                 ? "compact-video-timeline-clip"
                                 : ""
@@ -10229,36 +10699,44 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                   : clip.start * timelineScale
                               }px`,
                               width: `${clip.duration * timelineScale}px`,
-                              background: isVoiceoverClip(clip)
-                                ? "#05070b"
-                                : clip.color,
+                              ...(clip.track === "caption" ||
+                              clip.track === "text"
+                                ? {
+                                    background:
+                                      getTextualClipDisplayColors(clip)
+                                        .backgroundColor,
+                                    color:
+                                      getTextualClipDisplayColors(clip)
+                                        .textColor,
+                                  }
+                                : {
+                                    background: isVoiceoverClip(clip)
+                                      ? "#05070b"
+                                      : clip.color,
+                                  }),
                             }}
                           >
-                            {selectedClipId === clip.id ? (
-                              <>
-                                <button
-                                  className="trim-handle trim-handle-left"
-                                  type="button"
-                                  aria-label="Trim clip start"
-                                  title="Trim start"
-                                  onPointerDown={(event) => {
-                                    startTrimDrag(event, clip, "left");
-                                  }}
-                                />
-                                <button
-                                  className="trim-handle trim-handle-right"
-                                  type="button"
-                                  aria-label="Trim clip end"
-                                  title="Trim end"
-                                  onPointerDown={(event) => {
-                                    startTrimDrag(event, clip, "right");
-                                  }}
-                                />
-                              </>
-                            ) : null}
-                            {clip.src &&
-                            (clip.track === "main" ||
-                              clip.track === "upper") ? (
+                            <button
+                              className="trim-handle trim-handle-left"
+                              type="button"
+                              aria-label={`Trim ${clip.label} start`}
+                              title="Trim start"
+                              tabIndex={selectedClipId === clip.id ? 0 : -1}
+                              onPointerDown={(event) => {
+                                startTrimDrag(event, clip, "left");
+                              }}
+                            />
+                            <button
+                              className="trim-handle trim-handle-right"
+                              type="button"
+                              aria-label={`Trim ${clip.label} end`}
+                              title="Trim end"
+                              tabIndex={selectedClipId === clip.id ? 0 : -1}
+                              onPointerDown={(event) => {
+                                startTrimDrag(event, clip, "right");
+                              }}
+                            />
+                            {shouldShowTimelineFilmstrip(clip) ? (
                               <>
                                 <div className="timeline-video-thumbnail-strip">
                                   {Array.from(
@@ -10292,6 +10770,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                           muted
                                           playsInline
                                           preload="metadata"
+                                          style={
+                                            clip.track === "cutout" &&
+                                            clip.cutout
+                                              ? getCutoutChromaKeyStyle(
+                                                  clip.cutout,
+                                                )
+                                              : undefined
+                                          }
                                         />
                                       ),
                                   )}
@@ -10299,25 +10785,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 <div className="timeline-clip-filmstrip" />
                               </>
                             ) : null}
-                            {clip.src && clip.track === "cutout" ? (
-                              clip.cutout?.mediaKind === "video" ? (
-                                // eslint-disable-next-line @remotion/warn-native-media-tag
-                                <video
-                                  className="timeline-cutout-media"
-                                  src={resolveMediaSource(clip.src)}
-                                  muted
-                                  playsInline
-                                  preload="metadata"
-                                  style={getCutoutChromaKeyStyle(clip.cutout)}
-                                />
-                              ) : (
+                            {clip.src &&
+                            clip.track === "cutout" &&
+                            clip.cutout?.mediaKind !== "video" ? (
                                 // eslint-disable-next-line @remotion/warn-native-media-tag
                                 <img
                                   className="timeline-cutout-media"
                                   src={resolveMediaSource(clip.src)}
                                   alt=""
                                 />
-                              )
                             ) : null}
                             {clip.src && clip.track === "sticker" ? (
                               <>
@@ -10368,6 +10844,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 toggleClipMute(clip.id);
                               }}
                               onPointerDown={(event) => {
+                                event.stopPropagation();
+                              }}
+                              onDoubleClick={(event) => {
+                                event.preventDefault();
                                 event.stopPropagation();
                               }}
                             >
@@ -10481,7 +10961,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           <div className="media-trim-content">
             <div className="media-trim-heading">
               <div>
-                <h2 id="media-trim-title">Trim video</h2>
+                <h2 id="media-trim-title">Canvas editor</h2>
                 <p>{mediaTrimItem.label}</p>
               </div>
               <button
@@ -10493,75 +10973,243 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 {"\u00d7"}
               </button>
             </div>
-            <div className="media-trim-preview">
+            <div
+              className="media-trim-preview"
+              onPointerMove={moveMediaTrimCanvasDrag}
+              onPointerUp={() => setMediaTrimCanvasDrag(null)}
+              onPointerCancel={() => setMediaTrimCanvasDrag(null)}
+            >
               {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
               <video
                 ref={mediaTrimVideoRef}
                 src={resolveMediaSource(mediaTrimItem.src)}
-                controls
                 playsInline
                 preload="metadata"
+                style={{
+                  transform: `translate(${mediaTrimDraft.adjustment.positionX}%, ${mediaTrimDraft.adjustment.positionY}%) scale(${mediaTrimDraft.adjustment.scale}) rotate(${mediaTrimDraft.adjustment.rotation}deg)`,
+                  transformOrigin: "center",
+                  clipPath: `inset(${mediaTrimDraft.adjustment.cropTop}% ${mediaTrimDraft.adjustment.cropRight}% ${mediaTrimDraft.adjustment.cropBottom}% ${mediaTrimDraft.adjustment.cropLeft}%)`,
+                }}
                 onLoadedMetadata={(event) => {
                   event.currentTarget.currentTime =
                     ((mediaTrimItem.sourceStart ?? 0) +
                       mediaTrimDraft.startFrame) /
                     fps;
+                  setMediaTrimPreviewFrame(mediaTrimDraft.startFrame);
+                }}
+                onPlay={() => setIsMediaTrimPreviewPlaying(true)}
+                onPause={() => setIsMediaTrimPreviewPlaying(false)}
+                onTimeUpdate={(event) => {
+                  const sourceStart = mediaTrimItem.sourceStart ?? 0;
+                  const relativeFrame = Math.max(
+                    0,
+                    Math.floor(event.currentTarget.currentTime * fps - sourceStart),
+                  );
+
+                  if (relativeFrame >= mediaTrimDraft.endFrame) {
+                    event.currentTarget.pause();
+                    event.currentTarget.currentTime =
+                      (sourceStart + mediaTrimDraft.endFrame) / fps;
+                    setMediaTrimPreviewFrame(mediaTrimDraft.endFrame);
+                    return;
+                  }
+
+                  setMediaTrimPreviewFrame(relativeFrame);
                 }}
               />
+              <div
+                className="media-trim-crop-frame"
+                style={{
+                  top: `${mediaTrimDraft.adjustment.cropTop}%`,
+                  right: `${mediaTrimDraft.adjustment.cropRight}%`,
+                  bottom: `${mediaTrimDraft.adjustment.cropBottom}%`,
+                  left: `${mediaTrimDraft.adjustment.cropLeft}%`,
+                }}
+                onPointerDown={(event) =>
+                  startMediaTrimCanvasDrag(event, "pan")
+                }
+              >
+                <button
+                  type="button"
+                  className="media-trim-rotate-handle"
+                  aria-label="Rotate video on canvas"
+                  title="Drag to rotate"
+                  onPointerDown={(event) =>
+                    startMediaTrimCanvasDrag(event, "rotate")
+                  }
+                />
+                {(
+                  [
+                    "top-left",
+                    "top",
+                    "top-right",
+                    "right",
+                    "bottom-right",
+                    "bottom",
+                    "bottom-left",
+                    "left",
+                  ] as CaptionResizeHandle[]
+                ).map((handle) => (
+                  <button
+                    type="button"
+                    key={handle}
+                    className={`media-trim-crop-handle media-trim-crop-handle-${handle}`}
+                    aria-label={`Crop video from ${handle}`}
+                    title={`Crop ${handle}`}
+                    onPointerDown={(event) =>
+                      startMediaTrimCanvasDrag(event, "crop", handle)
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="media-trim-transform-controls">
+              <label>
+                <span>Size</span>
+                <input
+                  aria-label="Video size"
+                  type="range"
+                  min={0.25}
+                  max={4}
+                  step={0.05}
+                  value={mediaTrimDraft.adjustment.scale}
+                  onChange={(event) =>
+                    updateMediaTrimAdjustment({
+                      scale: Number(event.currentTarget.value),
+                    })
+                  }
+                />
+                <strong>{Math.round(mediaTrimDraft.adjustment.scale * 100)}%</strong>
+              </label>
+              <label>
+                <span>Rotate</span>
+                <input
+                  aria-label="Video rotation"
+                  type="range"
+                  min={-180}
+                  max={180}
+                  step={1}
+                  value={mediaTrimDraft.adjustment.rotation}
+                  onChange={(event) =>
+                    updateMediaTrimAdjustment({
+                      rotation: Number(event.currentTarget.value),
+                    })
+                  }
+                />
+                <strong>{Math.round(mediaTrimDraft.adjustment.rotation)}°</strong>
+              </label>
+              <button
+                type="button"
+                onClick={() =>
+                  updateMediaTrimAdjustment(defaultClipAdjustment)
+                }
+              >
+                Reset crop
+              </button>
+            </div>
+            <div className="media-trim-playback">
+              <button
+                type="button"
+                aria-label={
+                  isMediaTrimPreviewPlaying
+                    ? "Pause trim preview"
+                    : "Play trim preview"
+                }
+                title={isMediaTrimPreviewPlaying ? "Pause" : "Play"}
+                onClick={toggleMediaTrimPlayback}
+              >
+                <span
+                  aria-hidden="true"
+                  className={
+                    isMediaTrimPreviewPlaying
+                      ? "media-trim-pause-icon"
+                      : "media-trim-play-icon"
+                  }
+                />
+              </button>
+              <span>
+                {formatMediaTrimTime(
+                  Math.max(
+                    0,
+                    Math.min(
+                      mediaTrimPreviewFrame,
+                      mediaTrimDraft.endFrame,
+                    ) - mediaTrimDraft.startFrame,
+                  ),
+                )}
+              </span>
+              <input
+                aria-label="Trim preview position"
+                type="range"
+                min={mediaTrimDraft.startFrame}
+                max={mediaTrimDraft.endFrame}
+                step={1}
+                value={Math.max(
+                  mediaTrimDraft.startFrame,
+                  Math.min(mediaTrimPreviewFrame, mediaTrimDraft.endFrame),
+                )}
+                onChange={(event) =>
+                  previewMediaTrimFrame(
+                    mediaTrimItem,
+                    Number(event.currentTarget.value),
+                  )
+                }
+              />
+              <span>
+                {formatMediaTrimTime(
+                  mediaTrimDraft.endFrame - mediaTrimDraft.startFrame,
+                )}
+              </span>
             </div>
             <div className="media-trim-controls">
-              <label>
-                <span>
-                  Start
-                  <strong>
-                    {formatMediaTrimTime(mediaTrimDraft.startFrame)}
-                  </strong>
-                </span>
-                <input
-                  aria-label="Trim start"
-                  type="range"
-                  min={0}
-                  max={Math.max(0, mediaTrimDraft.endFrame - 1)}
-                  step={1}
-                  value={mediaTrimDraft.startFrame}
-                  onChange={(event) => {
-                    const startFrame = Number(event.currentTarget.value);
-                    setMediaTrimDraft((currentDraft) =>
-                      currentDraft ? { ...currentDraft, startFrame } : null,
-                    );
-                    previewMediaTrimFrame(mediaTrimItem, startFrame);
-                  }}
-                />
-              </label>
-              <label>
-                <span>
-                  End
-                  <strong>
-                    {formatMediaTrimTime(mediaTrimDraft.endFrame)}
-                  </strong>
-                </span>
-                <input
-                  aria-label="Trim end"
-                  type="range"
-                  min={Math.min(
-                    mediaTrimItem.durationInFrames,
-                    mediaTrimDraft.startFrame + 1,
+              <div className="media-trim-range-heading">
+                <span>Drag the in and out points to shorten the video</span>
+                <strong>
+                  {formatMediaTrimTime(
+                    mediaTrimDraft.endFrame - mediaTrimDraft.startFrame,
                   )}
-                  max={mediaTrimItem.durationInFrames}
-                  step={1}
-                  value={mediaTrimDraft.endFrame}
-                  onChange={(event) => {
-                    const endFrame = Number(event.currentTarget.value);
-                    setMediaTrimDraft((currentDraft) =>
-                      currentDraft ? { ...currentDraft, endFrame } : null,
-                    );
-                    previewMediaTrimFrame(
-                      mediaTrimItem,
-                      Math.max(0, endFrame - 1),
-                    );
+                </strong>
+              </div>
+              <div
+                className="media-trim-range-visual"
+                role="group"
+                aria-label="Video trim range"
+                onPointerMove={moveMediaTrimRangeDrag}
+                onPointerUp={() => setMediaTrimRangeDrag(null)}
+                onPointerCancel={() => setMediaTrimRangeDrag(null)}
+              >
+                <span
+                  className="media-trim-range-selection"
+                  style={{
+                    left: `${(mediaTrimDraft.startFrame / mediaTrimItem.durationInFrames) * 100}%`,
+                    right: `${100 - (mediaTrimDraft.endFrame / mediaTrimItem.durationInFrames) * 100}%`,
                   }}
                 />
-              </label>
+                <button
+                  className="media-trim-range-handle media-trim-range-handle-start"
+                  type="button"
+                  aria-label="Trim beginning"
+                  title="Drag to trim the beginning"
+                  style={{
+                    left: `${(mediaTrimDraft.startFrame / mediaTrimItem.durationInFrames) * 100}%`,
+                  }}
+                  onPointerDown={(event) =>
+                    startMediaTrimRangeDrag(event, "start")
+                  }
+                />
+                <button
+                  className="media-trim-range-handle media-trim-range-handle-end"
+                  type="button"
+                  aria-label="Trim ending"
+                  title="Drag to trim the ending"
+                  style={{
+                    left: `${(mediaTrimDraft.endFrame / mediaTrimItem.durationInFrames) * 100}%`,
+                  }}
+                  onPointerDown={(event) =>
+                    startMediaTrimRangeDrag(event, "end")
+                  }
+                />
+              </div>
               <div className="media-trim-summary">
                 <span>New duration</span>
                 <strong>
@@ -10572,11 +11220,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               </div>
             </div>
             <div className="media-trim-actions">
+              <button
+                className="media-trim-reset-video"
+                type="button"
+                title="Restore the original duration and crop"
+                onClick={resetMediaTrimToOriginal}
+              >
+                Reset video
+              </button>
               <button type="button" onClick={closeMediaTrimEditor}>
                 Cancel
               </button>
               <button type="button" onClick={applyMediaTrim}>
-                Apply trim
+                Apply edits
               </button>
             </div>
           </div>

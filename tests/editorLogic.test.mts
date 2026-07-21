@@ -28,11 +28,14 @@ import {
   deleteClipById,
   duplicateClipById,
   getClipSourceTime,
+  getClipVisualPresentation,
   getClipAnimationPreviewFrame,
   getContextualAudioClips,
   getExpandedTimelineBoundary,
   getStableTimelineFrameDelta,
   getDragEdgeAutoScrollDelta,
+  getPlaybackFollowScrollLeft,
+  getMediaTrimFrameFromPointer,
   getTimelineFrameFromPointer,
   getManualRotationAngle,
   getVisibleRotateHandleTop,
@@ -78,6 +81,8 @@ import {
   removeBrowserOnlySavedMedia,
   ensureLinkedAudioForVideo,
   keepDominantVoiceInLinkedVideo,
+  restoreDominantVideoSources,
+  resetMediaItemEdits,
   removeSilenceFromLinkedVideo,
   redoTimelineHistory,
   setClipSpeedById,
@@ -103,6 +108,7 @@ import {
   getTextAnimationStars,
   getTextAnimationVisibleCharacterCount,
   getTextAnimationWordPresentation,
+  getTextualClipDisplayColors,
   setTextRotationById,
   setCaptionStyleById,
   splitSceneMediaItemAtFrame,
@@ -147,6 +153,61 @@ const historyClip = (id: string): TimelineClip => ({
   start: 0,
   duration: 30,
   color: "#0891b2",
+});
+
+test("uses black and white system colors for text and transparent captions", () => {
+  const textClip = createTextClip({
+    id: "text-system-colors",
+    content: "Title",
+    playheadFrame: 0,
+  });
+  const transparentCaption: TimelineClip = {
+    id: "caption-transparent",
+    label: "Caption",
+    track: "caption",
+    start: 0,
+    duration: 30,
+    color: "#ef4444",
+    caption: {
+      ...defaultCaptionStyle,
+      content: "Caption",
+      textColor: "#22d3ee",
+      backgroundEnabled: false,
+      backgroundColor: "transparent",
+    },
+  };
+
+  assert.deepEqual(getTextualClipDisplayColors(textClip), {
+    backgroundColor: "#000000",
+    textColor: "#ffffff",
+  });
+  assert.deepEqual(getTextualClipDisplayColors(transparentCaption), {
+    backgroundColor: "#000000",
+    textColor: "#ffffff",
+  });
+});
+
+test("keeps explicitly selected caption background and word colors", () => {
+  const caption: TimelineClip = {
+    id: "caption-custom-colors",
+    label: "Caption",
+    track: "caption",
+    start: 0,
+    duration: 30,
+    color: "#ef4444",
+    caption: {
+      ...defaultCaptionStyle,
+      content: "Caption",
+      textColor: "#fef08a",
+      backgroundEnabled: true,
+      backgroundColor: "#164e63cc",
+    },
+  };
+
+  assert.deepEqual(getTextualClipDisplayColors(caption), {
+    backgroundColor: "#164e63cc",
+    textColor: "#fef08a",
+  });
 });
 
 test("creates deterministic virtual scene cards that share their source URL", () => {
@@ -408,9 +469,51 @@ test("trims imported media to a selected source range", () => {
 
   assert.deepEqual(result[0], {
     ...media,
+    trimOriginalSourceStart: 60,
+    trimOriginalDurationInFrames: 300,
     sourceStart: 90,
     durationInFrames: 180,
     duration: "00:06",
+  });
+});
+
+test("restores the original media range and crop after repeated trims", () => {
+  const media = {
+    id: "clip-reset",
+    label: "Interview.mp4",
+    src: "uploads/interview.mp4",
+    duration: "00:10",
+    durationInFrames: 300,
+    sourceStart: 60,
+    sourceDurationInFrames: 600,
+    kind: "public" as const,
+    mediaType: "video" as const,
+    adjustment: { ...defaultClipAdjustment, scale: 1.5, cropLeft: 12 },
+  };
+  const firstTrim = trimMediaItemRange({
+    mediaItems: [media],
+    mediaId: media.id,
+    startFrame: 30,
+    endFrame: 240,
+  });
+  const secondTrim = trimMediaItemRange({
+    mediaItems: firstTrim,
+    mediaId: media.id,
+    startFrame: 15,
+    endFrame: 180,
+  });
+
+  assert.equal(secondTrim[0].sourceStart, 105);
+  assert.equal(secondTrim[0].trimOriginalSourceStart, 60);
+  assert.equal(secondTrim[0].trimOriginalDurationInFrames, 300);
+
+  const restored = resetMediaItemEdits({
+    mediaItems: secondTrim,
+    mediaId: media.id,
+  });
+  assert.deepEqual(restored[0], {
+    ...media,
+    adjustment: defaultClipAdjustment,
   });
 });
 
@@ -1223,6 +1326,75 @@ test("auto-scrolls toward timeline edges only while the pointer is nearby", () =
   assert.ok(getDragEdgeAutoScrollDelta(898, 100, 900) > 0);
   assert.equal(getDragEdgeAutoScrollDelta(0, 100, 900), 0);
   assert.equal(getDragEdgeAutoScrollDelta(1000, 100, 900), 0);
+});
+
+test("follows the playback playhead only after it reaches a visible edge", () => {
+  assert.equal(
+    getPlaybackFollowScrollLeft({
+      scrollLeft: 0,
+      viewportWidth: 1000,
+      contentWidth: 3000,
+      playheadX: 500,
+    }),
+    0,
+  );
+  assert.equal(
+    getPlaybackFollowScrollLeft({
+      scrollLeft: 0,
+      viewportWidth: 1000,
+      contentWidth: 3000,
+      playheadX: 900,
+    }),
+    80,
+  );
+  assert.equal(
+    getPlaybackFollowScrollLeft({
+      scrollLeft: 900,
+      viewportWidth: 1000,
+      contentWidth: 3000,
+      playheadX: 950,
+    }),
+    770,
+  );
+  assert.equal(
+    getPlaybackFollowScrollLeft({
+      scrollLeft: 1900,
+      viewportWidth: 1000,
+      contentWidth: 3000,
+      playheadX: 2900,
+    }),
+    2000,
+  );
+});
+
+test("converts draggable media trim handles into bounded frames", () => {
+  assert.equal(
+    getMediaTrimFrameFromPointer({
+      clientX: 350,
+      boundsLeft: 100,
+      boundsWidth: 500,
+      durationInFrames: 900,
+    }),
+    450,
+  );
+  assert.equal(
+    getMediaTrimFrameFromPointer({
+      clientX: 20,
+      boundsLeft: 100,
+      boundsWidth: 500,
+      durationInFrames: 900,
+    }),
+    0,
+  );
+  assert.equal(
+    getMediaTrimFrameFromPointer({
+      clientX: 800,
+      boundsLeft: 100,
+      boundsWidth: 500,
+      durationInFrames: 900,
+    }),
+    900,
+  );
 });
 
 test("calculates manual canvas rotation from the clip center", () => {
@@ -2357,6 +2529,32 @@ test("applies effects and filters only to selected video clips", () => {
     filter: "warm",
   });
   assert.equal(ignoredAudio[1].visual, undefined);
+});
+
+test("applies deterministic moving outline effects to cutout clips", () => {
+  const cutout: TimelineClip = {
+    id: "cutout-1",
+    label: "Person cutout",
+    track: "cutout",
+    start: 0,
+    duration: 120,
+    color: "#a855f7",
+    cutout: {
+      x: 50,
+      y: 50,
+      scale: 1,
+      rotation: 0,
+      mediaKind: "image",
+    },
+  };
+
+  const updated = setClipEffectById([cutout], cutout.id, "moving-outline");
+  const firstFrame = getClipVisualPresentation(updated[0], 0);
+  const laterFrame = getClipVisualPresentation(updated[0], 22);
+
+  assert.equal(updated[0].visual?.effect, "moving-outline");
+  assert.match(firstFrame.filter, /drop-shadow/);
+  assert.notEqual(firstFrame.filter, laterFrame.filter);
 });
 
 test("left trim advances linked video and audio source timing without trimming narration", () => {
@@ -3931,7 +4129,7 @@ test("keeps dominant voice ranges with speed-aware source offsets", () => {
   );
 });
 
-test("uses cleaned audio for retained video scenes and their linked audio", () => {
+test("keeps video thumbnails while using cleaned audio for linked audio scenes", () => {
   const video: TimelineClip = {
     id: "video",
     label: "Video",
@@ -3966,7 +4164,16 @@ test("uses cleaned audio for retained video scenes and their linked audio", () =
   );
 
   assert.equal(result.length, 4);
-  assert.ok(result.every((clip) => clip.src === "uploads/cleaned.mp4"));
+  assert.ok(
+    result
+      .filter((clip) => clip.track === "main")
+      .every((clip) => clip.src === "original.mp4"),
+  );
+  assert.ok(
+    result
+      .filter((clip) => clip.track === "audio")
+      .every((clip) => clip.src === "uploads/cleaned.mp4"),
+  );
   assert.deepEqual(
     result.filter((clip) => clip.track === "main").map((clip) => ({
       start: clip.start,
@@ -3978,6 +4185,85 @@ test("uses cleaned audio for retained video scenes and their linked audio", () =
       {start: 60, duration: 90, sourceStart: 90},
     ],
   );
+});
+
+test("keeps the original video source when only its linked audio is cleaned", () => {
+  const video: TimelineClip = {
+    id: "video",
+    label: "Video",
+    track: "main",
+    start: 0,
+    duration: 90,
+    src: "original.mp4",
+    mediaType: "video",
+    color: "#0891b2",
+    linkedClipId: "audio",
+  };
+  const audio: TimelineClip = {
+    id: "audio",
+    label: "Video audio",
+    track: "audio",
+    start: 0,
+    duration: 90,
+    src: "original.mp4",
+    color: "#2563eb",
+    linkedClipId: "video",
+  };
+
+  const result = keepDominantVoiceInLinkedVideo(
+    [video, audio],
+    video.id,
+    [{startSeconds: 0, endSeconds: 3}],
+    30,
+    "uploads/cleaned.mp4",
+  );
+
+  assert.equal(result.find((clip) => clip.id === video.id)?.src, "original.mp4");
+  assert.equal(
+    result.find((clip) => clip.id === audio.id)?.src,
+    "uploads/cleaned.mp4",
+  );
+});
+
+test("restores thumbnails for dominant video segments saved by the old cleanup", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "video-dominant-0",
+      label: "Product demo",
+      track: "main",
+      start: 0,
+      duration: 60,
+      src: "uploads/cleaned-audio.mp4",
+      mediaType: "video",
+      color: "#0891b2",
+      linkedClipId: "audio-dominant-0",
+    },
+    {
+      id: "audio-dominant-0",
+      label: "Product demo audio",
+      track: "audio",
+      start: 0,
+      duration: 60,
+      src: "uploads/cleaned-audio.mp4",
+      color: "#2563eb",
+      linkedClipId: "video-dominant-0",
+    },
+  ];
+
+  const result = restoreDominantVideoSources(clips, [
+    {
+      id: "media-product-demo",
+      label: "Product demo.mp4",
+      src: "uploads/product-demo.mp4",
+      duration: "00:02",
+      durationInFrames: 60,
+      kind: "local",
+      mediaType: "video",
+    },
+  ]);
+
+  assert.equal(result[0].src, "uploads/product-demo.mp4");
+  assert.equal(result[1].src, "uploads/cleaned-audio.mp4");
 });
 
 test("returns the original clips for invalid dominant voice keep ranges or links", () => {

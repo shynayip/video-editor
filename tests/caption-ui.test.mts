@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("removes only the selected rejected scene and keeps a sole project video", () => {
+test("keeps the selected video when main-voice detection is uncertain", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
@@ -14,27 +14,23 @@ test("removes only the selected rejected scene and keeps a sole project video", 
 
   assert.match(
     keepMainVoice,
-    /const removeNonSpeakingScene[\s\S]*deleteClipById\(currentClips, sourceClipId\)/,
+    /if \(speechRanges\.length === 0\) \{[\s\S]*preserveUncertainScene/,
   );
   assert.match(
     keepMainVoice,
-    /if \(!replacementClip\) \{[\s\S]*preserveUncertainScene/,
+    /if \(retainedRanges\.length === 0\) \{[\s\S]*preserveUncertainScene/,
   );
   assert.match(
     keepMainVoice,
-    /setSelectedClipId\(replacementClip\.id\)[\s\S]*setPlayheadFrame\(replacementClip\.start\)/,
+    /The video was kept unchanged\./,
   );
   assert.match(
     keepMainVoice,
-    /if \(speechRanges\.length === 0\) \{[\s\S]*removeNonSpeakingScene/,
+    /const hasSelectedVideoSegment = trimmedClips\.some\([\s\S]*return hasSelectedVideoSegment \? trimmedClips : currentClips/,
   );
-  assert.match(
+  assert.doesNotMatch(
     keepMainVoice,
-    /if \(retainedRanges\.length === 0\) \{[\s\S]*removeNonSpeakingScene/,
-  );
-  assert.match(
-    keepMainVoice,
-    /This is the only video in the project, so it was kept\./,
+    /deleteClipById\(currentClips, sourceClipId\)/,
   );
   assert.doesNotMatch(
     keepMainVoice,

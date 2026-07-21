@@ -47,7 +47,7 @@ const createEngineHarness = ({pipelineFactory}) => {
   return {engine, loadedInputs};
 };
 
-test("routes the first video frame through the fast portrait model", async () => {
+test("routes the first video frame through human parsing", async () => {
   const calls = [];
   const {engine} = createEngineHarness({
     pipelineFactory: async (_task, modelId) => {
@@ -58,9 +58,91 @@ test("routes the first video frame through the fast portrait model", async () =>
 
   const result = await engine.process("person.png", {mode: "video-first"});
 
-  assert.equal(result.route, "portrait");
-  assert.equal(result.subject.route, "portrait");
-  assert.deepEqual(calls, ["Xenova/modnet"]);
+  assert.equal(result.route, "human");
+  assert.equal(result.subject.route, "human");
+  assert.deepEqual(calls, ["Xenova/segformer_b2_clothes"]);
+});
+
+test("human parsing removes furniture and preserves a small held-object hole", async () => {
+  const face = new Uint8ClampedArray(100);
+  const clothing = new Uint8ClampedArray(100);
+  const chair = new Uint8ClampedArray(100);
+  for (let y = 2; y < 8; y += 1) {
+    for (let x = 3; x < 7; x += 1) clothing[y * 10 + x] = 255;
+  }
+  face[34] = 255;
+  clothing[44] = 0;
+  chair[28] = 255;
+  chair[29] = 255;
+
+  const {engine} = createEngineHarness({
+    pipelineFactory: async (_task, modelId) => async () =>
+      modelId === "Xenova/segformer_b2_clothes"
+        ? [
+            {label: "Face", mask: createImage(face)},
+            {label: "Upper-clothes", mask: createImage(clothing)},
+            {label: "Background", mask: createImage(chair)},
+          ]
+        : createImage(emptyMatte()),
+  });
+  const result = await engine.process("seated-person.png", {
+    mode: "video-first",
+  });
+
+  assert.equal(result.route, "human");
+  assert.equal(result.alpha[44], 255);
+  assert.equal(result.alpha[28], 0);
+  assert.equal(result.alpha[29], 0);
+});
+
+test("video cutout keeps only the primary subject component", async () => {
+  const matte = new Uint8ClampedArray(100);
+  for (let y = 3; y < 7; y += 1) {
+    for (let x = 3; x < 7; x += 1) matte[y * 10 + x] = 255;
+  }
+  matte[28] = 255;
+  matte[29] = 255;
+
+  const {engine} = createEngineHarness({
+    pipelineFactory: async () => async () => createImage(matte),
+  });
+  const result = await engine.process("person-with-background.png", {
+    mode: "video-first",
+  });
+
+  assert.equal(result.alpha[44] > 0, true);
+  assert.equal(result.alpha[28], 0);
+  assert.equal(result.alpha[29], 0);
+});
+
+test("semantic person cutout subtracts neighboring furniture", async () => {
+  const person = new Uint8ClampedArray(100);
+  const chair = new Uint8ClampedArray(100);
+  for (let y = 2; y < 8; y += 1) {
+    for (let x = 3; x < 7; x += 1) person[y * 10 + x] = 255;
+  }
+  chair[56] = 255;
+  chair[57] = 255;
+
+  const {engine} = createEngineHarness({
+    pipelineFactory: async (_task, modelId) => async () =>
+      modelId === "Xenova/segformer_b2_clothes"
+        ? []
+        : modelId === "Xenova/segformer-b0-finetuned-ade-512-512"
+        ? [
+            {label: "person", mask: createImage(person)},
+            {label: "chair", mask: createImage(chair)},
+          ]
+        : createImage(person),
+  });
+  const result = await engine.process("seated-person.png", {
+    mode: "video-first",
+  });
+
+  assert.equal(result.route, "semantic");
+  assert.equal(result.alpha[23] > 0, true);
+  assert.equal(result.alpha[56], 0);
+  assert.equal(result.alpha[57], 0);
 });
 
 test("does not use portrait-only segmentation for product videos", async () => {
@@ -69,7 +151,9 @@ test("does not use portrait-only segmentation for product videos", async () => {
     pipelineFactory: async (_task, modelId) => {
       calls.push(modelId);
       return async () => createImage(
-        modelId === "Xenova/modnet" ? emptyMatte() : opaqueCentralSubject(),
+        modelId === "onnx-community/BiRefNet_lite-ONNX"
+          ? opaqueCentralSubject()
+          : emptyMatte(),
       );
     },
   });
@@ -79,6 +163,8 @@ test("does not use portrait-only segmentation for product videos", async () => {
   assert.equal(result.route, "video");
   assert.equal(result.subject.route, "video");
   assert.deepEqual(calls, [
+    "Xenova/segformer_b2_clothes",
+    "Xenova/segformer-b0-finetuned-ade-512-512",
     "Xenova/modnet",
     "onnx-community/BiRefNet_lite-ONNX",
   ]);
@@ -123,7 +209,7 @@ test("shares one initialization promise for each route", async () => {
 
   assert.deepEqual(calls, [
     "onnx-community/BiRefNet-ONNX",
-    "Xenova/modnet",
+    "Xenova/segformer_b2_clothes",
   ]);
 });
 
@@ -143,7 +229,7 @@ test("retains separate loaded pipelines for images and videos", async () => {
 
   assert.deepEqual(calls, [
     "onnx-community/BiRefNet-ONNX",
-    "Xenova/modnet",
+    "Xenova/segformer_b2_clothes",
   ]);
 });
 
@@ -224,7 +310,7 @@ test("does not retry a cancellation reported by general initialization", async (
   assert.deepEqual(calls, [{dtype: "fp16"}]);
 });
 
-test("reuses the fast portrait route for subsequent video frames", async () => {
+test("reuses human parsing for subsequent video keyframes", async () => {
   const calls = [];
   const {engine} = createEngineHarness({
     pipelineFactory: async (_task, modelId) => {
@@ -239,8 +325,8 @@ test("reuses the fast portrait route for subsequent video frames", async () => {
     previousSubject: first.subject,
   });
 
-  assert.equal(first.route, "portrait");
-  assert.equal(next.route, "portrait");
-  assert.equal(next.subject.route, "portrait");
-  assert.deepEqual(calls, ["Xenova/modnet"]);
+  assert.equal(first.route, "human");
+  assert.equal(next.route, "human");
+  assert.equal(next.subject.route, "human");
+  assert.deepEqual(calls, ["Xenova/segformer_b2_clothes"]);
 });

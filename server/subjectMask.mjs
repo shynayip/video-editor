@@ -62,14 +62,14 @@ const getContinuityScore = (component, previousSubject) => {
   return clamp(overlapScore * 0.7 + centroidScore * 0.3, 0, 1);
 };
 
-const labelComponents = (alpha, width, height) => {
+const labelComponents = (alpha, width, height, threshold) => {
   const visited = new Uint8Array(alpha.length);
   const components = [];
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const startIndex = getIndex(x, y, width);
-      if (visited[startIndex] || alpha[startIndex] < foregroundThreshold) {
+      if (visited[startIndex] || alpha[startIndex] < threshold) {
         continue;
       }
 
@@ -103,7 +103,7 @@ const labelComponents = (alpha, width, height) => {
           }
 
           const nextIndex = getIndex(nextX, nextY, width);
-          if (!visited[nextIndex] && alpha[nextIndex] >= foregroundThreshold) {
+          if (!visited[nextIndex] && alpha[nextIndex] >= threshold) {
             visited[nextIndex] = 1;
             stack.push(nextIndex);
           }
@@ -128,7 +128,13 @@ const labelComponents = (alpha, width, height) => {
   return components;
 };
 
-const includeConnectedSoftEdges = (alpha, width, height, selectedMask) => {
+const includeConnectedSoftEdges = (
+  alpha,
+  width,
+  height,
+  selectedMask,
+  threshold,
+) => {
   const stack = [];
   for (let index = 0; index < selectedMask.length; index += 1) {
     if (selectedMask[index]) stack.push(index);
@@ -148,7 +154,7 @@ const includeConnectedSoftEdges = (alpha, width, height, selectedMask) => {
       const nextIndex = getIndex(nextX, nextY, width);
       if (!selectedMask[nextIndex]
         && alpha[nextIndex] > 0
-        && alpha[nextIndex] < foregroundThreshold) {
+        && alpha[nextIndex] < threshold) {
         selectedMask[nextIndex] = 1;
         stack.push(nextIndex);
       }
@@ -227,7 +233,14 @@ const blurSelectedBoundary = (alpha, width, height, selectedMask) => {
   return blurred;
 };
 
-export const selectPrimaryAlpha = ({alpha, width, height, previousSubject}) => {
+export const selectPrimaryAlpha = ({
+  alpha,
+  width,
+  height,
+  previousSubject,
+  includeCompanions = true,
+  selectionThreshold = foregroundThreshold,
+}) => {
   const totalPixels = width * height;
   const sourceAlpha = alpha instanceof Uint8ClampedArray
     ? alpha
@@ -236,7 +249,19 @@ export const selectPrimaryAlpha = ({alpha, width, height, previousSubject}) => {
     (count, value) => count + (value > 0 ? 1 : 0),
     0,
   );
-  const components = labelComponents(sourceAlpha, width, height);
+  const normalizedSelectionThreshold = clamp(
+    Number.isFinite(selectionThreshold)
+      ? Math.round(selectionThreshold)
+      : foregroundThreshold,
+    1,
+    255,
+  );
+  const components = labelComponents(
+    sourceAlpha,
+    width,
+    height,
+    normalizedSelectionThreshold,
+  );
 
   if (components.length === 0) {
     return {
@@ -258,7 +283,8 @@ export const selectPrimaryAlpha = ({alpha, width, height, previousSubject}) => {
   const selected = scoredComponents.reduce((best, component) => (
     component.score > best.score ? component : best
   ));
-  const companionComponents = scoredComponents.filter((component) => {
+  const companionComponents = includeCompanions
+    ? scoredComponents.filter((component) => {
     if (component === selected) return false;
     const areaRatio = component.area / totalPixels;
     const distanceFromPrimary = Math.hypot(
@@ -275,13 +301,20 @@ export const selectPrimaryAlpha = ({alpha, width, height, previousSubject}) => {
       && distanceFromPrimary <= companionMaximumDistance
       && (!touchesFrameEdge
         || component.area >= selected.area * edgeCompanionMinimumPrimaryRatio);
-  });
+    })
+    : [];
   const selectedMask = new Uint8Array(totalPixels);
   for (const index of selected.pixels) selectedMask[index] = 1;
   for (const companion of companionComponents) {
     for (const index of companion.pixels) selectedMask[index] = 1;
   }
-  includeConnectedSoftEdges(sourceAlpha, width, height, selectedMask);
+  includeConnectedSoftEdges(
+    sourceAlpha,
+    width,
+    height,
+    selectedMask,
+    normalizedSelectionThreshold,
+  );
 
   const selectedAlpha = new Uint8ClampedArray(totalPixels);
   for (let index = 0; index < totalPixels; index += 1) {

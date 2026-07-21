@@ -79,6 +79,52 @@ test("keeps a nearby product component with the main person", () => {
   assert.equal(result.alpha[indexOf(11, 0, width)], 0);
 });
 
+test("strict subject selection removes nearby disconnected foreground", () => {
+  const width = 12;
+  const height = 8;
+  const alpha = createAlpha(width, height, [
+    [4, 2, 255], [5, 2, 255], [6, 2, 255],
+    [4, 3, 255], [5, 3, 255], [6, 3, 255],
+    [4, 4, 255], [5, 4, 255], [6, 4, 255],
+    [4, 5, 255], [5, 5, 255], [6, 5, 255],
+    [8, 3, 255], [9, 3, 255], [8, 4, 255], [9, 4, 255],
+  ]);
+
+  const result = selectPrimaryAlpha({
+    alpha,
+    width,
+    height,
+    includeCompanions: false,
+    selectionThreshold: 32,
+  });
+
+  assert.equal(result.alpha[indexOf(5, 3, width)] > 0, true);
+  assert.equal(result.alpha[indexOf(8, 3, width)], 0);
+});
+
+test("strict subject selection breaks weak alpha bridges to background objects", () => {
+  const width = 9;
+  const height = 5;
+  const alpha = createAlpha(width, height, [
+    [1, 1, 255], [2, 1, 255], [3, 1, 255],
+    [1, 2, 255], [2, 2, 255], [3, 2, 255],
+    [1, 3, 255], [2, 3, 255], [3, 3, 255],
+    [4, 2, 18],
+    [5, 1, 220], [6, 1, 220], [5, 2, 220], [6, 2, 220],
+  ]);
+
+  const result = selectPrimaryAlpha({
+    alpha,
+    width,
+    height,
+    includeCompanions: false,
+    selectionThreshold: 32,
+  });
+
+  assert.equal(result.alpha[indexOf(2, 1, width)] > 0, true);
+  assert.equal(result.alpha[indexOf(5, 1, width)], 0);
+});
+
 test("retains connected soft edges while zeroing unrelated foreground", () => {
   const width = 7;
   const height = 5;

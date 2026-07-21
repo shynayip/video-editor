@@ -63,7 +63,7 @@ export const createBackgroundRemovalProcessor = ({
   readDirectoryImpl = readdir,
   removeDirectoryImpl = rm,
   renameFileImpl = rename,
-  videoMaskFps = 1,
+  videoMaskFps = 0.25,
 } = {}) => {
   const engine = subjectEngine ?? createSubjectCutoutEngine({
     pipelineFactory,
@@ -127,13 +127,16 @@ export const createBackgroundRemovalProcessor = ({
           sourceFramesDirectory,
           "frame-%08d.png",
         );
+        const maskFpsFilter = normalizedMaskFps < 1
+          ? `fps=${normalizedMaskFps}:start_time=0`
+          : `fps=${normalizedMaskFps}`;
         await runFfmpeg([
           "-y",
           "-ss", String(startSeconds),
           "-t", String(durationSeconds),
           "-i", inputPath,
           "-map", "0:v:0",
-          "-vf", `fps=${normalizedMaskFps}`,
+          "-vf", maskFpsFilter,
           "-vsync", "0",
           "-frames:v", String(targetMaskFrameCount),
           sourceFramePattern,
@@ -141,11 +144,24 @@ export const createBackgroundRemovalProcessor = ({
         throwIfAborted(signal);
         onProgress?.(10);
 
-        const extractedFrameNames = (await readDirectoryImpl(sourceFramesDirectory))
+        let extractedFrameNames = (await readDirectoryImpl(sourceFramesDirectory))
           .filter((name) => /^frame-\d{8}\.png$/i.test(name))
           .sort();
         if (extractedFrameNames.length === 0) {
-          throw new Error("FFmpeg did not extract any video frames.");
+          await runFfmpeg([
+            "-y",
+            "-ss", String(startSeconds),
+            "-i", inputPath,
+            "-map", "0:v:0",
+            "-frames:v", "1",
+            sourceFramePattern,
+          ], {signal});
+          extractedFrameNames = (await readDirectoryImpl(sourceFramesDirectory))
+            .filter((name) => /^frame-\d{8}\.png$/i.test(name))
+            .sort();
+          if (extractedFrameNames.length === 0) {
+            throw new Error("FFmpeg did not extract any video frames.");
+          }
         }
 
         const frameNames = extractedFrameNames.slice(0, targetMaskFrameCount);

@@ -668,6 +668,58 @@ test("Auto cutout keeps manual cutout editing while replacing visible chroma cho
   );
 });
 
+test("renders every video cutout as a thumbnail filmstrip with its waveform", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /const shouldShowTimelineFilmstrip = \(clip: TimelineClip\)[\s\S]*?clip\.track === "cutout" && clip\.cutout\?\.mediaKind === "video"/,
+  );
+  assert.match(
+    source,
+    /shouldShowTimelineFilmstrip\(clip\) \? \([\s\S]*?timeline-video-thumbnail-strip[\s\S]*?getTimelineThumbnailCount\(clip\)/,
+  );
+  assert.match(
+    source,
+    /clip\.track === "cutout" &&[\s\S]*?getCutoutChromaKeyStyle\(/,
+  );
+  assert.doesNotMatch(
+    source,
+    /<video\s+className="timeline-cutout-media"/,
+  );
+});
+
+test("selects timeline clips without moving them until a deliberate drag", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /const timelineDragActivationDistance = 6/);
+  assert.match(source, /const pointerDragStartedRef = useRef\(false\)/);
+  assert.match(source, /activated: false/);
+  assert.match(source, /activated: true/);
+  assert.match(
+    source,
+    /if \(dragDistance < timelineDragActivationDistance\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(!pointerDragStartedRef\.current\) \{\s*setPointerDrag\(null\);\s*setVideoDropTarget\(null\);\s*return;/,
+  );
+  assert.match(
+    source,
+    /Math\.abs\(event\.clientX - textTimelineDrag\.startX\)[\s\S]*?timelineDragActivationDistance/,
+  );
+  assert.match(
+    source,
+    /Math\.abs\(event\.clientX - cutoutTimelineDrag\.startX\)[\s\S]*?timelineDragActivationDistance/,
+  );
+});
+
 test("keeps cutout brush strokes active outside the image element", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),

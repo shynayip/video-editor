@@ -147,10 +147,13 @@ export type SavedMediaItem = {
   mediaType?: "video" | "image";
   sourceStart?: number;
   sourceDurationInFrames?: number;
+  trimOriginalSourceStart?: number;
+  trimOriginalDurationInFrames?: number;
   sourceFileId?: string;
   sceneIndex?: number;
   sourceGroupIndex?: number;
   sourceLabel?: string;
+  adjustment?: ClipAdjustment;
 };
 
 const sceneCardFps = 30;
@@ -332,6 +335,10 @@ export const trimMediaItemRange = ({
     item.id === mediaId
       ? {
           ...item,
+          trimOriginalSourceStart:
+            item.trimOriginalSourceStart ?? (item.sourceStart ?? 0),
+          trimOriginalDurationInFrames:
+            item.trimOriginalDurationInFrames ?? item.durationInFrames,
           sourceStart: (item.sourceStart ?? 0) + startFrame,
           sourceDurationInFrames:
             item.sourceDurationInFrames ?? item.durationInFrames,
@@ -391,6 +398,10 @@ export type ClipEffect =
   | "invert"
   | "fade"
   | "shadow"
+  | "outline"
+  | "moving-outline"
+  | "neon-outline"
+  | "silhouette"
   | "zoom";
 export type ClipFilter =
   | "none"
@@ -483,6 +494,44 @@ export const defaultClipAdjustment: ClipAdjustment = {
   cropLeft: 0,
 };
 
+export const resetMediaItemEdits = ({
+  mediaItems,
+  mediaId,
+}: {
+  mediaItems: SavedMediaItem[];
+  mediaId: string;
+}): SavedMediaItem[] => {
+  const target = mediaItems.find((item) => item.id === mediaId);
+  if (!target) return mediaItems;
+
+  const canRestoreLegacyFullSource =
+    target.trimOriginalDurationInFrames === undefined &&
+    target.sourceDurationInFrames !== undefined &&
+    !target.sourceFileId;
+  const sourceStart =
+    target.trimOriginalSourceStart ??
+    (canRestoreLegacyFullSource ? 0 : (target.sourceStart ?? 0));
+  const durationInFrames =
+    target.trimOriginalDurationInFrames ??
+    (canRestoreLegacyFullSource
+      ? (target.sourceDurationInFrames ?? target.durationInFrames)
+      : target.durationInFrames);
+
+  return mediaItems.map((item) => {
+    if (item.id !== mediaId) return item;
+    const restoredItem: SavedMediaItem = {
+      ...item,
+      sourceStart,
+      durationInFrames,
+      duration: formatSceneCardDuration(durationInFrames, sceneCardFps),
+      adjustment: { ...defaultClipAdjustment },
+    };
+    delete restoredItem.trimOriginalSourceStart;
+    delete restoredItem.trimOriginalDurationInFrames;
+    return restoredItem;
+  });
+};
+
 export type TimelineClip = {
   id: string;
   label: string;
@@ -513,6 +562,47 @@ export type TimelineClip = {
   adjustment?: ClipAdjustment;
 };
 
+const isTransparentDisplayColor = (color: string | undefined): boolean => {
+  const normalized = color?.trim().toLowerCase();
+  if (!normalized || normalized === "transparent") {
+    return true;
+  }
+  if (/^#[0-9a-f]{8}$/.test(normalized)) {
+    return normalized.endsWith("00");
+  }
+  const rgbaMatch = normalized.match(
+    /^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\s*\)$/,
+  );
+  return rgbaMatch ? Number(rgbaMatch[1]) === 0 : false;
+};
+
+export const getTextualClipDisplayColors = (
+  clip: Pick<TimelineClip, "track" | "caption" | "text">,
+): { backgroundColor: string; textColor: string } => {
+  if (clip.track === "caption" && clip.caption) {
+    const usesSystemColors =
+      !clip.caption.backgroundEnabled ||
+      isTransparentDisplayColor(clip.caption.backgroundColor);
+    return {
+      backgroundColor: usesSystemColors
+        ? "#000000"
+        : clip.caption.backgroundColor,
+      textColor:
+        usesSystemColors || isTransparentDisplayColor(clip.caption.textColor)
+          ? "#ffffff"
+          : clip.caption.textColor,
+    };
+  }
+
+  return {
+    backgroundColor: "#000000",
+    textColor:
+      clip.text && !isTransparentDisplayColor(clip.text.color)
+        ? clip.text.color
+        : "#ffffff",
+  };
+};
+
 export const getTimelineDuration = (clips: TimelineClip[]): number =>
   Math.max(
     1,
@@ -524,6 +614,25 @@ export const getTimelineDuration = (clips: TimelineClip[]): number =>
         ),
       0,
     ),
+  );
+
+export const getVideoPlaybackDuration = (clips: TimelineClip[]): number =>
+  Math.max(
+    1,
+    clips.reduce((furthestEnd, clip) => {
+      const isVideoLayer =
+        clip.track === "main" ||
+        clip.track === "upper" ||
+        clip.track === "cutout";
+      if (!isVideoLayer || clip.hidden || !clip.src) {
+        return furthestEnd;
+      }
+
+      return Math.max(
+        furthestEnd,
+        Math.max(0, clip.start) + Math.max(1, clip.duration),
+      );
+    }, 0),
   );
 
 export const getTimelineFrameFromPointer = (
@@ -602,6 +711,85 @@ export const getDragEdgeAutoScrollDelta = (
   return 0;
 };
 
+export const getPlaybackFollowScrollLeft = ({
+  scrollLeft,
+  viewportWidth,
+  contentWidth,
+  playheadX,
+}: {
+  scrollLeft: number;
+  viewportWidth: number;
+  contentWidth: number;
+  playheadX: number;
+}): number => {
+  if (
+    !Number.isFinite(scrollLeft) ||
+    !Number.isFinite(viewportWidth) ||
+    !Number.isFinite(contentWidth) ||
+    !Number.isFinite(playheadX) ||
+    viewportWidth <= 0 ||
+    contentWidth <= viewportWidth
+  ) {
+    return Math.max(0, Number.isFinite(scrollLeft) ? scrollLeft : 0);
+  }
+
+  const maximumScrollLeft = Math.max(0, contentWidth - viewportWidth);
+  const currentScrollLeft = Math.min(
+    maximumScrollLeft,
+    Math.max(0, scrollLeft),
+  );
+  const edgePadding = Math.min(
+    viewportWidth * 0.3,
+    Math.max(72, viewportWidth * 0.18),
+  );
+  const visibleLeft = currentScrollLeft + edgePadding;
+  const visibleRight = currentScrollLeft + viewportWidth - edgePadding;
+
+  if (playheadX < visibleLeft) {
+    return Math.max(0, Math.min(maximumScrollLeft, playheadX - edgePadding));
+  }
+  if (playheadX > visibleRight) {
+    return Math.max(
+      0,
+      Math.min(
+        maximumScrollLeft,
+        playheadX - viewportWidth + edgePadding,
+      ),
+    );
+  }
+
+  return currentScrollLeft;
+};
+
+export const getMediaTrimFrameFromPointer = ({
+  clientX,
+  boundsLeft,
+  boundsWidth,
+  durationInFrames,
+}: {
+  clientX: number;
+  boundsLeft: number;
+  boundsWidth: number;
+  durationInFrames: number;
+}): number => {
+  if (
+    !Number.isFinite(clientX) ||
+    !Number.isFinite(boundsLeft) ||
+    !Number.isFinite(boundsWidth) ||
+    !Number.isFinite(durationInFrames) ||
+    boundsWidth <= 0 ||
+    durationInFrames <= 0
+  ) {
+    return 0;
+  }
+
+  const progress = Math.max(
+    0,
+    Math.min(1, (clientX - boundsLeft) / boundsWidth),
+  );
+  return Math.round(progress * durationInFrames);
+};
+
 export const getManualRotationAngle = (
   centerX: number,
   centerY: number,
@@ -674,6 +862,7 @@ export type TimelinePlaybackStep = {
 export const stepTimelinePlayback = (
   currentFrame: number,
   projectDuration: number,
+  resetAtEnd = true,
 ): TimelinePlaybackStep => {
   const safeDuration = Number.isFinite(projectDuration)
     ? Math.max(0, Math.round(projectDuration))
@@ -682,7 +871,10 @@ export const stepTimelinePlayback = (
 
   const safeCurrentFrame = clampPlayheadFrame(currentFrame, safeDuration);
   if (safeCurrentFrame >= safeDuration - 1) {
-    return { nextFrame: 0, continues: false };
+    return {
+      nextFrame: resetAtEnd ? 0 : Math.max(0, safeDuration - 1),
+      continues: false,
+    };
   }
 
   return {
@@ -993,6 +1185,7 @@ export type VideoMediaPairOptions = {
   overlayLane?: number;
   sourceStart?: number;
   sourceDuration?: number;
+  adjustment?: ClipAdjustment;
 };
 
 export const createVideoMediaPair = (
@@ -1013,6 +1206,9 @@ export const createVideoMediaPair = (
     speed: 1,
     volume: 1,
     linkedClipId: options.audioId,
+    ...(options.adjustment
+      ? { adjustment: { ...options.adjustment } }
+      : {}),
     ...(options.track === "upper"
       ? { overlayLane: options.overlayLane ?? 0 }
       : {}),
@@ -1046,6 +1242,7 @@ export const createImageMediaClip = (options: {
   start: number;
   duration: number;
   overlayLane?: number;
+  adjustment?: ClipAdjustment;
 }): TimelineClip => ({
   id: options.id,
   label: options.label,
@@ -1057,6 +1254,9 @@ export const createImageMediaClip = (options: {
   speed: 1,
   volume: 1,
   mediaType: "image",
+  ...(options.adjustment
+    ? { adjustment: { ...options.adjustment } }
+    : {}),
   ...(options.track === "upper"
     ? { overlayLane: options.overlayLane ?? 0 }
     : {}),
@@ -4285,7 +4485,7 @@ const createSynchronizedLinkedSegments = (
   ranges: SilenceRange[],
   fps: number,
   segmentLabel: string,
-  replacementSrc?: string,
+  audioReplacementSrc?: string,
 ): {
   videoSegments: TimelineClip[];
   audioSegments: TimelineClip[];
@@ -4305,7 +4505,6 @@ const createSynchronizedLinkedSegments = (
       duration: segment.duration,
       sourceStart: (videoClip.sourceStart ?? 0) + segment.sourceOffset,
       linkedClipId: `${linkedAudio.id}-${segmentLabel}-${index}`,
-      ...(replacementSrc ? {src: replacementSrc} : {}),
     })),
     audioSegments: timelineSegments.map<TimelineClip>((segment, index) => ({
       ...linkedAudio,
@@ -4314,7 +4513,7 @@ const createSynchronizedLinkedSegments = (
       duration: segment.duration,
       sourceStart: (linkedAudio.sourceStart ?? 0) + segment.sourceOffset,
       linkedClipId: `${videoClip.id}-${segmentLabel}-${index}`,
-      ...(replacementSrc ? {src: replacementSrc} : {}),
+      ...(audioReplacementSrc ? {src: audioReplacementSrc} : {}),
     })),
     compactDuration,
   };
@@ -4492,7 +4691,7 @@ export const keepDominantVoiceInLinkedVideo = (
   if (removedFrames <= 0) {
     if (!cleanedSrc?.trim()) return clips;
     return clips.map((clip) =>
-      clip.id === videoClip.id || clip.id === linkedAudio.id
+      clip.id === linkedAudio.id
         ? {...clip, src: cleanedSrc}
         : clip,
     );
@@ -4525,6 +4724,45 @@ export const keepDominantVoiceInLinkedVideo = (
   });
 
   return nextClips;
+};
+
+const getComparableMediaLabel = (label: string): string =>
+  label
+    .replace(/\.[^.]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+export const restoreDominantVideoSources = (
+  clips: TimelineClip[],
+  mediaItems: SavedMediaItem[],
+): TimelineClip[] => {
+  let changed = false;
+  const restored = clips.map((clip) => {
+    if (
+      (clip.track !== "main" && clip.track !== "upper") ||
+      !clip.id.includes("-dominant-") ||
+      !clip.src
+    ) {
+      return clip;
+    }
+
+    const clipLabel = getComparableMediaLabel(clip.label);
+    const sourceMedia = mediaItems.find(
+      (item) =>
+        item.mediaType !== "image" &&
+        (getComparableMediaLabel(item.label) === clipLabel ||
+          (item.sourceLabel
+            ? getComparableMediaLabel(item.sourceLabel) === clipLabel
+            : false)),
+    );
+    if (!sourceMedia || sourceMedia.src === clip.src) return clip;
+
+    changed = true;
+    return {...clip, src: sourceMedia.src};
+  });
+
+  return changed ? restored : clips;
 };
 
 export const ensureLinkedAudioForVideo = (
@@ -5166,7 +5404,9 @@ const updateVisualVideoClip = (
   return clips.map((clip) => {
     if (
       clip.id !== clipId ||
-      (clip.track !== "main" && clip.track !== "upper")
+      (clip.track !== "main" &&
+        clip.track !== "upper" &&
+        clip.track !== "cutout")
     ) {
       return clip;
     }
@@ -5225,6 +5465,7 @@ export const setClipFilterIntensityById = (
 
 export const getClipVisualPresentation = (
   clip?: TimelineClip,
+  frame = 0,
 ): ClipVisualPresentation => {
   const visual = clip?.visual;
   const effect = visual?.effect ?? "none";
@@ -5297,6 +5538,43 @@ export const getClipVisualPresentation = (
     parts.push(
       `drop-shadow(0 ${8 * effectAmount}px ${18 * effectAmount}px rgba(0, 0, 0, ${0.65 * effectAmount}))`,
     );
+  }
+  if (effect === "outline") {
+    const width = Math.max(1, 4 * effectAmount);
+    parts.push(
+      `drop-shadow(${width}px 0 0 white)`,
+      `drop-shadow(${-width}px 0 0 white)`,
+      `drop-shadow(0 ${width}px 0 white)`,
+      `drop-shadow(0 ${-width}px 0 white)`,
+      `drop-shadow(${width}px ${width}px 0 white)`,
+      `drop-shadow(${-width}px ${width}px 0 white)`,
+      `drop-shadow(${width}px ${-width}px 0 white)`,
+      `drop-shadow(${-width}px ${-width}px 0 white)`,
+    );
+  }
+  if (effect === "moving-outline") {
+    const angle = ((frame % 90) / 90) * Math.PI * 2;
+    const distance = Math.max(2, 5 * effectAmount);
+    const x = Math.cos(angle) * distance;
+    const y = Math.sin(angle) * distance;
+    parts.push(
+      `drop-shadow(${x}px ${y}px 0 rgba(34, 211, 238, 0.95))`,
+      `drop-shadow(${-x}px ${-y}px 0 rgba(244, 114, 182, 0.9))`,
+      `drop-shadow(0 0 ${8 * effectAmount}px rgba(255, 255, 255, 0.75))`,
+    );
+  }
+  if (effect === "neon-outline") {
+    const width = Math.max(1, 3 * effectAmount);
+    parts.push(
+      `drop-shadow(${width}px 0 0 #22d3ee)`,
+      `drop-shadow(${-width}px 0 0 #22d3ee)`,
+      `drop-shadow(0 ${width}px 0 #f472b6)`,
+      `drop-shadow(0 ${-width}px 0 #f472b6)`,
+      `drop-shadow(0 0 ${14 * effectAmount}px rgba(34, 211, 238, 0.9))`,
+    );
+  }
+  if (effect === "silhouette") {
+    parts.push("brightness(0)");
   }
 
   return {

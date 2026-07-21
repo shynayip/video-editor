@@ -222,7 +222,61 @@ const minimumTransitionDuration = 1;
 const savedProjectStorageKey = "video-editor-project-v1";
 const favoriteAnimationsStorageKey = "video-editor-favorite-animations-v1";
 const recentAnimationsStorageKey = "video-editor-recent-animations-v1";
+const workspaceLayoutStorageKey = "video-editor-workspace-layout-v1";
 const maximumRecentAnimations = 4;
+
+type WorkspaceLayout = {
+  detailsWidth: number;
+  previewWidth: number;
+  timelineHeight: number;
+};
+
+type WorkspaceResizeTarget = "details" | "preview" | "timeline";
+
+const clampWorkspaceSize = (value: number, minimum: number, maximum: number) =>
+  Math.min(Math.max(value, minimum), maximum);
+
+const getDefaultWorkspaceLayout = (): WorkspaceLayout => {
+  const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
+  const viewportHeight = typeof window === "undefined" ? 900 : window.innerHeight;
+  return {
+    detailsWidth: clampWorkspaceSize(viewportWidth * 0.25, 320, 380),
+    previewWidth: clampWorkspaceSize(
+      ((viewportHeight - 48) * 9) / 16,
+      320,
+      640,
+    ),
+    timelineHeight: clampWorkspaceSize(viewportHeight * 0.32, 220, 320),
+  };
+};
+
+const readWorkspaceLayout = (): WorkspaceLayout => {
+  const defaults = getDefaultWorkspaceLayout();
+  if (typeof window === "undefined") {
+    return defaults;
+  }
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem(workspaceLayoutStorageKey) ?? "null",
+    ) as Partial<WorkspaceLayout> | null;
+    return {
+      detailsWidth:
+        typeof stored?.detailsWidth === "number"
+          ? stored.detailsWidth
+          : defaults.detailsWidth,
+      previewWidth:
+        typeof stored?.previewWidth === "number"
+          ? stored.previewWidth
+          : defaults.previewWidth,
+      timelineHeight:
+        typeof stored?.timelineHeight === "number"
+          ? stored.timelineHeight
+          : defaults.timelineHeight,
+    };
+  } catch {
+    return defaults;
+  }
+};
 
 const readStoredStringList = (storageKey: string): string[] => {
   if (typeof window === "undefined") {
@@ -2429,6 +2483,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const previewLayerVideoRefs = useRef(new Map<string, HTMLVideoElement>());
   const previewAudioRefs = useRef(new Map<string, HTMLAudioElement>());
   const previewWindowRef = useRef<HTMLDivElement>(null);
+  const editorShellRef = useRef<HTMLElement>(null);
   const videoLayerControlDragRef =
     useRef<VideoLayerControlHistoryGesture | null>(null);
   const mediaPreviewVolumeDragRef = useRef(false);
@@ -2509,6 +2564,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [, setMediaPreviewFrame] = useState(0);
   const [projectStatus, setProjectStatus] = useState("");
   const [isExporting, setIsExporting] = useState(false);
+  const [workspaceLayout, setWorkspaceLayout] =
+    useState<WorkspaceLayout>(readWorkspaceLayout);
   const [playheadFrame, setPlayheadFrame] = useState(0);
   const [selectedTrack, setSelectedTrack] = useState<TrackName>("main");
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
@@ -2614,6 +2671,120 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [adjustmentPanDrag, setAdjustmentPanDrag] =
     useState<AdjustmentPanDrag | null>(null);
   const [rotateDrag, setRotateDrag] = useState<RotateDrag | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        workspaceLayoutStorageKey,
+        JSON.stringify(workspaceLayout),
+      );
+    }
+  }, [workspaceLayout]);
+
+  const resizeWorkspace = useCallback(
+    (target: WorkspaceResizeTarget, clientPosition: number) => {
+      const shell = editorShellRef.current;
+      if (!shell) {
+        return;
+      }
+      const bounds = shell.getBoundingClientRect();
+      setWorkspaceLayout((current) => {
+        if (target === "details") {
+          const maximum = Math.max(260, bounds.width - current.previewWidth - 340);
+          return {
+            ...current,
+            detailsWidth: clampWorkspaceSize(
+              clientPosition - bounds.left,
+              260,
+              maximum,
+            ),
+          };
+        }
+        if (target === "preview") {
+          const maximum = Math.max(320, bounds.width - current.detailsWidth - 340);
+          return {
+            ...current,
+            previewWidth: clampWorkspaceSize(
+              bounds.right - clientPosition,
+              320,
+              maximum,
+            ),
+          };
+        }
+        return {
+          ...current,
+          timelineHeight: clampWorkspaceSize(
+            bounds.bottom - clientPosition,
+            180,
+            Math.max(180, bounds.height - 308),
+          ),
+        };
+      });
+    },
+    [],
+  );
+
+  const startWorkspaceResize = useCallback(
+    (target: WorkspaceResizeTarget, event: PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      const pointerId = event.pointerId;
+      event.currentTarget.setPointerCapture(pointerId);
+      const handle = event.currentTarget;
+      const onPointerMove = (moveEvent: globalThis.PointerEvent) => {
+        resizeWorkspace(
+          target,
+          target === "timeline" ? moveEvent.clientY : moveEvent.clientX,
+        );
+      };
+      const finish = () => {
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", finish);
+        if (handle.hasPointerCapture(pointerId)) {
+          handle.releasePointerCapture(pointerId);
+        }
+      };
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", finish);
+      window.addEventListener("pointercancel", finish);
+    },
+    [resizeWorkspace],
+  );
+
+  const nudgeWorkspaceResize = useCallback(
+    (target: WorkspaceResizeTarget, delta: number) => {
+      const shell = editorShellRef.current;
+      if (!shell) {
+        return;
+      }
+      const bounds = shell.getBoundingClientRect();
+      const currentPosition =
+        target === "details"
+          ? bounds.left + workspaceLayout.detailsWidth
+          : target === "preview"
+            ? bounds.right - workspaceLayout.previewWidth
+            : bounds.bottom - workspaceLayout.timelineHeight;
+      resizeWorkspace(target, currentPosition + delta);
+    },
+    [resizeWorkspace, workspaceLayout],
+  );
+
+  const resetWorkspaceResize = useCallback((target: WorkspaceResizeTarget) => {
+    const defaults = getDefaultWorkspaceLayout();
+    setWorkspaceLayout((current) => ({
+      ...current,
+      [target === "details"
+        ? "detailsWidth"
+        : target === "preview"
+          ? "previewWidth"
+          : "timelineHeight"]:
+        target === "details"
+          ? defaults.detailsWidth
+          : target === "preview"
+            ? defaults.previewWidth
+            : defaults.timelineHeight,
+    }));
+  }, []);
 
   clipsRef.current = clips;
   selectedClipIdRef.current = selectedClipId;
@@ -8393,7 +8564,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   ]);
 
   return (
-    <main className="editor-shell">
+    <main
+      className="editor-shell"
+      ref={editorShellRef}
+      style={
+        {
+          "--details-panel-width": `${workspaceLayout.detailsWidth}px`,
+          "--preview-panel-width": `${workspaceLayout.previewWidth}px`,
+          "--timeline-panel-height": `${workspaceLayout.timelineHeight}px`,
+        } as CSSProperties
+      }
+    >
       <svg className="chroma-key-defs" aria-hidden="true" focusable="false">
         <defs>
           <filter id="cutout-chroma-green" colorInterpolationFilters="sRGB">
@@ -9806,6 +9987,28 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             )}
           </div>
         </aside>
+
+        <button
+          className="workspace-resizer workspace-resizer-details"
+          type="button"
+          role="separator"
+          aria-label="Resize controls and media panels"
+          aria-orientation="vertical"
+          title="Drag to resize. Double-click to reset."
+          onPointerDown={(event) => startWorkspaceResize("details", event)}
+          onDoubleClick={() => resetWorkspaceResize("details")}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+              event.preventDefault();
+              nudgeWorkspaceResize(
+                "details",
+                event.key === "ArrowLeft" ? -12 : 12,
+              );
+            }
+          }}
+        >
+          <span aria-hidden="true">↔</span>
+        </button>
 
         <section className="preview-panel">
           <div className="preview-shell">
@@ -11270,9 +11473,51 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             </div>
           ) : null}
         </aside>
+        <button
+          className="workspace-resizer workspace-resizer-preview"
+          type="button"
+          role="separator"
+          aria-label="Resize media and preview panels"
+          aria-orientation="vertical"
+          title="Drag to resize. Double-click to reset."
+          onPointerDown={(event) => startWorkspaceResize("preview", event)}
+          onDoubleClick={() => resetWorkspaceResize("preview")}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+              event.preventDefault();
+              nudgeWorkspaceResize(
+                "preview",
+                event.key === "ArrowLeft" ? -12 : 12,
+              );
+            }
+          }}
+        >
+          <span aria-hidden="true">↔</span>
+        </button>
       </section>
 
       <section className="timeline-panel" aria-label="Timeline">
+        <button
+          className="workspace-resizer workspace-resizer-timeline"
+          type="button"
+          role="separator"
+          aria-label="Resize timeline"
+          aria-orientation="horizontal"
+          title="Drag to resize. Double-click to reset."
+          onPointerDown={(event) => startWorkspaceResize("timeline", event)}
+          onDoubleClick={() => resetWorkspaceResize("timeline")}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              event.preventDefault();
+              nudgeWorkspaceResize(
+                "timeline",
+                event.key === "ArrowUp" ? -12 : 12,
+              );
+            }
+          }}
+        >
+          <span aria-hidden="true">↕</span>
+        </button>
         <div className="timeline-toolbar">
           <div className="timeline-tools">
             <button

@@ -3035,6 +3035,114 @@ export const getVideoLayer = (clip: TimelineClip): number | null => {
   return clip.videoLayer ?? (clip.overlayLane ?? 0) + 1;
 };
 
+export type TimelineKeyboardDirection = "left" | "right" | "up" | "down";
+
+const getTimelineKeyboardRow = (clip: TimelineClip) => {
+  const videoLayer = getVideoLayer(clip);
+  if (videoLayer !== null) {
+    return {
+      key: `video-${videoLayer}`,
+      order:
+        clip.timelineRowOrder ??
+        (videoLayer > 0
+          ? 100 + videoLayer
+          : videoLayer < 0
+            ? -10 + videoLayer
+            : 0),
+    };
+  }
+
+  const trackOrder: Record<Exclude<TrackName, "upper" | "main">, number> = {
+    sticker: 80,
+    cutout: 70,
+    text: 60,
+    caption: 50,
+    audio: -90,
+  };
+
+  return {
+    key: `track-${clip.track}`,
+    order:
+      clip.track === "upper" || clip.track === "main"
+        ? 0
+        : trackOrder[clip.track],
+  };
+};
+
+export const getTimelineKeyboardNavigationTarget = ({
+  clips,
+  selectedClipId,
+  direction,
+}: {
+  clips: TimelineClip[];
+  selectedClipId: string | null;
+  direction: TimelineKeyboardDirection;
+}): TimelineClip | null => {
+  const selectedClip = clips.find((clip) => clip.id === selectedClipId);
+  if (!selectedClip) return null;
+
+  const selectedRow = getTimelineKeyboardRow(selectedClip);
+  const rowClips = clips
+    .filter((clip) => getTimelineKeyboardRow(clip).key === selectedRow.key)
+    .sort(
+      (firstClip, secondClip) =>
+        firstClip.start - secondClip.start ||
+        firstClip.duration - secondClip.duration ||
+        firstClip.id.localeCompare(secondClip.id),
+    );
+
+  if (direction === "left" || direction === "right") {
+    const selectedIndex = rowClips.findIndex(
+      (clip) => clip.id === selectedClip.id,
+    );
+    const offset = direction === "left" ? -1 : 1;
+    return rowClips[selectedIndex + offset] ?? null;
+  }
+
+  const rows = Array.from(
+    clips.reduce((rowMap, clip) => {
+      const row = getTimelineKeyboardRow(clip);
+      const existing = rowMap.get(row.key);
+      if (!existing) {
+        rowMap.set(row.key, { ...row, clips: [clip] });
+      } else {
+        existing.clips.push(clip);
+        existing.order = Math.max(existing.order, row.order);
+      }
+      return rowMap;
+    }, new Map<string, { key: string; order: number; clips: TimelineClip[] }>()),
+  )
+    .map(([, row]) => row)
+    .sort(
+      (firstRow, secondRow) =>
+        secondRow.order - firstRow.order ||
+        firstRow.key.localeCompare(secondRow.key),
+    );
+  const selectedRowIndex = rows.findIndex((row) => row.key === selectedRow.key);
+  const targetRow =
+    rows[selectedRowIndex + (direction === "up" ? -1 : 1)];
+  if (!targetRow) return null;
+
+  const anchorFrame = selectedClip.start + selectedClip.duration / 2;
+  const distanceFromAnchor = (clip: TimelineClip) => {
+    const end = clip.start + clip.duration;
+    if (anchorFrame < clip.start) return clip.start - anchorFrame;
+    if (anchorFrame > end) return anchorFrame - end;
+    return 0;
+  };
+
+  return (
+    [...targetRow.clips].sort(
+      (firstClip, secondClip) =>
+        distanceFromAnchor(firstClip) - distanceFromAnchor(secondClip) ||
+        Math.abs(firstClip.start + firstClip.duration / 2 - anchorFrame) -
+          Math.abs(secondClip.start + secondClip.duration / 2 - anchorFrame) ||
+        firstClip.start - secondClip.start ||
+        firstClip.id.localeCompare(secondClip.id),
+    )[0] ?? null
+  );
+};
+
 export const resizeTextOverlayBoxById = (
   clips: TimelineClip[],
   clipId: string | null,
@@ -3846,6 +3954,19 @@ export const toggleClipMuteById = (
 
   return clips.map((clip) =>
     targetIds.has(clip.id) ? { ...clip, volume: nextVolume } : clip,
+  );
+};
+
+export const toggleClipVisibilityById = (
+  clips: TimelineClip[],
+  clipId: string | null,
+): TimelineClip[] => {
+  if (!clipId || !clips.some((clip) => clip.id === clipId)) {
+    return clips;
+  }
+
+  return clips.map((clip) =>
+    clip.id === clipId ? { ...clip, hidden: !clip.hidden } : clip,
   );
 };
 

@@ -75,6 +75,7 @@ import {
   getTimelineFrameFromPointer,
   getTimelineTransitionBoundaries,
   getTimelineDuration,
+  getTimelineKeyboardNavigationTarget,
   getVideoPlaybackDuration,
   formatTimelineClock,
   formatTimelineTimecode,
@@ -129,6 +130,7 @@ import {
   resetCutoutMask,
   isTrackHidden,
   toggleClipMuteById,
+  toggleClipVisibilityById,
   toggleTrackVisibility,
   shouldMovePlayheadDuringScrub,
   shouldMuteVideoNativeAudio,
@@ -3688,6 +3690,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setPreviewMode("timeline");
   };
 
+  const toggleClipVisibility = (clipId: string) => {
+    const targetClip = clips.find((clip) => clip.id === clipId);
+    commitClipChange((currentClips) =>
+      toggleClipVisibilityById(currentClips, clipId),
+    );
+    setProjectStatus(
+      targetClip?.hidden
+        ? `${targetClip.label} is visible`
+        : `${targetClip?.label ?? "Clip"} is hidden`,
+    );
+    setPreviewMode("timeline");
+  };
+
   const toggleSelectedTrackVisibility = () => {
     if (!canToggleSelectedTrackVisibility) {
       return;
@@ -3751,6 +3766,117 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       getContextualAudioClips(clips, contextualSelectionId).length > 0,
     );
   };
+
+  useEffect(() => {
+    const handleTimelineArrowNavigation = (event: KeyboardEvent) => {
+      const direction =
+        event.key === "ArrowLeft"
+          ? "left"
+          : event.key === "ArrowRight"
+            ? "right"
+            : event.key === "ArrowUp"
+              ? "up"
+              : event.key === "ArrowDown"
+                ? "down"
+                : null;
+      if (
+        !direction ||
+        event.defaultPrevented ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        !selectedClipIdRef.current
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      const isEditing =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(
+            target.closest("input, textarea, select, [contenteditable='true']"),
+          ));
+      if (isEditing || document.querySelector("dialog[open]")) {
+        return;
+      }
+
+      const selectedClip = clips.find(
+        (clip) => clip.id === selectedClipIdRef.current,
+      );
+      const canNudgeSelectedClip =
+        selectedClip &&
+        ["caption", "text", "sticker", "cutout"].includes(
+          selectedClip.track,
+        );
+      if (
+        canNudgeSelectedClip &&
+        (direction === "left" || direction === "right")
+      ) {
+        event.preventDefault();
+        const frameStep = event.shiftKey ? 5 : 1;
+        const targetStart = Math.max(
+          0,
+          selectedClip.start + (direction === "left" ? -frameStep : frameStep),
+        );
+        const timelineBoundary = getExpandedTimelineBoundary(
+          projectDuration,
+          targetStart,
+          selectedClip.duration,
+        );
+        commitClipChange((currentClips) => {
+          if (selectedClip.track === "cutout") {
+            return moveCutoutClip(
+              currentClips,
+              selectedClip.id,
+              targetStart,
+              timelineBoundary,
+            );
+          }
+          if (selectedClip.track === "text") {
+            return moveTextClip(
+              currentClips,
+              selectedClip.id,
+              targetStart,
+              timelineBoundary,
+            );
+          }
+          return moveIndependentTimelineClip(
+            currentClips,
+            selectedClip.id,
+            targetStart,
+            timelineBoundary,
+          );
+        });
+        setPlayheadFrame(targetStart);
+        setProjectStatus(
+          `${selectedClip.label} moved ${direction} ${frameStep} frame${frameStep === 1 ? "" : "s"}`,
+        );
+        return;
+      }
+
+      if (event.repeat) {
+        return;
+      }
+
+      const targetClip = getTimelineKeyboardNavigationTarget({
+        clips,
+        selectedClipId: selectedClipIdRef.current,
+        direction,
+      });
+      if (!targetClip) return;
+
+      event.preventDefault();
+      selectTimelineClip(targetClip, targetClip.start);
+      setProjectStatus(
+        `${direction === "left" || direction === "right" ? "Selected" : "Moved to"} ${targetClip.label}`,
+      );
+    };
+
+    window.addEventListener("keydown", handleTimelineArrowNavigation);
+    return () =>
+      window.removeEventListener("keydown", handleTimelineArrowNavigation);
+  }, [clips, commitClipChange, projectDuration]);
 
   const selectTrackClipAtFrame = (
     track: TrackName,
@@ -10853,6 +10979,39 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             >
                               {(clip.volume ?? 1) === 0 ? "🔇" : "🔊"}
                             </button>
+                            ) : null}
+                            {selectedClipId === clip.id ? (
+                              <button
+                                className={`clip-visibility-button ${
+                                  clip.hidden ? "hidden-clip-button" : ""
+                                }`}
+                                type="button"
+                                aria-label={
+                                  clip.hidden
+                                    ? `Show ${clip.label}`
+                                    : `Hide ${clip.label}`
+                                }
+                                title={clip.hidden ? "Show clip" : "Hide clip"}
+                                aria-pressed={Boolean(clip.hidden)}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleClipVisibility(clip.id);
+                                }}
+                                onPointerDown={(event) => {
+                                  event.stopPropagation();
+                                }}
+                                onDoubleClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                }}
+                              >
+                                <span
+                                  className="track-visibility-eye"
+                                  aria-hidden="true"
+                                >
+                                  <span className="track-visibility-pupil" />
+                                </span>
+                              </button>
                             ) : null}
                             <span className="timeline-clip-label">
                               {clip.label}

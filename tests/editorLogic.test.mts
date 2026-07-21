@@ -53,6 +53,7 @@ import {
   formatTimelineTimecode,
   createTimelineTicks,
   getTimelineDuration,
+  getTimelineKeyboardNavigationTarget,
   moveVideoClipToLayer,
   placeVideoPairInInsertedLayer,
   placeVideoPairOnLayer,
@@ -95,6 +96,7 @@ import {
   finishVideoLayerControlHistoryGesture,
   startVideoLayerControlHistoryGesture,
   toggleClipMuteById,
+  toggleClipVisibilityById,
   isTrackHidden,
   toggleTrackVisibility,
   setClipEffectById,
@@ -5138,6 +5140,35 @@ test("toggles every clip on a non-video track together", () => {
   );
 });
 
+test("toggles visibility for only the selected clip", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "clip-one",
+      label: "Clip one",
+      track: "main",
+      start: 0,
+      duration: 60,
+      color: "#0891b2",
+    },
+    {
+      id: "clip-two",
+      label: "Clip two",
+      track: "main",
+      start: 60,
+      duration: 60,
+      color: "#0891b2",
+    },
+  ];
+
+  const hidden = toggleClipVisibilityById(clips, "clip-one");
+  assert.equal(hidden.find((clip) => clip.id === "clip-one")?.hidden, true);
+  assert.equal(hidden.find((clip) => clip.id === "clip-two")?.hidden, undefined);
+
+  const shown = toggleClipVisibilityById(hidden, "clip-one");
+  assert.equal(shown.find((clip) => clip.id === "clip-one")?.hidden, false);
+  assert.equal(toggleClipVisibilityById(clips, "missing"), clips);
+});
+
 test("preserves occupied clips and snaps imported media after them on the target layer", () => {
   const [firstMain, firstMainAudio] = createVideoMediaPair({
     videoId: "main-a",
@@ -8077,4 +8108,41 @@ test("inserts media at the marker and ripples later main clips", () => {
   );
   assert.equal(result.find((clip) => clip.id === "new-audio")?.start, 150);
   assert.equal(result.find((clip) => clip.id === "audio-1-b")?.start, 240);
+});
+
+test("timeline keyboard navigation moves left and right within the selected row", () => {
+  const clips: TimelineClip[] = [
+    { id: "main-first", label: "First", track: "main", start: 0, duration: 90, color: "#0891b2", src: "/media/first.mp4" },
+    { id: "main-second", label: "Second", track: "main", start: 90, duration: 120, color: "#0891b2", src: "/media/second.mp4" },
+    { id: "caption", label: "Caption", track: "caption", start: 40, duration: 60, color: "#ef4444" },
+  ];
+
+  assert.equal(getTimelineKeyboardNavigationTarget({ clips, selectedClipId: "main-first", direction: "right" })?.id, "main-second");
+  assert.equal(getTimelineKeyboardNavigationTarget({ clips, selectedClipId: "main-second", direction: "left" })?.id, "main-first");
+  assert.equal(getTimelineKeyboardNavigationTarget({ clips, selectedClipId: "main-first", direction: "left" }), null);
+});
+
+test("timeline keyboard navigation moves vertically to the nearest clip", () => {
+  const clips: TimelineClip[] = [
+    { id: "sticker-early", label: "Early sticker", track: "sticker", start: 0, duration: 30, color: "#a855f7" },
+    { id: "sticker-near", label: "Nearby sticker", track: "sticker", start: 170, duration: 40, color: "#a855f7" },
+    { id: "text", label: "Text", track: "text", start: 150, duration: 80, color: "#f97316" },
+    { id: "caption", label: "Caption", track: "caption", start: 165, duration: 45, color: "#ef4444" },
+    { id: "main", label: "Main", track: "main", start: 0, duration: 300, color: "#0891b2", src: "/media/main.mp4" },
+  ];
+
+  assert.equal(getTimelineKeyboardNavigationTarget({ clips, selectedClipId: "text", direction: "up" })?.id, "sticker-near");
+  assert.equal(getTimelineKeyboardNavigationTarget({ clips, selectedClipId: "text", direction: "down" })?.id, "caption");
+  assert.equal(getTimelineKeyboardNavigationTarget({ clips, selectedClipId: "caption", direction: "down" })?.id, "main");
+});
+
+test("timeline keyboard navigation treats each video layer as its own row", () => {
+  const clips: TimelineClip[] = [
+    { id: "upper-two", label: "Upper two", track: "upper", videoLayer: 2, start: 100, duration: 80, color: "#7c3aed", src: "/media/upper-two.mp4" },
+    { id: "upper-one", label: "Upper one", track: "upper", videoLayer: 1, start: 110, duration: 60, color: "#7c3aed", src: "/media/upper-one.mp4" },
+    { id: "main", label: "Main", track: "main", start: 0, duration: 300, color: "#0891b2", src: "/media/main.mp4" },
+  ];
+
+  assert.equal(getTimelineKeyboardNavigationTarget({ clips, selectedClipId: "upper-two", direction: "down" })?.id, "upper-one");
+  assert.equal(getTimelineKeyboardNavigationTarget({ clips, selectedClipId: "upper-one", direction: "down" })?.id, "main");
 });

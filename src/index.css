@@ -2603,33 +2603,51 @@ button {
   position: absolute;
   inset-block: 0;
   width: 0;
-  z-index: 30;
+  z-index: 70;
   pointer-events: none;
 }
 
 .transition-node {
   position: absolute;
   top: 50%;
-  width: 24px;
-  height: 24px;
+  width: 40px;
+  height: 40px;
   padding: 0;
-  border: 1px solid #334155;
+  border: 0;
   border-radius: 999px;
   translate: -50% -50%;
-  background: #0f172a;
+  background: transparent;
   color: #dce6ef;
   font-size: 16px;
+  line-height: 1;
   font-weight: 900;
-  z-index: 30;
+  z-index: 70;
   pointer-events: auto;
+  cursor: pointer;
+  touch-action: manipulation;
+  isolation: isolate;
+}
+
+.transition-node::before {
+  position: absolute;
+  inset: 8px;
+  z-index: -1;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  background: #0f172a;
+  content: "";
 }
 
 .transition-node:hover,
 .transition-node:focus-visible {
-  border-color: #38d6c8;
-  background: #12302f;
   color: #5eead4;
   outline: none;
+}
+
+.transition-node:hover::before,
+.transition-node:focus-visible::before {
+  border-color: #38d6c8;
+  background: #12302f;
 }
 
 .transition-node.transition-trim-priority {
@@ -2639,6 +2657,10 @@ button {
   border-radius: 4px;
   background: #22d3ee;
   cursor: ew-resize;
+}
+
+.transition-node.transition-trim-priority::before {
+  display: none;
 }
 
 .transition-node.transition-trim-priority::after {
@@ -3159,6 +3181,11 @@ button {
   background: rgba(3, 7, 18, 0.9);
 }
 
+.timeline-clip.video-timeline-clip.selected-timeline-clip
+  > .timeline-clip-duration {
+  right: 58px;
+}
+
 .timeline-clip.video-timeline-clip > .clip-mute-button {
   top: 4px;
   right: 6px;
@@ -3215,6 +3242,59 @@ button {
 
 .clip-mute-button.muted-clip-button {
   background: rgba(127, 29, 29, 0.9);
+}
+
+.clip-visibility-button {
+  position: absolute;
+  z-index: 65;
+  top: 4px;
+  right: 5px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.58);
+  border-radius: 5px;
+  background: rgba(3, 7, 18, 0.88);
+  color: #f8fafc;
+  cursor: pointer;
+}
+
+.timeline-clip:has(> .clip-mute-button) > .clip-visibility-button {
+  right: 31px;
+}
+
+.clip-visibility-button .track-visibility-eye {
+  width: 12px;
+  height: 12px;
+  border-width: 1.5px;
+}
+
+.clip-visibility-button .track-visibility-pupil {
+  width: 4px;
+  height: 4px;
+}
+
+.clip-visibility-button:hover,
+.clip-visibility-button:focus-visible {
+  border-color: #38d6c8;
+  background: rgba(19, 184, 170, 0.92);
+}
+
+.clip-visibility-button.hidden-clip-button {
+  border-color: #64748b;
+  background: #111821;
+  color: #94a3b8;
+}
+
+.clip-visibility-button.hidden-clip-button .track-visibility-eye::after {
+  position: absolute;
+  width: 17px;
+  height: 1.5px;
+  background: currentColor;
+  content: "";
+  transform: rotate(-45deg);
 }
 
 .timeline-clip:not(:has(.timeline-clip-video))::before {

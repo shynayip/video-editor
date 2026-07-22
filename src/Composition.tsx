@@ -701,7 +701,7 @@ const TimelineWaveform = ({
   }, [duration, fallbackAmplitudes, lineCount, sourceStart, speed, src]);
 
   const step = 100 / amplitudes.length;
-  const baselineY = 19;
+  const centerY = 10;
 
   return (
     <svg
@@ -710,7 +710,7 @@ const TimelineWaveform = ({
       preserveAspectRatio="none"
     >
       {amplitudes.map((amplitude, index) => {
-        const height = Math.max(1.5, amplitude * 18);
+        const height = Math.max(0.8, amplitude * 8.5);
         const x = index * step + step / 2;
         return (
           <line
@@ -718,8 +718,8 @@ const TimelineWaveform = ({
             key={`${clipId}-wave-${index}`}
             x1={x}
             x2={x}
-            y1={baselineY - height}
-            y2={baselineY}
+            y1={centerY - height}
+            y2={centerY + height}
           />
         );
       })}
@@ -7149,7 +7149,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     [commitClipChange],
   );
 
-  const togglePreviewPlayback = (requestedStartFrame?: number) => {
+  const togglePreviewPlayback = useCallback(
+    (requestedStartFrame?: number) => {
     previewVideoRef.current?.pause();
     setIsMediaPreviewPlaying(false);
     setPreviewMode("timeline");
@@ -7165,13 +7166,52 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }
 
     setIsPreviewPlaying(false);
-  };
+    },
+    [
+      isPreviewPlaying,
+      playheadFrame,
+      previewMode,
+      videoPlaybackDuration,
+    ],
+  );
 
-  const toggleTimelinePlayback = () => {
+  const toggleTimelinePlayback = useCallback(() => {
     const previewStartFrame = timelineHoverFrame ?? undefined;
     setTimelineHoverFrame(null);
     togglePreviewPlayback(previewStartFrame);
-  };
+  }, [timelineHoverFrame, togglePreviewPlayback]);
+
+  useEffect(() => {
+    const handleSpacebarPlayback = (event: KeyboardEvent) => {
+      if (
+        event.code !== "Space" ||
+        event.repeat ||
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      const isEditingText =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(
+            target.closest("input, textarea, select, [contenteditable='true']"),
+          ));
+      if (isEditingText || document.querySelector("dialog[open]")) {
+        return;
+      }
+
+      event.preventDefault();
+      toggleTimelinePlayback();
+    };
+
+    window.addEventListener("keydown", handleSpacebarPlayback);
+    return () => window.removeEventListener("keydown", handleSpacebarPlayback);
+  }, [toggleTimelinePlayback]);
 
   const toggleMediaPreviewPlayback = () => {
     if (

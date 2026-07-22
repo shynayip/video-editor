@@ -3479,23 +3479,36 @@ button {
 }
 
 .audio-timeline-track .audio-timeline-clip .audio-waveform {
-  inset: 5px 0;
-  opacity: 1;
+  inset: 14px 4px 2px;
+  opacity: 0.82;
 }
 
 /* Audio clips keep their full hit area, but render as a clean waveform only. */
 .timeline-clip.audio-timeline-clip {
   padding: 0;
-  border-color: #29323d;
-  background: #05070b !important;
+  border-color: #245a85;
+  background: linear-gradient(180deg, #0d416b 0%, #092944 100%) !important;
   box-shadow: none;
 }
 
 .timeline-clip.audio-timeline-clip::before,
-.timeline-clip.audio-timeline-clip > .timeline-clip-label,
 .timeline-clip.audio-timeline-clip > .timeline-clip-duration,
 .timeline-clip.audio-timeline-clip > .clip-mute-button {
   display: none;
+}
+
+.timeline-clip.audio-timeline-clip > .timeline-clip-label {
+  position: absolute;
+  inset: 3px 28px auto 6px;
+  z-index: 4;
+  display: block;
+  overflow: hidden;
+  color: #dbeafe;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .timeline-clip.audio-timeline-clip.imported-audio-timeline-clip
@@ -3841,16 +3854,31 @@ button {
   overflow: visible;
 }
 
+.audio-timeline-clip .audio-waveform-svg {
+  background: linear-gradient(
+    to bottom,
+    transparent 48%,
+    rgba(96, 165, 250, 0.28) 49%,
+    rgba(96, 165, 250, 0.28) 51%,
+    transparent 52%
+  );
+}
+
 .audio-waveform-bar {
   fill: #67e8f9;
 }
 
 .audio-waveform-line {
   fill: none;
-  stroke: #67e8f9;
-  stroke-width: 1px;
-  stroke-linecap: butt;
+  stroke: #60a5fa;
+  stroke-width: 1.15px;
+  stroke-linecap: round;
   vector-effect: non-scaling-stroke;
+}
+
+.audio-timeline-clip .audio-waveform-line {
+  stroke: #38bdf8;
+  stroke-width: 1.3px;
 }
 
 .audio-waveform-center-line {

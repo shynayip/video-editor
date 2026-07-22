@@ -1007,7 +1007,7 @@ button {
 
 .transcript-segment {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
+  grid-template-columns: 52px minmax(0, 1fr) 32px;
   gap: 8px;
   align-items: start;
   width: 100%;
@@ -1017,6 +1017,24 @@ button {
   background: #0b1119;
   color: #dbe5ed;
   text-align: left;
+}
+
+.transcript-remove-sentence {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid #5b2630;
+  border-radius: 5px;
+  background: #35171d;
+  color: #fecdd3;
+  cursor: pointer;
+}
+
+.transcript-remove-sentence:hover,
+.transcript-remove-sentence:focus-visible {
+  border-color: #fb7185;
+  background: #4c1d27;
+  outline: none;
 }
 
 .transcript-segment:hover,
@@ -1036,6 +1054,37 @@ button {
   overflow-wrap: anywhere;
   font-size: 12px;
   line-height: 1.35;
+}
+
+.transcript-sentence-editor {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  resize: vertical;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #eef4f8;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.transcript-sentence-line {
+  display: contents;
+}
+
+.transcript-sentence-editor:hover {
+  border-color: #344454;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.transcript-sentence-editor:focus {
+  border-color: #38d6c8;
+  background: #0e1721;
+  outline: 2px solid rgba(56, 214, 200, 0.16);
 }
 
 .audio-tool-panel span,
@@ -2726,7 +2775,7 @@ button {
 .preview-video-transform-shell {
   position: absolute;
   inset: 0;
-  z-index: 145;
+  z-index: 10;
   pointer-events: none;
   transform-origin: center;
 }
@@ -2881,8 +2930,8 @@ button {
   left: 50%;
   width: 2px;
   translate: -50% 0;
-  background: #ff4fd8;
-  filter: drop-shadow(0 0 2px rgba(255, 79, 216, 0.75));
+  background: var(--theme-yellow);
+  filter: drop-shadow(0 0 2px rgba(245, 184, 0, 0.78));
 }
 
 .preview-alignment-guide-horizontal {
@@ -2891,8 +2940,8 @@ button {
   left: 0;
   height: 2px;
   translate: 0 -50%;
-  background: #ff4fd8;
-  filter: drop-shadow(0 0 2px rgba(255, 79, 216, 0.75));
+  background: var(--theme-yellow);
+  filter: drop-shadow(0 0 2px rgba(245, 184, 0, 0.78));
 }
 
 .preview-alignment-center {
@@ -2906,7 +2955,7 @@ button {
   border-radius: 50%;
   background: #fde047;
   box-shadow:
-    0 0 0 2px #f8fafc,
+    0 0 0 2px #facc15,
     0 0 10px rgb(253 224 71 / 90%);
 }
 
@@ -3429,7 +3478,7 @@ button {
 }
 
 .selected-preview-caption {
-  outline: 2px solid rgba(34, 211, 238, 0.85);
+  outline: 2px solid rgba(245, 184, 0, 0.9);
   outline-offset: 2px;
 }
 
@@ -3444,6 +3493,43 @@ button {
   background: #fff;
   pointer-events: auto;
   touch-action: none;
+}
+
+.caption-rotate-handle {
+  position: absolute;
+  z-index: 2;
+  top: -42px;
+  left: 50%;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  translate: -50% 0;
+  place-items: center;
+  border: 2px solid #080808;
+  border-radius: 50%;
+  background: var(--theme-yellow);
+  color: #171200;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.caption-rotate-handle::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 2px;
+  height: 14px;
+  translate: -50% 0;
+  background: var(--theme-yellow);
+}
+
+.caption-rotate-handle:active {
+  cursor: grabbing;
 }
 
 .caption-resize-handle-top-left {
@@ -3523,11 +3609,11 @@ button {
 }
 
 .selected-preview-sticker {
-  outline: 2px solid #22d3ee;
+  outline: 2px solid var(--theme-yellow);
   outline-offset: 2px;
 }
 
-.sticker-scale-handle,
+.sticker-resize-handle,
 .sticker-rotate-handle {
   position: absolute;
   width: 14px;
@@ -3535,21 +3621,91 @@ button {
   padding: 0;
   border: 2px solid #071018;
   border-radius: 50%;
-  background: #22d3ee;
+  background: var(--theme-yellow);
   touch-action: none;
 }
 
-.sticker-scale-handle {
+.sticker-resize-handle {
+  z-index: 3;
+  display: block;
+}
+
+.sticker-resize-handle-top-left {
+  top: -9px;
+  left: -9px;
+  cursor: nwse-resize;
+}
+
+.sticker-resize-handle-top {
+  top: -9px;
+  left: calc(50% - 7px);
+  cursor: ns-resize;
+}
+
+.sticker-resize-handle-top-right {
+  top: -9px;
+  right: -9px;
+  cursor: nesw-resize;
+}
+
+.sticker-resize-handle-right {
+  top: calc(50% - 7px);
+  right: -9px;
+  cursor: ew-resize;
+}
+
+.sticker-resize-handle-bottom-right {
   right: -9px;
   bottom: -9px;
   cursor: nwse-resize;
 }
 
+.sticker-resize-handle-bottom {
+  bottom: -9px;
+  left: calc(50% - 7px);
+  cursor: ns-resize;
+}
+
+.sticker-resize-handle-bottom-left {
+  bottom: -9px;
+  left: -9px;
+  cursor: nesw-resize;
+}
+
+.sticker-resize-handle-left {
+  top: calc(50% - 7px);
+  left: -9px;
+  cursor: ew-resize;
+}
+
 .sticker-rotate-handle {
-  top: -25px;
+  top: -42px;
   left: 50%;
+  display: grid;
+  width: 28px;
+  height: 28px;
   translate: -50% 0;
+  place-items: center;
+  color: #171200;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
   cursor: grab;
+}
+
+.sticker-rotate-handle::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 2px;
+  height: 14px;
+  translate: -50% 0;
+  background: var(--theme-yellow);
+}
+
+.sticker-rotate-handle:active {
+  cursor: grabbing;
 }
 
 .sticker-quick-actions {
@@ -4207,7 +4363,7 @@ button {
 }
 
 .timeline-track.selected-timeline-row {
-  background: rgba(250, 204, 21, 0.055);
+  background: rgba(250, 204, 21, 0.018);
 }
 
 .timeline-track.selected-timeline-row .track-label {
@@ -5885,9 +6041,11 @@ input[type="range"],
 }
 
 .track-lane.selected-track-lane {
-  border-color: #facc15;
-  background: rgba(250, 204, 21, 0.085);
-  box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.34);
+  border-color: rgba(250, 204, 21, 0.72);
+  background: rgba(250, 204, 21, 0.025);
+  box-shadow:
+    inset 0 1px 0 rgba(250, 204, 21, 0.44),
+    inset 0 -1px 0 rgba(250, 204, 21, 0.44);
 }
 
 .track-lane.drop-target,
@@ -5916,7 +6074,7 @@ input[type="range"],
 
 .timeline-clip.selected-timeline-clip {
   border-color: var(--theme-yellow);
-  box-shadow: inset 0 0 0 1px rgba(245, 184, 0, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(245, 184, 0, 0.5);
 }
 
 .trim-handle,
@@ -5944,21 +6102,20 @@ input[type="range"],
   background: rgba(12, 12, 12, 0.92);
 }
 
-/* Linked audio shown beneath a video clip uses the same blue waveform treatment. */
+/* Keep linked audio readable without covering the video thumbnail. */
 .timeline-clip.has-timeline-waveform:not(.audio-timeline-clip) .audio-waveform {
-  height: 26px;
+  height: 22px;
   inset: auto 0 0;
-  padding: 3px 32px 3px 8px;
-  border-top: 1px solid rgba(56, 189, 248, 0.7);
-  border-color: rgba(56, 189, 248, 0.7);
-  background: linear-gradient(180deg, #123d69 0%, #0b2748 100%);
-  opacity: 1;
+  padding: 3px 8px;
+  border-top: 1px solid rgba(245, 184, 0, 0.42);
+  background: rgba(8, 10, 13, 0.94);
+  opacity: 0.96;
 }
 
 .timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
   .audio-waveform-line {
-  stroke: #159bd2;
-  stroke-width: 1.15px;
+  stroke: var(--theme-yellow);
+  stroke-width: 1px;
 }
 
 .timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
@@ -5969,7 +6126,40 @@ input[type="range"],
   .timeline-cutout-media,
 .timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
   .timeline-clip-filmstrip {
-  bottom: 26px;
+  bottom: 22px;
+}
+
+.timeline-clip.compact-video-timeline-clip > .clip-mute-button {
+  display: none;
+}
+
+.timeline-clip.compact-video-timeline-clip.selected-timeline-clip
+  > .clip-mute-button,
+.timeline-clip.compact-video-timeline-clip:hover > .clip-mute-button,
+.timeline-clip.compact-video-timeline-clip:focus-within > .clip-mute-button {
+  display: grid;
+}
+
+.timeline-clip.compact-video-timeline-clip > .clip-visibility-button,
+.timeline-clip.compact-video-timeline-clip > .clip-mute-button {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 9px;
+}
+
+.timeline-clip.compact-video-timeline-clip > .clip-visibility-button {
+  top: 3px;
+  right: 3px;
+}
+
+.timeline-clip.compact-video-timeline-clip:has(> .clip-mute-button)
+  > .clip-visibility-button {
+  right: 23px;
+}
+
+.transition-node::before {
+  inset: 9px;
 }
 
 .clip-visibility-button:hover,

@@ -9,6 +9,7 @@ export type TrackName =
 
 export type CaptionStyle = {
   fontSize: number;
+  rotation?: number;
   textColor: string;
   backgroundEnabled: boolean;
   backgroundColor: string;
@@ -43,6 +44,7 @@ export type TranscriptionSegment = {
 
 export const defaultCaptionStyle: CaptionStyle = {
   fontSize: 36,
+  rotation: 0,
   textColor: "#ffffff",
   backgroundEnabled: true,
   backgroundColor: "#000000cc",
@@ -57,6 +59,8 @@ export type StickerTransform = {
   x: number;
   y: number;
   scale: number;
+  scaleX?: number;
+  scaleY?: number;
   rotation: number;
 };
 
@@ -2091,7 +2095,7 @@ export const applyAutomaticCutoutById = (
           : {}),
         maskStrokes: [],
         chromaKey: "none" as const,
-        ...(subjectBounds ? {subjectBounds} : {}),
+        ...(subjectBounds ? { subjectBounds } : {}),
       },
     };
   });
@@ -2629,10 +2633,7 @@ export const snapPreviewPositionToCenter = (
   position: TextPosition,
   thresholdPercent = 1.5,
 ): TextPosition & { guides: PreviewAlignmentGuides } => {
-  const verticalSnap = getNearestPreviewSnapPoint(
-    position.x,
-    thresholdPercent,
-  );
+  const verticalSnap = getNearestPreviewSnapPoint(position.x, thresholdPercent);
   const horizontalSnap = getNearestPreviewSnapPoint(
     position.y,
     thresholdPercent,
@@ -2646,8 +2647,10 @@ export const snapPreviewPositionToCenter = (
     guides: {
       horizontal,
       vertical,
-      horizontalPositions: horizontal && horizontalSnap !== null ? [horizontalSnap] : [],
-      verticalPositions: vertical && verticalSnap !== null ? [verticalSnap] : [],
+      horizontalPositions:
+        horizontal && horizontalSnap !== null ? [horizontalSnap] : [],
+      verticalPositions:
+        vertical && verticalSnap !== null ? [verticalSnap] : [],
     },
   };
 };
@@ -4606,6 +4609,7 @@ export const splitClipByIdAtFrame = (
   clips: TimelineClip[],
   clipId: string,
   frame: number,
+  options: { splitLinkedAudio?: boolean } = {},
 ): TimelineClip[] => {
   const clipToSplit = clips.find(
     (clip) =>
@@ -4620,7 +4624,10 @@ export const splitClipByIdAtFrame = (
 
   const firstDuration = frame - clipToSplit.start;
   const secondDuration = clipToSplit.duration - firstDuration;
-  const linkedAudio = getReciprocalLinkedAudio(clips, clipToSplit);
+  const linkedAudio =
+    options.splitLinkedAudio === false
+      ? undefined
+      : getReciprocalLinkedAudio(clips, clipToSplit);
 
   const splitClips = clips.flatMap((clip) => {
     if (clip.id !== clipId && clip.id !== linkedAudio?.id) {
@@ -5057,6 +5064,270 @@ export const removeSilenceFromLinkedVideo = (
   });
 
   return normalizeTimelineTransitions(nextClips);
+};
+
+const isTranscriptSourceDescendant = (
+  clipId: string,
+  sourceClipId: string,
+): boolean =>
+  clipId === sourceClipId || clipId.startsWith(`${sourceClipId}-speech-`);
+
+export const removeTranscriptSentenceFromLinkedVideo = (
+  clips: TimelineClip[],
+  transcriptClipId: string,
+  fps: number,
+): TimelineClip[] => {
+  const transcriptClip = clips.find(
+    (clip) =>
+      clip.id === transcriptClipId &&
+      clip.track === "caption" &&
+      clip.caption?.generationId?.startsWith("transcript-") &&
+      clip.caption.sourceClipId,
+  );
+  const sourceClipId = transcriptClip?.caption?.sourceClipId;
+  if (!transcriptClip || !sourceClipId || fps <= 0) return clips;
+
+  const sourceVideo = clips.find(
+    (clip) =>
+      (clip.track === "main" ||
+        clip.track === "upper" ||
+        clip.track === "cutout") &&
+      Boolean(clip.src) &&
+      isTranscriptSourceDescendant(clip.id, sourceClipId) &&
+      clip.start <= transcriptClip.start &&
+      clip.start + clip.duration >=
+        transcriptClip.start + transcriptClip.duration,
+  );
+  if (!sourceVideo) return clips;
+
+  const speed = sourceVideo.speed ?? 1;
+  const rangeStartSeconds =
+    ((transcriptClip.start - sourceVideo.start) * speed) / fps;
+  const rangeEndSeconds =
+    ((transcriptClip.start + transcriptClip.duration - sourceVideo.start) *
+      speed) /
+    fps;
+  const shortened = removeSilenceFromLinkedVideo(
+    clips,
+    sourceVideo.id,
+    [{ startSeconds: rangeStartSeconds, endSeconds: rangeEndSeconds }],
+    fps,
+  );
+  if (shortened === clips) return clips;
+
+  const removedFrames = transcriptClip.duration;
+  const remainingTranscriptClips = clips
+    .filter(
+      (clip) =>
+        clip.id !== transcriptClip.id &&
+        clip.track === "caption" &&
+        clip.caption?.generationId?.startsWith("transcript-") &&
+        clip.caption.sourceClipId === sourceClipId,
+    )
+    .map((clip) =>
+      clip.start >= transcriptClip.start + transcriptClip.duration
+        ? { ...clip, start: clip.start - removedFrames }
+        : clip,
+    );
+
+  return [
+    ...shortened.filter(
+      (clip) =>
+        !(
+          clip.track === "caption" &&
+          clip.caption?.generationId?.startsWith("transcript-") &&
+          clip.caption.sourceClipId === sourceClipId
+        ),
+    ),
+    ...remainingTranscriptClips,
+  ];
+};
+
+const getTranscriptWords = (content: string): string[] =>
+  content.trim().split(/\s+/).filter(Boolean);
+
+const normalizeTranscriptWord = (word: string): string =>
+  word.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+export const getRemovedTranscriptWordIndexes = (
+  originalContent: string,
+  editedContent: string,
+): number[] => {
+  const originalWords = getTranscriptWords(originalContent);
+  const editedWords = getTranscriptWords(editedContent);
+  const originalComparable = originalWords.map(normalizeTranscriptWord);
+  const editedComparable = editedWords.map(normalizeTranscriptWord);
+  const rows = originalComparable.length + 1;
+  const columns = editedComparable.length + 1;
+  const longestCommonSubsequence = Array.from({ length: rows }, () =>
+    Array<number>(columns).fill(0),
+  );
+
+  for (let originalIndex = originalComparable.length - 1; originalIndex >= 0; originalIndex -= 1) {
+    for (let editedIndex = editedComparable.length - 1; editedIndex >= 0; editedIndex -= 1) {
+      longestCommonSubsequence[originalIndex][editedIndex] =
+        originalComparable[originalIndex] === editedComparable[editedIndex]
+          ? longestCommonSubsequence[originalIndex + 1][editedIndex + 1] + 1
+          : Math.max(
+              longestCommonSubsequence[originalIndex + 1][editedIndex],
+              longestCommonSubsequence[originalIndex][editedIndex + 1],
+            );
+    }
+  }
+
+  const keptOriginalIndexes = new Set<number>();
+  let originalIndex = 0;
+  let editedIndex = 0;
+  while (
+    originalIndex < originalComparable.length &&
+    editedIndex < editedComparable.length
+  ) {
+    if (originalComparable[originalIndex] === editedComparable[editedIndex]) {
+      keptOriginalIndexes.add(originalIndex);
+      originalIndex += 1;
+      editedIndex += 1;
+    } else if (
+      longestCommonSubsequence[originalIndex + 1][editedIndex] >=
+      longestCommonSubsequence[originalIndex][editedIndex + 1]
+    ) {
+      originalIndex += 1;
+    } else {
+      editedIndex += 1;
+    }
+  }
+
+  return originalWords.flatMap((_, index) =>
+    keptOriginalIndexes.has(index) ? [] : [index],
+  );
+};
+
+export type TranscriptWordRemoval = {
+  clipId: string;
+  wordIndex: number;
+};
+
+export const removeTranscriptWordsFromLinkedVideo = (
+  clips: TimelineClip[],
+  removals: TranscriptWordRemoval[],
+  fps: number,
+): TimelineClip[] => {
+  if (!Number.isFinite(fps) || fps <= 0 || removals.length === 0) {
+    return clips;
+  }
+
+  const removalIndexesByClip = new Map<string, Set<number>>();
+  removals.forEach(({ clipId, wordIndex }) => {
+    if (!Number.isInteger(wordIndex) || wordIndex < 0) return;
+    const indexes = removalIndexesByClip.get(clipId) ?? new Set<number>();
+    indexes.add(wordIndex);
+    removalIndexesByClip.set(clipId, indexes);
+  });
+
+  const transcriptClips = clips.filter(
+    (clip) =>
+      clip.track === "caption" &&
+      clip.caption?.generationId?.startsWith("transcript-") &&
+      clip.caption.sourceClipId,
+  );
+  const rangesByVideoClip = new Map<string, SilenceRange[]>();
+  const removedFramesByTranscript = new Map<string, number>();
+
+  transcriptClips.forEach((transcriptClip) => {
+    const removedIndexes = removalIndexesByClip.get(transcriptClip.id);
+    if (!removedIndexes?.size || !transcriptClip.caption?.sourceClipId) return;
+    const words = getTranscriptWords(transcriptClip.caption.content);
+    if (words.length === 0) return;
+
+    const sourceVideo = clips.find(
+      (clip) =>
+        (clip.track === "main" ||
+          clip.track === "upper" ||
+          clip.track === "cutout") &&
+        Boolean(clip.src) &&
+        isTranscriptSourceDescendant(
+          clip.id,
+          transcriptClip.caption!.sourceClipId!,
+        ) &&
+        clip.start <= transcriptClip.start &&
+        clip.start + clip.duration >=
+          transcriptClip.start + transcriptClip.duration,
+    );
+    if (!sourceVideo) return;
+
+    const speed = sourceVideo.speed ?? 1;
+    let removedFrames = 0;
+    const ranges = rangesByVideoClip.get(sourceVideo.id) ?? [];
+    removedIndexes.forEach((wordIndex) => {
+      if (wordIndex >= words.length) return;
+      const wordStart =
+        transcriptClip.start +
+        Math.round((wordIndex * transcriptClip.duration) / words.length);
+      const wordEnd =
+        transcriptClip.start +
+        Math.round(((wordIndex + 1) * transcriptClip.duration) / words.length);
+      if (wordEnd <= wordStart) return;
+      removedFrames += wordEnd - wordStart;
+      ranges.push({
+        startSeconds: ((wordStart - sourceVideo.start) * speed) / fps,
+        endSeconds: ((wordEnd - sourceVideo.start) * speed) / fps,
+      });
+    });
+    rangesByVideoClip.set(sourceVideo.id, ranges);
+    removedFramesByTranscript.set(transcriptClip.id, removedFrames);
+  });
+
+  if (rangesByVideoClip.size === 0) return clips;
+
+  let nextClips = clips;
+  rangesByVideoClip.forEach((ranges, videoClipId) => {
+    nextClips = removeSilenceFromLinkedVideo(nextClips, videoClipId, ranges, fps);
+  });
+
+  const rebuiltTranscriptClips = transcriptClips.flatMap((clip) => {
+    const words = getTranscriptWords(clip.caption?.content ?? "");
+    const removedIndexes = removalIndexesByClip.get(clip.id) ?? new Set<number>();
+    const remainingWords = words.filter((_, index) => !removedIndexes.has(index));
+    if (remainingWords.length === 0) return [];
+
+    const removedBefore = transcriptClips.reduce((total, candidate) => {
+      if (
+        candidate.caption?.sourceClipId !== clip.caption?.sourceClipId ||
+        candidate.start >= clip.start
+      ) {
+        return total;
+      }
+      return total + (removedFramesByTranscript.get(candidate.id) ?? 0);
+    }, 0);
+    const removedHere = removedFramesByTranscript.get(clip.id) ?? 0;
+    const content = remainingWords.join(" ");
+    return [
+      {
+        ...clip,
+        start: clip.start - removedBefore,
+        duration: Math.max(1, clip.duration - removedHere),
+        label: content,
+        caption: clip.caption ? { ...clip.caption, content } : clip.caption,
+      },
+    ];
+  });
+
+  const transcriptSourceIds = new Set(
+    transcriptClips.flatMap((clip) =>
+      clip.caption?.sourceClipId ? [clip.caption.sourceClipId] : [],
+    ),
+  );
+  return [
+    ...nextClips.filter(
+      (clip) =>
+        !(
+          clip.track === "caption" &&
+          clip.caption?.generationId?.startsWith("transcript-") &&
+          clip.caption.sourceClipId &&
+          transcriptSourceIds.has(clip.caption.sourceClipId)
+        ),
+    ),
+    ...rebuiltTranscriptClips,
+  ];
 };
 
 export const keepDominantVoiceInLinkedVideo = (

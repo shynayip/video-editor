@@ -17,7 +17,7 @@ test("stickers expose a visible drag-to-rotate control", () => {
   assert.match(composition, /startStickerInteraction\([\s\S]*?"rotate"/);
   assert.match(
     css,
-    /\.sticker-scale-handle,\s*\.sticker-rotate-handle\s*\{[^}]*background:\s*#facc15/s,
+    /\.sticker-scale-handle,\s*\.sticker-rotate-handle\s*\{[^}]*background:\s*var\(--theme-yellow\)/s,
   );
   assert.match(css, /\.sticker-rotate-handle\s*\{[^}]*cursor:\s*grab/s);
 });

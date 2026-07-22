@@ -88,6 +88,7 @@ import {
   restoreDominantVideoSources,
   resetMediaItemEdits,
   removeSilenceFromLinkedVideo,
+  removeTranscriptSentenceFromLinkedVideo,
   redoTimelineHistory,
   setClipSpeedById,
   setClipVolumeById,
@@ -8391,4 +8392,99 @@ test("expanded video effects provide deterministic motion and visual styling", (
   const retroPresentation = getClipVisualPresentation(retroClip, 0);
   assert.match(retroPresentation.filter, /sepia/);
   assert.equal(retroPresentation.opacity, 1);
+});
+
+test("can split only the selected video while leaving linked audio intact", () => {
+  const video: TimelineClip = {
+    id: "main-video",
+    label: "Main video",
+    track: "main",
+    start: 0,
+    duration: 300,
+    color: "#0891b2",
+    src: "/media/main.mp4",
+    linkedClipId: "main-audio",
+  };
+  const audio: TimelineClip = {
+    id: "main-audio",
+    label: "Main audio",
+    track: "audio",
+    start: 0,
+    duration: 300,
+    color: "#2563eb",
+    src: "/media/main.mp4",
+    linkedClipId: "main-video",
+  };
+
+  const result = splitClipByIdAtFrame([video, audio], video.id, 120, {
+    splitLinkedAudio: false,
+  });
+
+  assert.equal(result.filter((clip) => clip.track === "main").length, 2);
+  assert.deepEqual(result.filter((clip) => clip.track === "audio"), [audio]);
+});
+
+test("removes one transcript sentence with the matching video and audio range", () => {
+  const video: TimelineClip = {
+    id: "source-video",
+    label: "Source video",
+    track: "main",
+    start: 0,
+    duration: 300,
+    color: "#0891b2",
+    src: "/media/source.mp4",
+    linkedClipId: "source-audio",
+  };
+  const audio: TimelineClip = {
+    id: "source-audio",
+    label: "Source audio",
+    track: "audio",
+    start: 0,
+    duration: 300,
+    color: "#2563eb",
+    src: "/media/source.mp4",
+    linkedClipId: "source-video",
+  };
+  const firstSentence: TimelineClip = {
+    id: "transcript-1",
+    label: "Remove this",
+    track: "caption",
+    start: 30,
+    duration: 30,
+    color: "#ef4444",
+    caption: {
+      ...defaultCaptionStyle,
+      content: "Remove this",
+      sourceClipId: video.id,
+      generationId: "transcript-batch-1",
+    },
+  };
+  const secondSentence: TimelineClip = {
+    ...firstSentence,
+    id: "transcript-2",
+    label: "Keep this",
+    start: 90,
+    caption: { ...firstSentence.caption!, content: "Keep this" },
+  };
+
+  const result = removeTranscriptSentenceFromLinkedVideo(
+    [video, audio, firstSentence, secondSentence],
+    firstSentence.id,
+    30,
+  );
+
+  assert.equal(result.some((clip) => clip.id === firstSentence.id), false);
+  assert.equal(result.find((clip) => clip.id === secondSentence.id)?.start, 60);
+  assert.equal(
+    result
+      .filter((clip) => clip.track === "main")
+      .reduce((total, clip) => total + clip.duration, 0),
+    270,
+  );
+  assert.equal(
+    result
+      .filter((clip) => clip.track === "audio")
+      .reduce((total, clip) => total + clip.duration, 0),
+    270,
+  );
 });

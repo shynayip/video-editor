@@ -68,6 +68,7 @@ import {
   getIndependentPlaybackAudioClips,
   getInitialNextSourceGroupIndex,
   getPlaybackAudioClips,
+  getRemovedTranscriptWordIndexes,
   getVisualToolTargetClipId,
   getManualRotationAngle,
   getStableTimelineFrameDelta,
@@ -108,6 +109,8 @@ import {
   replaceGeneratedCaptionBatch,
   removeBrowserOnlySavedMedia,
   removeSilenceFromLinkedVideo,
+  removeTranscriptSentenceFromLinkedVideo,
+  removeTranscriptWordsFromLinkedVideo,
   reconnectMediaSource,
   restoreDominantVideoSources,
   resetMediaItemEdits,
@@ -227,6 +230,9 @@ const defaultImageDurationInFrames = 5 * fps;
 const remotionRegistrationFallbackInFrames = 24 * 60 * 60 * fps;
 const defaultTimelineScale = 1.15;
 const timelineOrigin = 148;
+const minimumTimelineScale = 0.35;
+const maximumTimelineScale = 4;
+const timelineZoomStep = 0.15;
 const timelineDragActivationDistance = 6;
 const mediaSelectionActivationDistance = 4;
 
@@ -585,7 +591,10 @@ const shouldShowTimelineWaveform = (clip: TimelineClip) =>
       : clip.track === "cutout" && clip.cutout?.mediaKind === "video"));
 
 const getTimelineThumbnailCount = (clip: TimelineClip) =>
-  Math.max(1, Math.min(12, Math.ceil((clip.duration * defaultTimelineScale) / 84)));
+  Math.max(
+    1,
+    Math.min(12, Math.ceil((clip.duration * defaultTimelineScale) / 84)),
+  );
 
 const seekTimelineThumbnail = (
   video: HTMLVideoElement,
@@ -2538,6 +2547,52 @@ type TimelineRow = {
   audioKind?: "voiceover" | "imported";
 };
 
+type TranscriptSentenceEditorProps = {
+  content: string;
+  timestamp: string;
+  onDeleteWords: (wordIndexes: number[]) => void;
+};
+
+const TranscriptSentenceEditor: React.FC<TranscriptSentenceEditorProps> = ({
+  content,
+  timestamp,
+  onDeleteWords,
+}) => {
+  const [draft, setDraft] = useState(content);
+
+  useEffect(() => {
+    setDraft(content);
+  }, [content]);
+
+  const commitDeletedWords = () => {
+    const removedWordIndexes = getRemovedTranscriptWordIndexes(content, draft);
+    if (removedWordIndexes.length === 0) {
+      setDraft(content);
+      return;
+    }
+    onDeleteWords(removedWordIndexes);
+  };
+
+  return (
+    <textarea
+      className="transcript-sentence-editor"
+      value={draft}
+      aria-label={`Edit transcript at ${timestamp}`}
+      title="Delete words, then click outside or press Ctrl+Enter to cut them from the video and audio"
+      rows={2}
+      onChange={(event) => setDraft(event.currentTarget.value)}
+      onBlur={commitDeletedWords}
+      onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+};
+
 const isVoiceoverClip = (clip: TimelineClip) =>
   clip.track === "audio" &&
   (clip.audioKind === "voiceover" || clip.id.startsWith("voice-"));
@@ -2545,12 +2600,19 @@ const isVoiceoverClip = (clip: TimelineClip) =>
 const isImportedAudioClip = (clip: TimelineClip) =>
   clip.track === "audio" && !clip.linkedClipId && !isVoiceoverClip(clip);
 
+const isTranscriptSettingClip = (clip: TimelineClip) =>
+  clip.track === "caption" &&
+  clip.caption?.generationId?.startsWith("transcript-");
+
 const timelineRowContainsClip = (row: TimelineRow, clip: TimelineClip) => {
   if (row.audioKind === "voiceover") {
     return isVoiceoverClip(clip);
   }
   if (row.audioKind === "imported") {
     return isImportedAudioClip(clip);
+  }
+  if (row.id === "caption" && isTranscriptSettingClip(clip)) {
+    return false;
   }
 
   return row.videoLayer !== undefined
@@ -2618,9 +2680,14 @@ type MediaTrimRangeDrag = {
 
 type StickerInteraction = {
   clipId: string;
-  mode: "move" | "scale" | "rotate";
+  mode: "move" | "resize" | "rotate";
+  handle?: CaptionResizeHandle;
   startX: number;
   startY: number;
+  baseWidth: number;
+  baseHeight: number;
+  previewWidth: number;
+  previewHeight: number;
   originalClips: TimelineClip[];
 };
 
@@ -2751,6 +2818,14 @@ type CaptionResizeDrag = {
 };
 
 type TextRotateDrag = {
+  clipId: string;
+  centerX: number;
+  centerY: number;
+  rotationOffset: number;
+  originalClips: TimelineClip[];
+};
+
+type CaptionRotateDrag = {
   clipId: string;
   centerX: number;
   centerY: number;
@@ -2974,13 +3049,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [, setMediaPreviewFrame] = useState(0);
   const [projectStatus, setProjectStatus] = useState("");
   const [isShortcutHelpOpen, setIsShortcutHelpOpen] = useState(false);
-  const [saveState, setSaveState] = useState<
-    "saved" | "unsaved" | "saving"
-  >("saved");
+  const [saveState, setSaveState] = useState<"saved" | "unsaved" | "saving">(
+    "saved",
+  );
   const [isExporting, setIsExporting] = useState(false);
   const [workspaceLayout, setWorkspaceLayout] =
     useState<WorkspaceLayout>(readWorkspaceLayout);
   const [timelineScale, setTimelineScale] = useState(defaultTimelineScale);
+  const timelineScaleRef = useRef(timelineScale);
   const [playheadFrame, setPlayheadFrame] = useState(0);
   const [timelineHoverFrame, setTimelineHoverFrame] = useState<number | null>(
     null,
@@ -3100,6 +3176,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [textRotateDrag, setTextRotateDrag] = useState<TextRotateDrag | null>(
     null,
   );
+  const [captionRotateDrag, setCaptionRotateDrag] =
+    useState<CaptionRotateDrag | null>(null);
   const [cropInputMode, setCropInputMode] = useState<"sliders" | "manual">(
     "sliders",
   );
@@ -3319,6 +3397,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   selectedClipIdRef.current = selectedClipId;
   selectedClipIdsRef.current = selectedClipIds;
   activeToolRef.current = activeTool;
+  timelineScaleRef.current = timelineScale;
 
   useEffect(() => {
     setSelectedClipIds((currentIds) => {
@@ -3336,9 +3415,60 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     const viewportWidth = timelineScrollRef.current?.clientWidth ?? 0;
     const availableWidth = Math.max(240, viewportWidth - timelineOrigin - 24);
     const nextScale = availableWidth / Math.max(1, projectDuration);
-    setTimelineScale(Math.max(0.35, Math.min(4, nextScale)));
+    const fittedScale = Math.max(
+      minimumTimelineScale,
+      Math.min(maximumTimelineScale, nextScale),
+    );
+    timelineScaleRef.current = fittedScale;
+    setTimelineScale(fittedScale);
     setProjectStatus("Timeline fitted to viewport");
   }, [projectDuration]);
+  const zoomTimelineBy = useCallback(
+    (amount: number, anchorClientX?: number) => {
+      const scrollArea = timelineScrollRef.current;
+      const currentScale = timelineScaleRef.current;
+      const nextScale = Math.max(
+        minimumTimelineScale,
+        Math.min(
+          maximumTimelineScale,
+          Number((currentScale + amount).toFixed(2)),
+        ),
+      );
+
+      if (nextScale === currentScale) return;
+
+      let nextScrollLeft: number | null = null;
+      if (scrollArea) {
+        const bounds = scrollArea.getBoundingClientRect();
+        const anchorOffset = Math.max(
+          0,
+          Math.min(
+            scrollArea.clientWidth,
+            (anchorClientX ?? bounds.left + scrollArea.clientWidth / 2) -
+              bounds.left,
+          ),
+        );
+        const frameAtAnchor = Math.max(
+          0,
+          (scrollArea.scrollLeft + anchorOffset - timelineOrigin) /
+            currentScale,
+        );
+        nextScrollLeft = Math.max(
+          0,
+          timelineOrigin + frameAtAnchor * nextScale - anchorOffset,
+        );
+      }
+
+      timelineScaleRef.current = nextScale;
+      setTimelineScale(nextScale);
+      if (scrollArea && nextScrollLeft !== null) {
+        requestAnimationFrame(() => {
+          scrollArea.scrollLeft = nextScrollLeft;
+        });
+      }
+    },
+    [],
+  );
   const videoPlaybackDuration = useMemo(
     () => getVideoPlaybackDuration(clips),
     [clips],
@@ -3439,17 +3569,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     () => createTimelineTicks(projectDuration, fps),
     [projectDuration],
   );
-  const getPointerTimelineFrame = useCallback((clientX: number) => {
-    const bounds = timelineContentRef.current?.getBoundingClientRect();
-    if (!bounds) return null;
+  const getPointerTimelineFrame = useCallback(
+    (clientX: number) => {
+      const bounds = timelineContentRef.current?.getBoundingClientRect();
+      if (!bounds) return null;
 
-    return getTimelineFrameFromPointer(
-      clientX,
-      bounds.left,
-      timelineOrigin,
-      timelineScale,
-    );
-  }, []);
+      return getTimelineFrameFromPointer(
+        clientX,
+        bounds.left,
+        timelineOrigin,
+        timelineScale,
+      );
+    },
+    [timelineScale],
+  );
 
   const mainClip = clips.find((clip) => clip.track === "main");
   const mainClipSpeed = mainClip?.speed ?? 1;
@@ -3912,17 +4045,39 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     clips,
     "caption",
     timelinePreviewFrame,
-  ).filter((clip) => clip.caption);
-  const transcriptClips = useMemo(
-    () =>
-      clips
-        .filter(
+  ).filter(
+    (clip) =>
+      clip.caption &&
+      !clip.caption.generationId?.startsWith("transcript-"),
+  );
+  const selectedTranscriptSourceClipId = selectedCaptionClip?.caption
+    ?.generationId?.startsWith("transcript-")
+    ? selectedCaptionClip.caption.sourceClipId
+    : selectedCaptionSourceClip
+      ? clips.find(
           (clip) =>
             clip.track === "caption" &&
-            clip.caption?.generationId?.startsWith("transcript-"),
-        )
-        .sort((a, b) => a.start - b.start),
-    [clips],
+            clip.caption?.generationId?.startsWith("transcript-") &&
+            clip.caption.sourceClipId &&
+            (selectedCaptionSourceClip.id === clip.caption.sourceClipId ||
+              selectedCaptionSourceClip.id.startsWith(
+                `${clip.caption.sourceClipId}-speech-`,
+              )),
+        )?.caption?.sourceClipId ?? selectedCaptionSourceClip.id
+      : null;
+  const transcriptClips = useMemo(
+    () =>
+      selectedTranscriptSourceClipId
+        ? clips
+            .filter(
+              (clip) =>
+                clip.track === "caption" &&
+                clip.caption?.generationId?.startsWith("transcript-") &&
+                clip.caption.sourceClipId === selectedTranscriptSourceClipId,
+            )
+            .sort((a, b) => a.start - b.start)
+        : [],
+    [clips, selectedTranscriptSourceClipId],
   );
   const playbackAudioClips = useMemo(
     () => [
@@ -3986,7 +4141,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             },
           ]
         : []),
-      ...(hasClipsOnTrack(clips, "caption")
+      ...(clips.some(
+        (clip) => clip.track === "caption" && !isTranscriptSettingClip(clip),
+      )
         ? [
             {
               key: "caption",
@@ -4163,7 +4320,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         }
       });
 
-      const removedClips = currentClips.filter((clip) => selectedIds.has(clip.id));
+      const removedClips = currentClips.filter((clip) =>
+        selectedIds.has(clip.id),
+      );
       const laneKey = (clip: TimelineClip) =>
         clip.track === "main" || clip.track === "upper"
           ? `video:${getVideoLayer(clip) ?? clip.track}`
@@ -4194,7 +4353,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         (event.key !== "Delete" && event.key !== "Backspace") ||
         event.repeat ||
         event.defaultPrevented ||
-        !selectedClipIdRef.current
+        (!selectedClipIdRef.current && selectedClipIdsRef.current.length === 0)
       ) {
         return;
       }
@@ -4214,13 +4373,22 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       const clipIds =
         selectedClipIdsRef.current.length > 0
           ? selectedClipIdsRef.current
-          : [selectedClipIdRef.current];
+          : selectedClipIdRef.current
+            ? [selectedClipIdRef.current]
+            : [];
+      if (clipIds.length === 0) return;
       commitClipChange((currentClips) =>
         deleteTimelineClipsWithRipple(currentClips, clipIds),
       );
+      setIsPreviewPlaying(false);
       setSelectedClipId(null);
       setSelectedClipIds([]);
       setSelectedVideoLayer(null);
+      setStickerInteraction(null);
+      setCutoutInteraction(null);
+      setTextPreviewDrag(null);
+      setCaptionPreviewDrag(null);
+      setPreviewAlignmentGuides({ horizontal: false, vertical: false });
       setProjectStatus(
         `${clipIds.length} selected clip${clipIds.length === 1 ? "" : "s"} deleted`,
       );
@@ -5065,6 +5233,93 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setCaptionDraft(content);
   };
 
+  const removeTranscriptSentence = (transcriptClipId: string) => {
+    const transcriptClip = clips.find((clip) => clip.id === transcriptClipId);
+    const sourceClipId = transcriptClip?.caption?.sourceClipId;
+    if (!transcriptClip || !sourceClipId) return;
+
+    const nextClips = removeTranscriptSentenceFromLinkedVideo(
+      clips,
+      transcriptClipId,
+      fps,
+    );
+    if (nextClips === clips) {
+      setCaptionStatus({
+        kind: "error",
+        message: "The matching video and linked audio could not be edited.",
+      });
+      return;
+    }
+
+    const sourceCandidates = nextClips.filter(
+      (clip) =>
+        (clip.track === "main" ||
+          clip.track === "upper" ||
+          clip.track === "cutout") &&
+        (clip.id === sourceClipId ||
+          clip.id.startsWith(`${sourceClipId}-speech-`)),
+    );
+    const nextSourceClip =
+      sourceCandidates.find(
+        (clip) =>
+          clip.start <= transcriptClip.start &&
+          clip.start + clip.duration > transcriptClip.start,
+      ) ?? sourceCandidates[0];
+
+    commitClipChange(() => nextClips);
+    setSelectedClipId(nextSourceClip?.id ?? null);
+    setSelectedTrack(nextSourceClip?.track ?? "main");
+    setPreviewMode("timeline");
+    setIsPreviewPlaying(false);
+    setCaptionStatus({
+      kind: "success",
+      message: "Removed the sentence with its matching video and audio.",
+    });
+  };
+
+  const removeTranscriptWords = (
+    transcriptClipId: string,
+    wordIndexes: number[],
+  ) => {
+    const transcriptClip = clips.find((clip) => clip.id === transcriptClipId);
+    const sourceClipId = transcriptClip?.caption?.sourceClipId;
+    if (!transcriptClip || !sourceClipId || wordIndexes.length === 0) return;
+
+    const nextClips = removeTranscriptWordsFromLinkedVideo(
+      clips,
+      wordIndexes.map((wordIndex) => ({
+        clipId: transcriptClipId,
+        wordIndex,
+      })),
+      fps,
+    );
+    if (nextClips === clips) {
+      setCaptionStatus({
+        kind: "error",
+        message: "Those words could not be matched to the linked video and audio.",
+      });
+      return;
+    }
+
+    const nextSourceClip = nextClips.find(
+      (clip) =>
+        (clip.track === "main" ||
+          clip.track === "upper" ||
+          clip.track === "cutout") &&
+        (clip.id === sourceClipId ||
+          clip.id.startsWith(`${sourceClipId}-speech-`)),
+    );
+    commitClipChange(() => nextClips);
+    setSelectedClipId(nextSourceClip?.id ?? null);
+    setSelectedTrack(nextSourceClip?.track ?? "main");
+    setPreviewMode("timeline");
+    setIsPreviewPlaying(false);
+    setCaptionStatus({
+      kind: "success",
+      message: `Removed ${wordIndexes.length} word${wordIndexes.length === 1 ? "" : "s"} from the transcript, video, and audio.`,
+    });
+  };
+
   const updateSelectedTextRotation = (rotation: number) => {
     commitClipChange((currentClips) =>
       setTextRotationById(currentClips, selectedTextClip?.id ?? null, rotation),
@@ -5784,7 +6039,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       return;
     }
 
-    const nextClips = splitClipByIdAtFrame(clips, targetClip.id, playheadFrame);
+    const nextClips = splitClipByIdAtFrame(
+      clips,
+      targetClip.id,
+      playheadFrame,
+      { splitLinkedAudio: false },
+    );
     if (nextClips === clips) {
       setProjectStatus("Move the red playhead inside the selected clip");
       return;
@@ -5867,24 +6127,36 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   };
 
   const duplicateSelectedClip = useCallback(() => {
-    if (!selectedClipId) return;
+    const clipIds =
+      selectedClipIds.length > 0
+        ? selectedClipIds
+        : selectedClipId
+          ? [selectedClipId]
+          : [];
+    if (clipIds.length === 0) return;
 
     const duplicatePrefix = `duplicate-${Date.now()}`;
-    const sourceClip = clips.find((clip) => clip.id === selectedClipId);
+    const sourceClip = clips.find((clip) => clip.id === clipIds[0]);
     commitClipChange((currentClips) =>
-      duplicateClipById(currentClips, selectedClipId, duplicatePrefix),
+      clipIds.reduce(
+        (nextClips, clipId, index) =>
+          duplicateClipById(nextClips, clipId, `${duplicatePrefix}-${index}`),
+        currentClips,
+      ),
     );
     setSelectedClipId(
       sourceClip?.track === "audio" && sourceClip.linkedClipId
-        ? `${duplicatePrefix}-video`
-        : `${duplicatePrefix}-video`,
+        ? `${duplicatePrefix}-0-video`
+        : `${duplicatePrefix}-0-video`,
     );
+    selectedClipIdsRef.current = [];
+    setSelectedClipIds([]);
     setSelectedTrack("upper");
     setPreviewMode("timeline");
     setIsAudioTrackVisible(
       sourceClip?.track === "audio" || Boolean(sourceClip?.linkedClipId),
     );
-  }, [clips, commitClipChange, selectedClipId]);
+  }, [clips, commitClipChange, selectedClipId, selectedClipIds]);
 
   useEffect(() => {
     const handleDuplicateShortcut = (event: KeyboardEvent) => {
@@ -6219,9 +6491,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   void selectVideoLayerClipAtFrame;
 
   const selectWholeVideoLayer = (videoLayer: number) => {
+    const rowClipIds = clips
+      .filter((clip) => getVideoLayer(clip) === videoLayer)
+      .map((clip) => clip.id);
     setSelectedVideoLayer(videoLayer);
-    selectedClipIdsRef.current = [];
-    setSelectedClipIds([]);
+    selectedClipIdsRef.current = rowClipIds;
+    setSelectedClipIds(rowClipIds);
     setSelectedClipId(null);
     setSelectedTrack(videoLayer === 0 ? "main" : "upper");
     setIsAudioTrackVisible(
@@ -7403,6 +7678,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           x: Math.min(95, (selectedClip.sticker?.x ?? 50) + 4),
           y: Math.min(95, (selectedClip.sticker?.y ?? 50) + 4),
           scale: selectedClip.sticker?.scale ?? 1,
+          scaleX: selectedClip.sticker?.scaleX,
+          scaleY: selectedClip.sticker?.scaleY,
           rotation: selectedClip.sticker?.rotation ?? 0,
         },
       },
@@ -7414,7 +7691,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     event: PointerEvent<HTMLElement>,
     clip: TimelineClip,
     mode: StickerInteraction["mode"],
+    handle?: CaptionResizeHandle,
   ) => {
+    const stickerBounds = event.currentTarget
+      .closest<HTMLElement>(".preview-sticker")
+      ?.getBoundingClientRect();
+    const previewBounds = previewWindowRef.current?.getBoundingClientRect();
+    if (!stickerBounds || !previewBounds) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -7423,8 +7706,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setStickerInteraction({
       clipId: clip.id,
       mode,
+      handle,
       startX: event.clientX,
       startY: event.clientY,
+      baseWidth:
+        stickerBounds.width /
+        Math.max(0.08, clip.sticker?.scaleX ?? clip.sticker?.scale ?? 1),
+      baseHeight:
+        stickerBounds.height /
+        Math.max(0.08, clip.sticker?.scaleY ?? clip.sticker?.scale ?? 1),
+      previewWidth: previewBounds.width,
+      previewHeight: previewBounds.height,
       originalClips: clips,
     });
   };
@@ -7796,6 +8088,38 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       centerY,
       rotationOffset:
         clip.text.rotation -
+        getManualRotationAngle(
+          centerX,
+          centerY,
+          event.clientX,
+          event.clientY,
+          0,
+        ),
+      originalClips: clips,
+    });
+  };
+
+  const startCaptionRotateDrag = (
+    event: PointerEvent<HTMLElement>,
+    clip: TimelineClip,
+  ) => {
+    const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+    if (!bounds || !clip.caption) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    selectTimelineClip(clip);
+    setCaptionPreviewDrag(null);
+    setCaptionResizeDrag(null);
+    const centerX = bounds.left + bounds.width / 2;
+    const centerY = bounds.top + bounds.height / 2;
+    setCaptionRotateDrag({
+      clipId: clip.id,
+      centerX,
+      centerY,
+      rotationOffset:
+        (clip.caption.rotation ?? 0) -
         getManualRotationAngle(
           centerX,
           centerY,
@@ -9241,16 +9565,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             pointerFrame - (pointerDrag.grabOffsetFrames ?? 0);
           const selectedIds = new Set(pointerDrag.timelineClipIds);
           const movingClips = clips.filter((clip) => selectedIds.has(clip.id));
-          const groupStart = Math.min(
-            ...movingClips.map((clip) => clip.start),
-          );
+          const groupStart = Math.min(...movingClips.map((clip) => clip.start));
           const groupEnd = Math.max(
             ...movingClips.map((clip) => clip.start + clip.duration),
           );
           const snappedGroupStart = getSnappedTimelineStart({
             currentClips: clips,
             movingClipIds: [...selectedIds],
-            targetStart: groupStart + Math.round(targetStart - draggedClip.start),
+            targetStart:
+              groupStart + Math.round(targetStart - draggedClip.start),
             duration: groupEnd - groupStart,
           });
           const requestedDelta = snappedGroupStart - groupStart;
@@ -9408,7 +9731,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
-  };
+    };
   }, [
     clips,
     commitClipChange,
@@ -10236,6 +10559,51 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   }, [textRotateDrag]);
 
   useEffect(() => {
+    if (!captionRotateDrag) return;
+
+    const handlePointerMove = (event: globalThis.PointerEvent) => {
+      setTimelineHistory((currentHistory) => ({
+        ...currentHistory,
+        present: setCaptionStyleById(
+          captionRotateDrag.originalClips,
+          captionRotateDrag.clipId,
+          {
+            rotation: getManualRotationAngle(
+              captionRotateDrag.centerX,
+              captionRotateDrag.centerY,
+              event.clientX,
+              event.clientY,
+              captionRotateDrag.rotationOffset,
+            ),
+          },
+        ),
+      }));
+    };
+
+    const finishRotate = () => {
+      setTimelineHistory((currentHistory) =>
+        currentHistory.present === captionRotateDrag.originalClips
+          ? currentHistory
+          : {
+              past: [...currentHistory.past, captionRotateDrag.originalClips],
+              present: currentHistory.present,
+              future: [],
+            },
+      );
+      setCaptionRotateDrag(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishRotate, { once: true });
+    window.addEventListener("pointercancel", finishRotate, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishRotate);
+      window.removeEventListener("pointercancel", finishRotate);
+    };
+  }, [captionRotateDrag]);
+
+  useEffect(() => {
     if (!stickerInteraction) return;
 
     const originalClip = stickerInteraction.originalClips.find(
@@ -10268,12 +10636,79 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           x: Math.max(0, Math.min(100, snappedPosition.x)),
           y: Math.max(0, Math.min(100, snappedPosition.y)),
         });
-      } else if (stickerInteraction.mode === "scale") {
+      } else if (
+        stickerInteraction.mode === "resize" &&
+        stickerInteraction.handle
+      ) {
+        const handleVectors: Record<
+          CaptionResizeHandle,
+          { x: number; y: number }
+        > = {
+          "top-left": { x: -1, y: -1 },
+          top: { x: 0, y: -1 },
+          "top-right": { x: 1, y: -1 },
+          right: { x: 1, y: 0 },
+          "bottom-right": { x: 1, y: 1 },
+          bottom: { x: 0, y: 1 },
+          "bottom-left": { x: -1, y: 1 },
+          left: { x: -1, y: 0 },
+        };
+        const vector = handleVectors[stickerInteraction.handle];
+        const radians = (originalTransform.rotation * Math.PI) / 180;
+        const cosine = Math.cos(radians);
+        const sine = Math.sin(radians);
+        const localDeltaX = deltaX * cosine + deltaY * sine;
+        const localDeltaY = -deltaX * sine + deltaY * cosine;
+        const startScaleX =
+          originalTransform.scaleX ?? originalTransform.scale;
+        const startScaleY =
+          originalTransform.scaleY ?? originalTransform.scale;
+        const startWidth = stickerInteraction.baseWidth * startScaleX;
+        const startHeight = stickerInteraction.baseHeight * startScaleY;
+        const nextWidth =
+          vector.x === 0
+            ? startWidth
+            : Math.max(
+                stickerInteraction.baseWidth * 0.2,
+                Math.min(
+                  stickerInteraction.baseWidth * 4,
+                  startWidth + vector.x * localDeltaX,
+                ),
+              );
+        const nextHeight =
+          vector.y === 0
+            ? startHeight
+            : Math.max(
+                stickerInteraction.baseHeight * 0.2,
+                Math.min(
+                  stickerInteraction.baseHeight * 4,
+                  startHeight + vector.y * localDeltaY,
+                ),
+              );
+        const localShiftX = (vector.x * (nextWidth - startWidth)) / 2;
+        const localShiftY = (vector.y * (nextHeight - startHeight)) / 2;
+        const worldShiftX = localShiftX * cosine - localShiftY * sine;
+        const worldShiftY = localShiftX * sine + localShiftY * cosine;
         nextTransform = {
           ...originalTransform,
-          scale: Math.max(
-            0.2,
-            Math.min(4, originalTransform.scale + (deltaX + deltaY) / 180),
+          scale: 1,
+          scaleX: nextWidth / stickerInteraction.baseWidth,
+          scaleY: nextHeight / stickerInteraction.baseHeight,
+          x: Math.max(
+            0,
+            Math.min(
+              100,
+              originalTransform.x +
+                (worldShiftX / stickerInteraction.previewWidth) * 100,
+            ),
+          ),
+          y: Math.max(
+            0,
+            Math.min(
+              100,
+              originalTransform.y +
+                (worldShiftY / stickerInteraction.previewHeight) * 100,
+            ),
           ),
         };
       } else {
@@ -11362,21 +11797,32 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     aria-label="Transcript segments"
                   >
                     {transcriptClips.map((clip) => (
-                      <button
+                      <div
                         className="transcript-segment"
                         key={clip.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedClipId(clip.id);
-                          setSelectedTrack("caption");
-                          setCaptionMode("manual");
-                          setActiveTool("captions");
-                          setPreviewMode("timeline");
-                        }}
                       >
-                        <span>{formatTimelineClock(clip.start, fps)}</span>
-                        <strong>{clip.caption?.content}</strong>
-                      </button>
+                        <div className="transcript-sentence-line">
+                          <span className="transcript-sentence-time">
+                            {formatTimelineClock(clip.start, fps)}
+                          </span>
+                          <TranscriptSentenceEditor
+                            content={clip.caption?.content ?? ""}
+                            timestamp={formatTimelineClock(clip.start, fps)}
+                            onDeleteWords={(wordIndexes) =>
+                              removeTranscriptWords(clip.id, wordIndexes)
+                            }
+                          />
+                        </div>
+                        <button
+                          className="transcript-remove-sentence"
+                          type="button"
+                          aria-label={`Remove sentence: ${clip.caption?.content ?? clip.label}`}
+                          title="Remove sentence with matching video and audio"
+                          onClick={() => removeTranscriptSentence(clip.id)}
+                        >
+                          🗑
+                        </button>
+                      </div>
                     ))}
                   </div>
                 ) : null}
@@ -12311,7 +12757,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 if (
                   target instanceof HTMLElement &&
                   target.closest(
-                    "button, input, select, textarea, [contenteditable='true']",
+                    "button, input, textarea, select, [contenteditable='true']",
                   )
                 ) {
                   return;
@@ -12540,31 +12986,16 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                   }}
                                   onPointerDown={startManualAdjustmentPan}
                                 >
-                                {[
-                                  "top-left",
-                                  "top-right",
-                                  "bottom-right",
-                                  "bottom-left",
-                                ].map((corner) => (
-                                  <button
-                                    aria-label={`Resize video from ${corner}`}
-                                    className={`preview-video-resize-handle preview-video-resize-handle-${corner}`}
-                                    key={corner}
-                                    type="button"
-                                    onPointerDown={startPreviewScale}
-                                    onPointerMove={
-                                      updatePreviewScaleFromPointer
-                                    }
-                                    onPointerUp={finishPreviewScale}
-                                    onPointerCancel={finishPreviewScale}
-                                  />
-                                ))}
-                                {["top", "right", "bottom", "left"].map(
-                                  (edge) => (
+                                  {[
+                                    "top-left",
+                                    "top-right",
+                                    "bottom-right",
+                                    "bottom-left",
+                                  ].map((corner) => (
                                     <button
-                                      aria-label={`Resize video from ${edge} edge`}
-                                      className={`preview-video-edge-handle preview-video-edge-handle-${edge}`}
-                                      key={edge}
+                                      aria-label={`Resize video from ${corner}`}
+                                      className={`preview-video-resize-handle preview-video-resize-handle-${corner}`}
+                                      key={corner}
                                       type="button"
                                       onPointerDown={startPreviewScale}
                                       onPointerMove={
@@ -12573,8 +13004,23 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                       onPointerUp={finishPreviewScale}
                                       onPointerCancel={finishPreviewScale}
                                     />
-                                  ),
-                                )}
+                                  ))}
+                                  {["top", "right", "bottom", "left"].map(
+                                    (edge) => (
+                                      <button
+                                        aria-label={`Resize video from ${edge} edge`}
+                                        className={`preview-video-edge-handle preview-video-edge-handle-${edge}`}
+                                        key={edge}
+                                        type="button"
+                                        onPointerDown={startPreviewScale}
+                                        onPointerMove={
+                                          updatePreviewScaleFromPointer
+                                        }
+                                        onPointerUp={finishPreviewScale}
+                                        onPointerCancel={finishPreviewScale}
+                                      />
+                                    ),
+                                  )}
                                   <button
                                     aria-label="Rotate video"
                                     className="preview-video-rotate-handle"
@@ -13016,6 +13462,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               fontSize: `${caption.fontSize}px`,
                               fontFamily: caption.fontFamily ?? "Inter",
                               fontWeight: caption.fontWeight ?? "900",
+                              rotate: `${caption.rotation ?? 0}deg`,
                               background: captionDisplayColors.backgroundColor,
                               ...getTextEffectStyle(caption.effect ?? "shadow"),
                               ...getCaptionAnimationStyle(
@@ -13033,6 +13480,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             {caption.content}
                             {selectedClipId === captionClip.id ? (
                               <>
+                                <span
+                                  className="caption-rotate-handle"
+                                  role="button"
+                                  aria-label="Rotate caption"
+                                  title="Drag to rotate caption"
+                                  onPointerDown={(event) =>
+                                    startCaptionRotateDrag(event, captionClip)
+                                  }
+                                >
+                                  {"\u21bb"}
+                                </span>
                                 <span
                                   className="caption-resize-handle caption-resize-handle-top-left"
                                   onPointerDown={(event) =>
@@ -13132,6 +13590,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           scale: 1,
                           rotation: 0,
                         };
+                        const stickerScaleX =
+                          transform.scaleX ?? transform.scale;
+                        const stickerScaleY =
+                          transform.scaleY ?? transform.scale;
+                        const fixedStickerControlScale: CSSProperties = {
+                          scale: `${1 / Math.max(0.08, stickerScaleX)} ${1 / Math.max(0.08, stickerScaleY)}`,
+                        };
                         const isSelected = selectedClipId === stickerClip.id;
                         return (
                           <div
@@ -13141,7 +13606,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               left: `${transform.x}%`,
                               top: `${transform.y}%`,
                               translate: "-50% -50%",
-                              scale: transform.scale,
+                              scale: `${stickerScaleX} ${stickerScaleY}`,
                               rotate: `${transform.rotation}deg`,
                               zIndex: 30 + stickerIndex,
                             }}
@@ -13173,20 +13638,36 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                       "rotate",
                                     )
                                   }
-                                />
-                                <button
-                                  className="sticker-scale-handle"
-                                  type="button"
-                                  aria-label="Resize sticker"
-                                  title="Drag to resize"
-                                  onPointerDown={(event) =>
-                                    startStickerInteraction(
-                                      event,
-                                      stickerClip,
-                                      "scale",
-                                    )
-                                  }
-                                />
+                                >
+                                  {"\u21bb"}
+                                </button>
+                                {(
+                                  [
+                                    "top-left",
+                                    "top",
+                                    "top-right",
+                                    "right",
+                                    "bottom-right",
+                                    "bottom",
+                                    "bottom-left",
+                                    "left",
+                                  ] as CaptionResizeHandle[]
+                                ).map((handle) => (
+                                  <span
+                                    className={`sticker-resize-handle sticker-resize-handle-${handle}`}
+                                    key={handle}
+                                    role="presentation"
+                                    style={fixedStickerControlScale}
+                                    onPointerDown={(event) =>
+                                      startStickerInteraction(
+                                        event,
+                                        stickerClip,
+                                        "resize",
+                                        handle,
+                                      )
+                                    }
+                                  />
+                                ))}
                                 <div className="sticker-quick-actions">
                                   <button
                                     type="button"
@@ -14117,7 +14598,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               aria-label="Duplicate selected clip"
               title="Duplicate selected clip"
               onClick={duplicateSelectedClip}
-              disabled={!selectedClipId}
+              disabled={selectedClipIds.length === 0 && !selectedClipId}
             >
               ⧉
             </button>
@@ -14155,37 +14636,43 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               🗑
             </button>
           </div>
-          <div className="timeline-zoom-controls" aria-label="Timeline zoom">
+          <div
+            className="timeline-zoom-controls"
+            aria-label="Timeline zoom"
+            title="Scroll here to zoom the timeline"
+            onWheel={(event) => {
+              event.preventDefault();
+              zoomTimelineBy(
+                event.deltaY < 0 ? timelineZoomStep : -timelineZoomStep,
+              );
+            }}
+          >
             <button
               type="button"
               aria-label="Zoom timeline out"
               title="Zoom out"
-              onClick={() =>
-                setTimelineScale((currentScale) =>
-                  Math.max(0.35, Number((currentScale - 0.15).toFixed(2))),
-                )
-              }
+              onClick={() => zoomTimelineBy(-timelineZoomStep)}
             >
               −
             </button>
             <input
               type="range"
-              min="0.35"
-              max="4"
+              min={minimumTimelineScale}
+              max={maximumTimelineScale}
               step="0.05"
               value={timelineScale}
               aria-label="Timeline zoom level"
-              onChange={(event) => setTimelineScale(Number(event.target.value))}
+              onChange={(event) => {
+                const nextScale = Number(event.target.value);
+                timelineScaleRef.current = nextScale;
+                setTimelineScale(nextScale);
+              }}
             />
             <button
               type="button"
               aria-label="Zoom timeline in"
               title="Zoom in"
-              onClick={() =>
-                setTimelineScale((currentScale) =>
-                  Math.min(4, Number((currentScale + 0.15).toFixed(2))),
-                )
-              }
+              onClick={() => zoomTimelineBy(timelineZoomStep)}
             >
               +
             </button>
@@ -14202,7 +14689,18 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             {formatTimelineTimecode(projectDuration, fps)}
           </strong>
         </div>
-        <div className="timeline-scroll" ref={timelineScrollRef}>
+        <div
+          className="timeline-scroll"
+          ref={timelineScrollRef}
+          onWheel={(event) => {
+            if (!event.ctrlKey && !event.metaKey) return;
+            event.preventDefault();
+            zoomTimelineBy(
+              event.deltaY < 0 ? timelineZoomStep : -timelineZoomStep,
+              event.clientX,
+            );
+          }}
+        >
           <div
             className="timeline-content"
             ref={timelineContentRef}
@@ -14272,8 +14770,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   </div>
                   <div
                     className={`timeline-track ${
-                      track.videoLayer !== undefined &&
-                      selectedVideoLayer === track.videoLayer
+                      (track.videoLayer !== undefined &&
+                        selectedVideoLayer === track.videoLayer) ||
+                      selectedClipIds.some((clipId) => {
+                        const rowClip = clips.find(
+                          (clip) => clip.id === clipId,
+                        );
+                        return (
+                          rowClip !== undefined &&
+                          timelineRowContainsClip(track, rowClip)
+                        );
+                      })
                         ? "selected-timeline-row"
                         : ""
                     } ${track.id === "upper" ? "overlay-timeline-track" : ""} ${
@@ -14336,8 +14843,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           ? "drop-target"
                           : ""
                       } ${
-                        track.videoLayer !== undefined &&
-                        selectedVideoLayer === track.videoLayer
+                        (track.videoLayer !== undefined &&
+                          selectedVideoLayer === track.videoLayer) ||
+                        selectedClipIds.some((clipId) => {
+                          const rowClip = clips.find(
+                            (clip) => clip.id === clipId,
+                          );
+                          return (
+                            rowClip !== undefined &&
+                            timelineRowContainsClip(track, rowClip)
+                          );
+                        })
                           ? "selected-track-lane"
                           : ""
                       } ${track.id === "upper" ? "overlay-track-lane" : ""} ${
@@ -14357,12 +14873,21 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           suppressTrackLabelClickRef.current = false;
                           return;
                         }
-                        if (
-                          event.target === event.currentTarget &&
-                          track.videoLayer !== undefined
-                        ) {
+                        if (event.target !== event.currentTarget) return;
+                        if (track.videoLayer !== undefined) {
                           selectWholeVideoLayer(track.videoLayer);
+                          return;
                         }
+                        const rowClipIds = clips
+                          .filter((clip) =>
+                            timelineRowContainsClip(track, clip),
+                          )
+                          .map((clip) => clip.id);
+                        setSelectedVideoLayer(null);
+                        selectedClipIdsRef.current = rowClipIds;
+                        setSelectedClipIds(rowClipIds);
+                        setSelectedClipId(null);
+                        setSelectedTrack(track.id);
                       }}
                       onDoubleClick={(event) => {
                         if (event.target !== event.currentTarget) {
@@ -15046,14 +15571,38 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           </button>
         </div>
         <div className="shortcut-help-list">
-          <span><kbd>Space</kbd><em>Play / pause</em></span>
-          <span><kbd>S</kbd><em>Split at playhead</em></span>
-          <span><kbd>D</kbd><em>Duplicate selected clip</em></span>
-          <span><kbd>Ctrl</kbd> + <kbd>A</kbd><em>Select all clips</em></span>
-          <span><kbd>Ctrl</kbd> + <kbd>Z</kbd><em>Undo</em></span>
-          <span><kbd>Ctrl</kbd> + <kbd>Y</kbd><em>Redo</em></span>
-          <span><kbd>Esc</kbd><em>Clear selection</em></span>
-          <span><kbd>Home</kbd> / <kbd>End</kbd><em>Jump to start / end</em></span>
+          <span>
+            <kbd>Space</kbd>
+            <em>Play / pause</em>
+          </span>
+          <span>
+            <kbd>S</kbd>
+            <em>Split at playhead</em>
+          </span>
+          <span>
+            <kbd>D</kbd>
+            <em>Duplicate selected clip</em>
+          </span>
+          <span>
+            <kbd>Ctrl</kbd> + <kbd>A</kbd>
+            <em>Select all clips</em>
+          </span>
+          <span>
+            <kbd>Ctrl</kbd> + <kbd>Z</kbd>
+            <em>Undo</em>
+          </span>
+          <span>
+            <kbd>Ctrl</kbd> + <kbd>Y</kbd>
+            <em>Redo</em>
+          </span>
+          <span>
+            <kbd>Esc</kbd>
+            <em>Clear selection</em>
+          </span>
+          <span>
+            <kbd>Home</kbd> / <kbd>End</kbd>
+            <em>Jump to start / end</em>
+          </span>
         </div>
       </dialog>
 

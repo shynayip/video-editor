@@ -12,12 +12,22 @@ test("snaps preview objects to the horizontal and vertical center guides", () =>
   assert.deepEqual(snapPreviewPositionToCenter({ x: 49, y: 51 }), {
     x: 50,
     y: 50,
-    guides: { horizontal: true, vertical: true },
+    guides: {
+      horizontal: true,
+      vertical: true,
+      horizontalPositions: [50],
+      verticalPositions: [50],
+    },
   });
   assert.deepEqual(snapPreviewPositionToCenter({ x: 42, y: 51 }), {
     x: 42,
     y: 50,
-    guides: { horizontal: true, vertical: false },
+    guides: {
+      horizontal: true,
+      vertical: false,
+      horizontalPositions: [50],
+      verticalPositions: [],
+    },
   });
 });
 
@@ -25,7 +35,12 @@ test("snaps moved video and image offsets to the canvas center", () => {
   assert.deepEqual(snapPreviewOffsetToCenter({ x: 1, y: -1 }), {
     x: 0,
     y: 0,
-    guides: { horizontal: true, vertical: true },
+    guides: {
+      horizontal: true,
+      vertical: true,
+      horizontalPositions: [50],
+      verticalPositions: [50],
+    },
   });
 });
 
@@ -56,12 +71,19 @@ test("renders non-interactive center alignment guides during preview moves", () 
     "utf8",
   );
 
-  assert.match(source, /previewAlignmentGuides\.horizontal/);
-  assert.match(source, /previewAlignmentGuides\.vertical/);
+  assert.match(source, /renderPreviewAlignmentGuides\(previewAlignmentGuides\)/);
   assert.match(source, /preview-alignment-guide-horizontal/);
   assert.match(source, /preview-alignment-guide-vertical/);
   assert.match(
     css,
     /\.preview-alignment-guides\s*\{[^}]*pointer-events:\s*none/s,
+  );
+  assert.match(
+    css,
+    /\.preview-alignment-guide-vertical\s*\{[^}]*background:\s*var\(--theme-yellow\)/s,
+  );
+  assert.match(
+    css,
+    /\.preview-alignment-guide-horizontal\s*\{[^}]*background:\s*var\(--theme-yellow\)/s,
   );
 });

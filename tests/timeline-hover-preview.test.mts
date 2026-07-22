@@ -11,6 +11,13 @@ test("a timeline video resyncs to the yellow preview frame after loading", () =>
   );
 });
 
+test("keeps pointer-to-frame conversion synchronized with timeline zoom", () => {
+  assert.match(
+    source,
+    /const getPointerTimelineFrame = useCallback\([\s\S]*?getTimelineFrameFromPointer\([\s\S]*?timelineScale[\s\S]*?\[timelineScale\],\s*\);/,
+  );
+});
+
 test("starting a timeline selection does not clear the pinned preview frame", () => {
   const selectionStart = source.slice(
     source.indexOf("const startTimelineSelection"),

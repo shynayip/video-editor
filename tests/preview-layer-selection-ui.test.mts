@@ -11,15 +11,14 @@ const stylesheetSource = await readFile(
   "utf8",
 );
 
-test("keeps selected video controls on their video layer", () => {
+test("keeps selected video controls below clickable overlays", () => {
   assert.match(
-    compositionSource,
-    /className="preview-video-transform-shell"[\s\S]*?zIndex:\s*getPreviewVideoLayerZIndex\(selectedClip\)/,
-  );
-  assert.doesNotMatch(
     stylesheetSource,
-    /\.preview-video-transform-shell\s*\{[^}]*z-index:\s*145/s,
+    /\.preview-video-transform-shell\s*\{[^}]*z-index:\s*10/s,
   );
+  assert.match(compositionSource, /zIndex:\s*24\s*\+\s*captionIndex/);
+  assert.match(compositionSource, /zIndex:\s*30\s*\+\s*stickerIndex/);
+  assert.match(compositionSource, /zIndex:\s*50\s*\+\s*textIndex/);
 });
 
 test("keeps cutouts above ordinary video layers and pointer-selectable", () => {

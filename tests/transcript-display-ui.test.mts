@@ -19,57 +19,51 @@ test("shows transcript segments as timestamp-first sentences", () => {
 test("keeps transcript-generated captions out of the video preview", () => {
   assert.match(
     compositionSource,
-    /const previewCaptionClips = activeCaptionClips\.filter\([\s\S]*!clip\.caption\?\.generationId\?\.startsWith\("transcript-"\)/,
-  );
-  assert.match(
-    compositionSource,
-    /previewCaptionClips\.map\(\(captionClip, captionIndex\) =>/,
+    /const activeCaptionClips =[\s\S]*!clip\.caption\.generationId\?\.startsWith\("transcript-"\)/,
   );
 });
 
 test("shows transcript sentences only for the selected video row", () => {
   assert.match(
     compositionSource,
-    /const selectedTranscriptSourceClipIds = useMemo\([\s\S]*new Set\(transcriptSourceClips\.map\(\(clip\) => clip\.id\)\)/,
+    /const selectedTranscriptSourceClipId =[\s\S]*selectedCaptionSourceClip\?\.id/,
   );
   assert.match(
     compositionSource,
-    /clip\.caption\.sourceClipId[\s\S]*selectedTranscriptSourceClipIds\.has\([\s\S]*clip\.caption\.sourceClipId/,
+    /clip\.caption\.sourceClipId === selectedTranscriptSourceClipId/,
   );
   assert.match(
     compositionSource,
-    /Selected row: \{selectedTranscriptRowLabel\}/,
+    /\[clips, selectedTranscriptSourceClipId\]/,
   );
 });
 
-test("keeps word and sentence deletion linked to video and audio edits", () => {
-  assert.doesNotMatch(
-    compositionSource,
-    /className="transcript-sentence-editor"[\s\S]{0,900}onBlur=/,
-  );
+test("keeps sentence deletion linked to video and audio edits", () => {
   assert.match(
     compositionSource,
-    /const TranscriptSentenceEditor[\s\S]*onChange=\{\(event\) => setDraft\(event\.currentTarget\.value\)\}/,
+    /const removeTranscriptSentence =[\s\S]*removeTranscriptSentenceFromLinkedVideo\(/,
   );
-  assert.match(compositionSource, /event\.key === "Enter"/);
-  assert.match(compositionSource, /className="transcript-sentence-done"/);
-  assert.match(compositionSource, /onClick=\{saveDraft\}/);
-  assert.match(compositionSource, /removeTranscriptWordsFromLinkedVideo\(/);
+  assert.match(compositionSource, /className="transcript-remove-sentence"/);
+  assert.match(
+    compositionSource,
+    /onClick=\{\(\) => removeTranscriptSentence\(clip\.id\)\}/,
+  );
   assert.match(compositionSource, /setIsPreviewPlaying\(false\)/);
 });
 
-test("edits transcript text without deleting its caption box or cutting media", () => {
+test("edits selected caption text without deleting its box or cutting media", () => {
   const handlerStart = compositionSource.indexOf(
-    "const commitTranscriptSentenceEdit",
+    "const commitSelectedCaptionContent",
   );
   const handlerEnd = compositionSource.indexOf(
-    "const removeAllTranscriptFillers",
+    "const updateSelectedTextRotation",
     handlerStart,
   );
   const handler = compositionSource.slice(handlerStart, handlerEnd);
 
-  assert.match(handler, /label: cleanedText \|\| "Empty caption"/);
-  assert.match(handler, /caption: \{ \.\.\.clip\.caption, content: cleanedText \}/);
+  assert.match(handler, /updateSelectedCaptionContent\(content\)/);
+  assert.match(handler, /setCaptionDraft\(content\)/);
+  assert.doesNotMatch(handler, /deleteClipById/);
   assert.doesNotMatch(handler, /removeTranscriptWordsFromLinkedVideo/);
   assert.doesNotMatch(handler, /setSelectedClipId\(null\)/);
 });

@@ -12200,7 +12200,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           right: `${-25 / Math.max(0.08, cutoutScaleX)}px`,
                         };
                         const isSelected = selectedClipId === cutoutClip.id;
-                        const controlBoxStyle: CSSProperties = { inset: 0 };
+                        const subjectBounds = transform.subjectBounds;
+                        const controlBoxStyle: CSSProperties = subjectBounds
+                          ? {
+                              left: `${subjectBounds.left}%`,
+                              top: `${subjectBounds.top}%`,
+                              width: `${subjectBounds.width}%`,
+                              height: `${subjectBounds.height}%`,
+                            }
+                          : { inset: 0 };
                         const isMasking =
                           isSelected &&
                           (cutoutBrushMode === "erase" ||

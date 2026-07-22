@@ -31,10 +31,18 @@ test("effect transforms are not applied to the media alone", () => {
   assert.doesNotMatch(mediaStyle, /\brotate:/);
 });
 
-test("selection box always covers the complete cutout canvas", () => {
+test("selection box wraps the detected subject with a full-canvas fallback", () => {
   assert.match(
     composition,
-    /const controlBoxStyle: CSSProperties = \{\s*inset: 0[,;]?\s*\};/,
+    /const subjectBounds = transform\.subjectBounds/,
+  );
+  assert.match(
+    composition,
+    /left: `\$\{subjectBounds\.left\}%`[\s\S]*?top: `\$\{subjectBounds\.top\}%`[\s\S]*?width: `\$\{subjectBounds\.width\}%`[\s\S]*?height: `\$\{subjectBounds\.height\}%`/,
+  );
+  assert.match(
+    composition,
+    /: \{ inset: 0 \};/,
   );
   assert.doesNotMatch(composition, /rememberCutoutVisualBounds/);
   assert.doesNotMatch(composition, /getFallbackCutoutVisualBounds/);

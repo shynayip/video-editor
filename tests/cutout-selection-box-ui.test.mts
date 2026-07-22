@@ -34,7 +34,7 @@ test("effect transforms are not applied to the media alone", () => {
 test("selection box always covers the complete cutout canvas", () => {
   assert.match(
     composition,
-    /const controlBoxStyle: CSSProperties = \{\s*inset: 0,\s*\};/,
+    /const controlBoxStyle: CSSProperties = \{\s*inset: 0[,;]?\s*\};/,
   );
   assert.doesNotMatch(composition, /rememberCutoutVisualBounds/);
   assert.doesNotMatch(composition, /getFallbackCutoutVisualBounds/);

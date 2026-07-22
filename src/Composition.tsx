@@ -2576,6 +2576,7 @@ type PointerDrag = {
   type: "timeline" | "media";
   id: string;
   activated: boolean;
+  toggleSelectionOnClick?: boolean;
   mediaIds?: string[];
   timelineClipIds?: string[];
   label: string;
@@ -2627,6 +2628,7 @@ type StickerInteraction = {
 type TextTimelineDrag = {
   clipId: string;
   startX: number;
+  startY: number;
   startFrame: number;
   contentLeft: number;
   originalClips: TimelineClip[];
@@ -2886,6 +2888,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const mediaLibraryRef = useRef<HTMLDivElement>(null);
   const mediaGridRef = useRef<HTMLDivElement>(null);
   const mediaSelectionBoxRef = useRef<MediaSelectionBox | null>(null);
+  const mediaSelectionAnchorIdRef = useRef<string | null>(null);
   const timelineSelectionBoxRef = useRef<TimelineSelectionBox | null>(null);
   const timelineSelectionPointerRef = useRef<{ x: number; y: number } | null>(
     null,
@@ -3665,7 +3668,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             duration: formatMediaDuration(clip.duration),
             durationInFrames: clip.duration,
             kind: "public" as const,
-            mediaType: isImageClip(clip) ? ("image" as const) : ("video" as const),
+            mediaType: isImageClip(clip)
+              ? ("image" as const)
+              : ("video" as const),
             sourceStart: clip.sourceStart,
             sourceDurationInFrames: clip.sourceDuration,
             adjustment: clip.adjustment,
@@ -3739,7 +3744,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     firstClip.start - secondClip.start ||
     firstClip.id.localeCompare(secondClip.id);
   const timelinePreviewFrame =
-    !isPreviewPlaying && !isScrubbing && timelineHoverFrame !== null
+    isPreviewAxisVisible &&
+    !isPreviewPlaying &&
+    !isScrubbing &&
+    timelineHoverFrame !== null
       ? timelineHoverFrame
       : playheadFrame;
   const activeVideoLayers = getActiveVideoLayersAtFrame(
@@ -4227,16 +4235,39 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     resetCaptionStatus();
   };
 
-  const chooseMedia = (mediaItem: MediaItem, additive = false) => {
+  const chooseMedia = (
+    mediaItem: MediaItem,
+    additive = false,
+    selectRange = false,
+  ) => {
     previewVideoRef.current?.pause();
     const isAlreadySelected = selectedMediaIds.includes(mediaItem.id);
-    const nextSelectedIds = additive
-      ? isAlreadySelected
-        ? selectedMediaIds.filter((id) => id !== mediaItem.id)
-        : [...selectedMediaIds, mediaItem.id]
-      : [mediaItem.id];
-    const nextPrimaryId =
-      additive && isAlreadySelected
+    const anchorId = mediaSelectionAnchorIdRef.current ?? selectedMediaId;
+    const anchorIndex = mediaItems.findIndex((item) => item.id === anchorId);
+    const targetIndex = mediaItems.findIndex(
+      (item) => item.id === mediaItem.id,
+    );
+    const rangeIds =
+      selectRange && anchorIndex >= 0 && targetIndex >= 0
+        ? mediaItems
+            .slice(
+              Math.min(anchorIndex, targetIndex),
+              Math.max(anchorIndex, targetIndex) + 1,
+            )
+            .map((item) => item.id)
+        : [mediaItem.id];
+    const nextSelectedIds = selectRange
+      ? additive
+        ? Array.from(new Set([...selectedMediaIds, ...rangeIds]))
+        : rangeIds
+      : additive
+        ? isAlreadySelected
+          ? selectedMediaIds.filter((id) => id !== mediaItem.id)
+          : [...selectedMediaIds, mediaItem.id]
+        : [mediaItem.id];
+    const nextPrimaryId = selectRange
+      ? mediaItem.id
+      : additive && isAlreadySelected
         ? (nextSelectedIds[nextSelectedIds.length - 1] ?? null)
         : mediaItem.id;
     const nextPrimaryMedia =
@@ -4244,6 +4275,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
     setSelectedMediaIds(nextSelectedIds);
     setSelectedMediaId(nextPrimaryId);
+    if (!selectRange) {
+      mediaSelectionAnchorIdRef.current = mediaItem.id;
+    }
     if (isDetectedSceneMediaItem(nextPrimaryMedia)) {
       setMediaPreviewTime((nextPrimaryMedia.sourceStart ?? 0) / fps);
     } else {
@@ -4389,6 +4423,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (activeSelection.activated) {
+      suppressMediaClickRef.current = true;
+      window.setTimeout(() => {
+        suppressMediaClickRef.current = false;
+      }, 0);
     }
     mediaSelectionBoxRef.current = null;
     setMediaSelectionBox(null);
@@ -5319,25 +5359,28 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   };
 
   const showPreviewVideoControls = (
-    event: PointerEvent<HTMLElement>,
+    event: React.MouseEvent<HTMLElement>,
     clip: TimelineClip,
     sourceWidth: number,
     sourceHeight: number,
   ) => {
-    if (clip.track !== "main" && clip.track !== "upper") return;
+    if (clip.track !== "main" && clip.track !== "upper") return false;
     const previewBounds = previewWindowRef.current?.getBoundingClientRect();
-    if (!previewBounds || sourceWidth <= 0 || sourceHeight <= 0) return;
+    if (!previewBounds || sourceWidth <= 0 || sourceHeight <= 0) return false;
+
+    const sourceAspect = sourceWidth / sourceHeight;
+    const previewAspect = previewBounds.width / previewBounds.height;
+    const widthPercent =
+      sourceAspect >= previewAspect
+        ? 100
+        : (sourceAspect / previewAspect) * 100;
+    const heightPercent =
+      sourceAspect >= previewAspect
+        ? (previewAspect / sourceAspect) * 100
+        : 100;
 
     event.preventDefault();
     event.stopPropagation();
-    const sourceAspect = sourceWidth / sourceHeight;
-    const previewAspect = previewBounds.width / previewBounds.height;
-    const widthPercent = sourceAspect >= previewAspect
-      ? 100
-      : (sourceAspect / previewAspect) * 100;
-    const heightPercent = sourceAspect >= previewAspect
-      ? (previewAspect / sourceAspect) * 100
-      : 100;
 
     setSelectedClipId(clip.id);
     setSelectedClipIds([clip.id]);
@@ -5354,6 +5397,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       left: previewBounds.left + previewBounds.width / 2,
       top: previewBounds.top + 12,
     });
+    return true;
   };
 
   const startPreviewScale = (event: PointerEvent<HTMLButtonElement>) => {
@@ -5364,8 +5408,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       ...defaultClipAdjustment,
       ...clipControlTarget.adjustment,
     };
-    const centerX = bounds.left + bounds.width * (0.5 + adjustment.positionX / 100);
-    const centerY = bounds.top + bounds.height * (0.5 + adjustment.positionY / 100);
+    const centerX =
+      bounds.left + bounds.width * (0.5 + adjustment.positionX / 100);
+    const centerY =
+      bounds.top + bounds.height * (0.5 + adjustment.positionY / 100);
 
     event.preventDefault();
     event.stopPropagation();
@@ -5398,8 +5444,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       ),
     );
     const scale =
-      dragState.originalAdjustment.scale *
-      (distance / dragState.startDistance);
+      dragState.originalAdjustment.scale * (distance / dragState.startDistance);
     setTimelineHistory((currentHistory) => ({
       ...currentHistory,
       present: setClipAdjustmentById(
@@ -5609,6 +5654,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const selectTimelineClip = (clip: TimelineClip, pointerFrame?: number) => {
     setSelectedVideoLayer(null);
     setSelectedClipId(clip.id);
+    selectedClipIdsRef.current = [clip.id];
     setSelectedClipIds([clip.id]);
     setSelectedTrack(clip.track);
     setPreviewMode("timeline");
@@ -7046,6 +7092,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setTextTimelineDrag({
       clipId: clip.id,
       startX: event.clientX,
+      startY: event.clientY,
       startFrame,
       contentLeft,
       originalClips: clips,
@@ -7173,6 +7220,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setCutoutTimelineDrag({
       clipId: clip.id,
       startX: event.clientX,
+      startY: event.clientY,
       startFrame,
       contentLeft,
       originalClips: clips,
@@ -7727,28 +7775,23 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
   const togglePreviewPlayback = useCallback(
     (requestedStartFrame?: number) => {
-    previewVideoRef.current?.pause();
-    setIsMediaPreviewPlaying(false);
-    setPreviewMode("timeline");
-    if (!isPreviewPlaying || previewMode !== "timeline") {
-      const nextStartFrame = requestedStartFrame ?? playheadFrame;
-      if (nextStartFrame >= videoPlaybackDuration - 1) {
-        setPlayheadFrame(0);
-      } else if (requestedStartFrame !== undefined) {
-        setPlayheadFrame(requestedStartFrame);
+      previewVideoRef.current?.pause();
+      setIsMediaPreviewPlaying(false);
+      setPreviewMode("timeline");
+      if (!isPreviewPlaying || previewMode !== "timeline") {
+        const nextStartFrame = requestedStartFrame ?? playheadFrame;
+        if (nextStartFrame >= videoPlaybackDuration - 1) {
+          setPlayheadFrame(0);
+        } else if (requestedStartFrame !== undefined) {
+          setPlayheadFrame(requestedStartFrame);
+        }
+        setIsPreviewPlaying(true);
+        return;
       }
-      setIsPreviewPlaying(true);
-      return;
-    }
 
-    setIsPreviewPlaying(false);
+      setIsPreviewPlaying(false);
     },
-    [
-      isPreviewPlaying,
-      playheadFrame,
-      previewMode,
-      videoPlaybackDuration,
-    ],
+    [isPreviewPlaying, playheadFrame, previewMode, videoPlaybackDuration],
   );
 
   const toggleTimelinePlayback = useCallback(() => {
@@ -8434,7 +8477,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     setIsPreviewPlaying(false);
-    setTimelineHoverFrame(null);
     const additive = event.shiftKey || event.ctrlKey || event.metaKey;
     const selection: TimelineSelectionBox = {
       pointerId: event.pointerId,
@@ -8639,6 +8681,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     event: PointerEvent<HTMLElement>,
     clip: TimelineClip,
     timelineClipIds: string[] = [clip.id],
+    toggleSelectionOnClick = false,
   ) => {
     event.preventDefault();
     event.stopPropagation();
@@ -8653,7 +8696,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     const nextDrag: PointerDrag = {
       type: "timeline",
       id: clip.id,
-      timelineClipIds,
+      timelineClipIds: [...timelineClipIds],
+      toggleSelectionOnClick,
       activated: false,
       label:
         timelineClipIds.length > 1
@@ -8682,10 +8726,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     const mediaIds = selectedMediaIds.includes(mediaItem.id)
       ? selectedMediaIds
       : [mediaItem.id];
-    if (!selectedMediaIds.includes(mediaItem.id)) {
-      setSelectedMediaIds(mediaIds);
-      setSelectedMediaId(mediaItem.id);
-    }
     const nextDrag: PointerDrag = {
       type: "media",
       id: mediaItem.id,
@@ -8742,6 +8782,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       pointerDragStartedRef.current = true;
       if (pointerDrag.type === "media") {
         suppressMediaClickRef.current = true;
+        setSelectedMediaIds(pointerDrag.mediaIds ?? [pointerDrag.id]);
+        setSelectedMediaId(pointerDrag.id);
       }
       setPointerDrag((currentDrag) => {
         const nextDrag = currentDrag
@@ -8760,6 +8802,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
     const handlePointerUp = (event: globalThis.PointerEvent) => {
       if (!pointerDragStartedRef.current) {
+        if (
+          pointerDrag.type === "timeline" &&
+          pointerDrag.toggleSelectionOnClick
+        ) {
+          const clickedClip = clipsRef.current.find(
+            (clip) => clip.id === pointerDrag.id,
+          );
+          if (clickedClip) toggleTimelineClipSelection(clickedClip);
+        }
         setPointerDrag(null);
         pointerDragRef.current = null;
         pointerDragPositionRef.current = null;
@@ -8829,8 +8880,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               return {
                 ...movedClip,
                 track: nextVideoLayer === 0 ? "main" : "upper",
-                videoLayer:
-                  nextVideoLayer === 0 ? undefined : nextVideoLayer,
+                videoLayer: nextVideoLayer === 0 ? undefined : nextVideoLayer,
                 overlayLane: undefined,
                 timelineRowOrder:
                   target?.kind === "row-gap"
@@ -9266,19 +9316,27 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     if (!originalClip) return;
 
     let dragStarted = false;
-    const handlePointerMove = (event: globalThis.PointerEvent) => {
+    let animationFrame = 0;
+    let pointerPosition = {
+      x: textTimelineDrag.startX,
+      y: textTimelineDrag.startY,
+    };
+    const moveClipToPointer = (clientX: number) => {
       if (
         !dragStarted &&
-        Math.abs(event.clientX - textTimelineDrag.startX) <
+        Math.abs(clientX - textTimelineDrag.startX) <
           timelineDragActivationDistance
       ) {
         return;
       }
       dragStarted = true;
+      const contentLeft =
+        timelineContentRef.current?.getBoundingClientRect().left ??
+        textTimelineDrag.contentLeft;
       const frameDelta = getStableTimelineFrameDelta(
-        event.clientX,
+        clientX,
         textTimelineDrag.startFrame,
-        textTimelineDrag.contentLeft,
+        contentLeft,
         timelineOrigin,
         timelineScale,
       );
@@ -9299,6 +9357,45 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         ),
       }));
     };
+    const handlePointerMove = (event: globalThis.PointerEvent) => {
+      pointerPosition = { x: event.clientX, y: event.clientY };
+      moveClipToPointer(event.clientX);
+    };
+    const scrollWhileDragging = () => {
+      const scrollArea = timelineScrollRef.current;
+      if (scrollArea && dragStarted) {
+        const bounds = scrollArea.getBoundingClientRect();
+        const laneViewportLeft = Math.min(
+          bounds.right,
+          bounds.left + timelineOrigin,
+        );
+        const horizontalDelta = getDragEdgeAutoScrollDelta(
+          pointerPosition.x,
+          laneViewportLeft,
+          bounds.right,
+          72,
+          24,
+        );
+        const verticalDelta = getDragEdgeAutoScrollDelta(
+          pointerPosition.y,
+          bounds.top,
+          bounds.bottom,
+          72,
+          20,
+        );
+        const previousLeft = scrollArea.scrollLeft;
+        const previousTop = scrollArea.scrollTop;
+        scrollArea.scrollLeft += horizontalDelta;
+        scrollArea.scrollTop += verticalDelta;
+        if (
+          scrollArea.scrollLeft !== previousLeft ||
+          scrollArea.scrollTop !== previousTop
+        ) {
+          moveClipToPointer(pointerPosition.x);
+        }
+      }
+      animationFrame = window.requestAnimationFrame(scrollWhileDragging);
+    };
 
     const finishDrag = () => {
       setTimelineHistory((currentHistory) =>
@@ -9310,9 +9407,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               future: [],
             },
       );
+      window.cancelAnimationFrame(animationFrame);
       setTextTimelineDrag(null);
     };
 
+    animationFrame = window.requestAnimationFrame(scrollWhileDragging);
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", finishDrag, { once: true });
     window.addEventListener("pointercancel", finishDrag, { once: true });
@@ -9320,6 +9419,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishDrag);
       window.removeEventListener("pointercancel", finishDrag);
+      window.cancelAnimationFrame(animationFrame);
     };
   }, [projectDuration, textTimelineDrag]);
 
@@ -9332,19 +9432,27 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     if (!originalClip?.cutout) return;
 
     let dragStarted = false;
-    const handlePointerMove = (event: globalThis.PointerEvent) => {
+    let animationFrame = 0;
+    let pointerPosition = {
+      x: cutoutTimelineDrag.startX,
+      y: cutoutTimelineDrag.startY,
+    };
+    const moveClipToPointer = (clientX: number) => {
       if (
         !dragStarted &&
-        Math.abs(event.clientX - cutoutTimelineDrag.startX) <
+        Math.abs(clientX - cutoutTimelineDrag.startX) <
           timelineDragActivationDistance
       ) {
         return;
       }
       dragStarted = true;
+      const contentLeft =
+        timelineContentRef.current?.getBoundingClientRect().left ??
+        cutoutTimelineDrag.contentLeft;
       const frameDelta = getStableTimelineFrameDelta(
-        event.clientX,
+        clientX,
         cutoutTimelineDrag.startFrame,
-        cutoutTimelineDrag.contentLeft,
+        contentLeft,
         timelineOrigin,
         timelineScale,
       );
@@ -9363,6 +9471,45 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         ),
       }));
     };
+    const handlePointerMove = (event: globalThis.PointerEvent) => {
+      pointerPosition = { x: event.clientX, y: event.clientY };
+      moveClipToPointer(event.clientX);
+    };
+    const scrollWhileDragging = () => {
+      const scrollArea = timelineScrollRef.current;
+      if (scrollArea && dragStarted) {
+        const bounds = scrollArea.getBoundingClientRect();
+        const laneViewportLeft = Math.min(
+          bounds.right,
+          bounds.left + timelineOrigin,
+        );
+        const horizontalDelta = getDragEdgeAutoScrollDelta(
+          pointerPosition.x,
+          laneViewportLeft,
+          bounds.right,
+          72,
+          24,
+        );
+        const verticalDelta = getDragEdgeAutoScrollDelta(
+          pointerPosition.y,
+          bounds.top,
+          bounds.bottom,
+          72,
+          20,
+        );
+        const previousLeft = scrollArea.scrollLeft;
+        const previousTop = scrollArea.scrollTop;
+        scrollArea.scrollLeft += horizontalDelta;
+        scrollArea.scrollTop += verticalDelta;
+        if (
+          scrollArea.scrollLeft !== previousLeft ||
+          scrollArea.scrollTop !== previousTop
+        ) {
+          moveClipToPointer(pointerPosition.x);
+        }
+      }
+      animationFrame = window.requestAnimationFrame(scrollWhileDragging);
+    };
 
     const finishDrag = () => {
       setTimelineHistory((currentHistory) =>
@@ -9374,9 +9521,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               future: [],
             },
       );
+      window.cancelAnimationFrame(animationFrame);
       setCutoutTimelineDrag(null);
     };
 
+    animationFrame = window.requestAnimationFrame(scrollWhileDragging);
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", finishDrag, { once: true });
     window.addEventListener("pointercancel", finishDrag, { once: true });
@@ -9384,6 +9533,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishDrag);
       window.removeEventListener("pointercancel", finishDrag);
+      window.cancelAnimationFrame(animationFrame);
     };
   }, [cutoutTimelineDrag, projectDuration]);
 
@@ -10191,13 +10341,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           >
             Filters
           </button>
-          <button
-            className={activeTool === "adjustment" ? "active-tool" : ""}
-            type="button"
-            onClick={() => openVisualTool("adjustment")}
-          >
-            Adjustment
-          </button>
         </nav>
         <div className="project-actions">
           {projectStatus ? (
@@ -10344,7 +10487,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           }
                           chooseMedia(
                             mediaItem,
-                            event.ctrlKey || event.metaKey,
+                            event.ctrlKey || event.metaKey || !event.shiftKey,
+                            event.shiftKey,
                           );
                         }}
                       >
@@ -11719,42 +11863,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 ) {
                   return;
                 }
-                if (isTimelinePreview) {
-                  const topVideoClip = [...timelinePreviewVideoClips]
-                    .reverse()
-                    .find((candidate) => {
-                      const candidateVideo =
-                        previewLayerVideoRefs.current.get(candidate.id);
-                      return (
-                        candidateVideo &&
-                        window.getComputedStyle(candidateVideo).visibility !==
-                          "hidden"
-                      );
-                    });
-                  if (!topVideoClip) {
-                    setSelectedClipId(null);
-                    setSelectedVideoLayer(null);
-                    return;
-                  }
-                  const videoElement = previewLayerVideoRefs.current.get(
-                    topVideoClip.id,
-                  );
-                  if (
-                    videoElement &&
-                    videoElement.videoWidth > 0 &&
-                    videoElement.videoHeight > 0
-                  ) {
-                    showPreviewVideoControls(
-                      event,
-                      topVideoClip,
-                      videoElement.videoWidth,
-                      videoElement.videoHeight,
-                    );
-                    return;
-                  }
-                }
                 setSelectedClipId(null);
+                setSelectedClipIds([]);
                 setSelectedVideoLayer(null);
+                setSelectedPreviewFrameBase(null);
                 setCutoutInteraction(null);
               }}
               onMouseLeave={closeMediaPreviewVolumeIfInactive}
@@ -11781,12 +11893,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             data-video-layer={getVideoLayer(videoClip)}
                             src={resolveMediaSource(videoClip.src ?? "")}
                             onPointerDown={(event) => {
-                              showPreviewVideoControls(
-                                event,
-                                videoClip,
-                                event.currentTarget.naturalWidth,
-                                event.currentTarget.naturalHeight,
-                              );
+                              event.stopPropagation();
                               if (
                                 activeTool === "adjustment" &&
                                 clipControlTarget?.id === videoClip.id
@@ -11794,6 +11901,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 startManualAdjustmentPan(event);
                               }
                             }}
+                            onClick={(event) =>
+                              showPreviewVideoControls(
+                                event,
+                                videoClip,
+                                event.currentTarget.naturalWidth,
+                                event.currentTarget.naturalHeight,
+                              )
+                            }
                             onContextMenu={(event) =>
                               openVideoQuickMenu(event, videoClip)
                             }
@@ -11850,12 +11965,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             playsInline
                             preload="auto"
                             onPointerDown={(event) => {
-                              showPreviewVideoControls(
-                                event,
-                                videoClip,
-                                event.currentTarget.videoWidth,
-                                event.currentTarget.videoHeight,
-                              );
+                              event.stopPropagation();
                               if (
                                 activeTool === "adjustment" &&
                                 clipControlTarget?.id === videoClip.id
@@ -11863,15 +11973,48 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 startManualAdjustmentPan(event);
                               }
                             }}
+                            onClick={(event) =>
+                              showPreviewVideoControls(
+                                event,
+                                videoClip,
+                                event.currentTarget.videoWidth,
+                                event.currentTarget.videoHeight,
+                              )
+                            }
                             onContextMenu={(event) =>
                               openVideoQuickMenu(event, videoClip)
                             }
-                            onLoadedMetadata={(event) =>
+                            onLoadedMetadata={(event) => {
                               reconcileTimelineClipSourceDuration(
                                 videoClip,
                                 event,
+                              );
+                              const loadedPreviewFrame = activeVideoClipIds.has(
+                                videoClip.id,
                               )
-                            }
+                                ? timelinePreviewFrame
+                                : timelinePreviewFrame < videoClip.start
+                                  ? videoClip.start
+                                  : videoClip.start + videoClip.duration - 1;
+                              const loadedPreviewTime = Math.max(
+                                0,
+                                getClipSourceTime(
+                                  videoClip,
+                                  loadedPreviewFrame,
+                                  fps,
+                                ),
+                              );
+                              if (
+                                Number.isFinite(loadedPreviewTime) &&
+                                Math.abs(
+                                  event.currentTarget.currentTime -
+                                    loadedPreviewTime,
+                                ) > 0.01
+                              ) {
+                                event.currentTarget.currentTime =
+                                  loadedPreviewTime;
+                              }
+                            }}
                             onError={() =>
                               recoverUnavailableVideo(videoClip.id)
                             }
@@ -11914,28 +12057,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               ...defaultClipAdjustment,
                               ...selectedClip.adjustment,
                             };
-                            const visibleWidth =
-                              selectedPreviewFrameBase.widthPercent *
-                              (1 -
-                                (adjustment.cropLeft +
-                                  adjustment.cropRight) /
-                                  100);
-                            const visibleHeight =
-                              selectedPreviewFrameBase.heightPercent *
-                              (1 -
-                                (adjustment.cropTop +
-                                  adjustment.cropBottom) /
-                                  100);
-                            const cropCenterX =
-                              (selectedPreviewFrameBase.widthPercent *
-                                (adjustment.cropLeft -
-                                  adjustment.cropRight)) /
-                              200;
-                            const cropCenterY =
-                              (selectedPreviewFrameBase.heightPercent *
-                                (adjustment.cropTop -
-                                  adjustment.cropBottom)) /
-                              200;
                             const transitionPresentation =
                               getClipTransitionPresentation(
                                 clips,
@@ -11950,19 +12071,22 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
                             return (
                               <div
-                                className="preview-video-transform-frame"
+                                className="preview-video-transform-shell"
                                 style={{
-                                  left: `${50 + adjustment.positionX + cropCenterX}%`,
-                                  top: `${50 + adjustment.positionY + cropCenterY}%`,
-                                  width: `${visibleWidth}%`,
-                                  height: `${visibleHeight}%`,
-                                  transform: `translate(-50%, -50%) scale(${adjustment.scale}) rotate(${adjustment.rotation}deg)`,
+                                  transform: `translate(${adjustment.positionX}%, ${adjustment.positionY}%) scale(${adjustment.scale}) rotate(${adjustment.rotation}deg)`,
                                   translate: framePresentation.translate,
                                   scale: framePresentation.scale,
                                   rotate: framePresentation.rotate,
                                 }}
-                                onPointerDown={startManualAdjustmentPan}
                               >
+                                <div
+                                  className="preview-video-transform-frame"
+                                  style={{
+                                    width: `${selectedPreviewFrameBase.widthPercent}%`,
+                                    height: `${selectedPreviewFrameBase.heightPercent}%`,
+                                  }}
+                                  onPointerDown={startManualAdjustmentPan}
+                                >
                                 {[
                                   "top-left",
                                   "top-right",
@@ -11972,22 +12096,41 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                   <button
                                     aria-label={`Resize video from ${corner}`}
                                     className={`preview-video-resize-handle preview-video-resize-handle-${corner}`}
-                                     key={corner}
-                                     type="button"
-                                     onPointerDown={startPreviewScale}
-                                     onPointerMove={updatePreviewScaleFromPointer}
-                                     onPointerUp={finishPreviewScale}
-                                     onPointerCancel={finishPreviewScale}
-                                   />
+                                    key={corner}
+                                    type="button"
+                                    onPointerDown={startPreviewScale}
+                                    onPointerMove={
+                                      updatePreviewScaleFromPointer
+                                    }
+                                    onPointerUp={finishPreviewScale}
+                                    onPointerCancel={finishPreviewScale}
+                                  />
                                 ))}
-                                <button
-                                  aria-label="Rotate video"
-                                  className="preview-video-rotate-handle"
-                                  type="button"
-                                  onPointerDown={startManualRotate}
-                                >
-                                  ↻
-                                </button>
+                                {["top", "right", "bottom", "left"].map(
+                                  (edge) => (
+                                    <button
+                                      aria-label={`Resize video from ${edge} edge`}
+                                      className={`preview-video-edge-handle preview-video-edge-handle-${edge}`}
+                                      key={edge}
+                                      type="button"
+                                      onPointerDown={startPreviewScale}
+                                      onPointerMove={
+                                        updatePreviewScaleFromPointer
+                                      }
+                                      onPointerUp={finishPreviewScale}
+                                      onPointerCancel={finishPreviewScale}
+                                    />
+                                  ),
+                                )}
+                                  <button
+                                    aria-label="Rotate video"
+                                    className="preview-video-rotate-handle"
+                                    type="button"
+                                    onPointerDown={startManualRotate}
+                                  >
+                                    {"\u21bb"}
+                                  </button>
+                                </div>
                               </div>
                             );
                           })()
@@ -12057,15 +12200,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           right: `${-25 / Math.max(0.08, cutoutScaleX)}px`,
                         };
                         const isSelected = selectedClipId === cutoutClip.id;
-                        const subjectBounds = transform.subjectBounds;
-                        const controlBoxStyle: CSSProperties = subjectBounds
-                          ? {
-                              left: `${subjectBounds.left}%`,
-                              top: `${subjectBounds.top}%`,
-                              width: `${subjectBounds.width}%`,
-                              height: `${subjectBounds.height}%`,
-                            }
-                          : { inset: 0 };
+                        const controlBoxStyle: CSSProperties = { inset: 0 };
                         const isMasking =
                           isSelected &&
                           (cutoutBrushMode === "erase" ||
@@ -12965,29 +13100,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   {isTimelinePreview && previewSource ? (
                     <div className="preview-badge">{previewSource.label}</div>
                   ) : null}
-                  {isPreviewAxisVisible ? (
-                    <div className="preview-axis" aria-hidden="true">
-                      <span className="preview-axis-horizontal" />
-                      <span className="preview-axis-vertical" />
-                      <span className="preview-axis-center" />
-                    </div>
-                  ) : null}
-                  <button
-                    className={`preview-axis-toggle ${
-                      isPreviewAxisVisible ? "is-active" : ""
-                    }`}
-                    type="button"
-                    aria-label={`${
-                      isPreviewAxisVisible ? "Turn off" : "Turn on"
-                    } preview axis`}
-                    aria-pressed={isPreviewAxisVisible}
-                    title={`${
-                      isPreviewAxisVisible ? "Turn off" : "Turn on"
-                    } preview axis`}
-                    onClick={() => setIsPreviewAxisVisible((visible) => !visible)}
-                  >
-                    <span className="preview-axis-icon" aria-hidden="true" />
-                  </button>
                 </>
               ) : (
                 <div className="empty-preview">
@@ -13478,6 +13590,29 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               {isPreviewPlaying ? "❚❚" : "▶"}
             </button>
             <button
+              className={`icon-tool-button preview-axis-tool ${
+                isPreviewAxisVisible ? "is-active" : ""
+              }`}
+              type="button"
+              aria-label={`${
+                isPreviewAxisVisible ? "Turn off" : "Turn on"
+              } preview playhead`}
+              aria-pressed={isPreviewAxisVisible}
+              title={`${
+                isPreviewAxisVisible ? "Turn off" : "Turn on"
+              } yellow preview playhead`}
+              onClick={() => {
+                const nextVisible = !isPreviewAxisVisible;
+                setIsPreviewAxisVisible(nextVisible);
+                setTimelineHoverFrame(nextVisible ? playheadFrame : null);
+              }}
+            >
+              <span className="preview-axis-tool-icon" aria-hidden="true">
+                <span />
+                <span />
+              </span>
+            </button>
+            <button
               className="icon-tool-button"
               type="button"
               aria-label="Undo last edit"
@@ -13569,7 +13704,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             onPointerCancel={finishTimelineSelection}
             onPointerDownCapture={holdTimelinePreviewFromPointer}
             onPointerLeave={() => {
-              if (!timelineSelectionBoxRef.current) {
+              if (!isPreviewAxisVisible && !timelineSelectionBoxRef.current) {
                 setTimelineHoverFrame(null);
               }
             }}
@@ -13625,7 +13760,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   </div>
                   <div
                     className={`timeline-track ${
-                      track.videoLayer !== undefined && selectedVideoLayer === track.videoLayer
+                      track.videoLayer !== undefined &&
+                      selectedVideoLayer === track.videoLayer
                         ? "selected-timeline-row"
                         : ""
                     } ${track.id === "upper" ? "overlay-timeline-track" : ""} ${
@@ -13956,22 +14092,27 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             data-timeline-clip-id={clip.id}
                             onPointerDown={(event) => {
                               event.stopPropagation();
-                              if (
+                              const isAdditiveSelection =
                                 event.shiftKey ||
                                 event.ctrlKey ||
-                                event.metaKey
-                              ) {
-                                event.preventDefault();
-                                toggleTimelineClipSelection(clip);
-                                return;
-                              }
+                                event.metaKey;
                               const selectedGroup =
                                 selectedClipIdsRef.current.length > 1 &&
                                 selectedClipIdsRef.current.includes(clip.id)
                                   ? selectedClipIdsRef.current
                                   : null;
                               if (selectedGroup) {
-                                startPointerDrag(event, clip, selectedGroup);
+                                startPointerDrag(
+                                  event,
+                                  clip,
+                                  selectedGroup,
+                                  isAdditiveSelection,
+                                );
+                                return;
+                              }
+                              if (isAdditiveSelection) {
+                                event.preventDefault();
+                                toggleTimelineClipSelection(clip);
                                 return;
                               }
                               selectTimelineClip(clip);
@@ -14282,14 +14423,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 }}
               />
             ) : null}
-            {timelineHoverFrame !== null &&
-            !isPreviewPlaying &&
-            !isScrubbing ? (
+            {isPreviewAxisVisible && !isPreviewPlaying && !isScrubbing ? (
               <div
                 className="timeline-hover-playhead"
                 aria-hidden="true"
                 style={{
-                  left: `calc(${timelineOrigin}px + ${timelineHoverFrame * timelineScale}px)`,
+                  left: `calc(${timelineOrigin}px + ${(timelineHoverFrame ?? playheadFrame) * timelineScale}px)`,
                 }}
               />
             ) : null}
@@ -14496,52 +14635,52 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 {renderPreviewAlignmentGuides(previewAlignmentGuides)}
                 {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
                 <video
-                ref={mediaTrimVideoRef}
-                src={resolveMediaSource(mediaTrimItem.src)}
-                playsInline
-                preload="metadata"
-                style={{
-                  transform: `translate(${mediaTrimDraft.adjustment.positionX}%, ${mediaTrimDraft.adjustment.positionY}%) scale(${mediaTrimDraft.adjustment.scale}) rotate(${mediaTrimDraft.adjustment.rotation}deg)`,
-                  transformOrigin: "center",
-                  clipPath: `inset(${mediaTrimDraft.adjustment.cropTop}% ${mediaTrimDraft.adjustment.cropRight}% ${mediaTrimDraft.adjustment.cropBottom}% ${mediaTrimDraft.adjustment.cropLeft}%)`,
-                }}
-                onLoadedMetadata={(event) => {
-                  if (
-                    event.currentTarget.videoWidth > 0 &&
-                    event.currentTarget.videoHeight > 0
-                  ) {
-                    setMediaTrimSourceDimensions({
-                      width: event.currentTarget.videoWidth,
-                      height: event.currentTarget.videoHeight,
-                    });
-                  }
-                  event.currentTarget.currentTime =
-                    ((mediaTrimItem.sourceStart ?? 0) +
-                      mediaTrimDraft.startFrame) /
-                    fps;
-                  setMediaTrimPreviewFrame(mediaTrimDraft.startFrame);
-                }}
-                onPlay={() => setIsMediaTrimPreviewPlaying(true)}
-                onPause={() => setIsMediaTrimPreviewPlaying(false)}
-                onTimeUpdate={(event) => {
-                  const sourceStart = mediaTrimItem.sourceStart ?? 0;
-                  const relativeFrame = Math.max(
-                    0,
-                    Math.floor(
-                      event.currentTarget.currentTime * fps - sourceStart,
-                    ),
-                  );
-
-                  if (relativeFrame >= mediaTrimDraft.endFrame) {
-                    event.currentTarget.pause();
+                  ref={mediaTrimVideoRef}
+                  src={resolveMediaSource(mediaTrimItem.src)}
+                  playsInline
+                  preload="metadata"
+                  style={{
+                    transform: `translate(${mediaTrimDraft.adjustment.positionX}%, ${mediaTrimDraft.adjustment.positionY}%) scale(${mediaTrimDraft.adjustment.scale}) rotate(${mediaTrimDraft.adjustment.rotation}deg)`,
+                    transformOrigin: "center",
+                    clipPath: `inset(${mediaTrimDraft.adjustment.cropTop}% ${mediaTrimDraft.adjustment.cropRight}% ${mediaTrimDraft.adjustment.cropBottom}% ${mediaTrimDraft.adjustment.cropLeft}%)`,
+                  }}
+                  onLoadedMetadata={(event) => {
+                    if (
+                      event.currentTarget.videoWidth > 0 &&
+                      event.currentTarget.videoHeight > 0
+                    ) {
+                      setMediaTrimSourceDimensions({
+                        width: event.currentTarget.videoWidth,
+                        height: event.currentTarget.videoHeight,
+                      });
+                    }
                     event.currentTarget.currentTime =
-                      (sourceStart + mediaTrimDraft.endFrame) / fps;
-                    setMediaTrimPreviewFrame(mediaTrimDraft.endFrame);
-                    return;
-                  }
+                      ((mediaTrimItem.sourceStart ?? 0) +
+                        mediaTrimDraft.startFrame) /
+                      fps;
+                    setMediaTrimPreviewFrame(mediaTrimDraft.startFrame);
+                  }}
+                  onPlay={() => setIsMediaTrimPreviewPlaying(true)}
+                  onPause={() => setIsMediaTrimPreviewPlaying(false)}
+                  onTimeUpdate={(event) => {
+                    const sourceStart = mediaTrimItem.sourceStart ?? 0;
+                    const relativeFrame = Math.max(
+                      0,
+                      Math.floor(
+                        event.currentTarget.currentTime * fps - sourceStart,
+                      ),
+                    );
 
-                  setMediaTrimPreviewFrame(relativeFrame);
-                }}
+                    if (relativeFrame >= mediaTrimDraft.endFrame) {
+                      event.currentTarget.pause();
+                      event.currentTarget.currentTime =
+                        (sourceStart + mediaTrimDraft.endFrame) / fps;
+                      setMediaTrimPreviewFrame(mediaTrimDraft.endFrame);
+                      return;
+                    }
+
+                    setMediaTrimPreviewFrame(relativeFrame);
+                  }}
                 />
                 <div
                   className="media-trim-crop-frame"

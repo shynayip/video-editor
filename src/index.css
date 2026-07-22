@@ -3988,8 +3988,8 @@ button {
 }
 
 .audio-timeline-track .audio-timeline-clip .audio-waveform {
-  inset: 14px 4px 2px;
-  opacity: 0.82;
+  inset: 18px 4px 3px;
+  opacity: 0.9;
 }
 
 /* Audio clips keep their full hit area, but render as a clean waveform only. */
@@ -4384,8 +4384,8 @@ button {
 }
 
 .audio-timeline-clip .audio-waveform-line {
-  stroke: #38bdf8;
-  stroke-width: 1.3px;
+  stroke: #159bd2;
+  stroke-width: 1.15px;
 }
 
 .audio-waveform-center-line {
@@ -5694,6 +5694,34 @@ input[type="range"],
 .timeline-clip.has-timeline-waveform:not(.audio-timeline-clip) .audio-waveform {
   border-color: rgba(245, 184, 0, 0.55);
   background: rgba(12, 12, 12, 0.92);
+}
+
+/* Linked audio shown beneath a video clip uses the same blue waveform treatment. */
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip) .audio-waveform {
+  height: 26px;
+  inset: auto 0 0;
+  padding: 3px 32px 3px 8px;
+  border-top: 1px solid rgba(56, 189, 248, 0.7);
+  border-color: rgba(56, 189, 248, 0.7);
+  background: linear-gradient(180deg, #123d69 0%, #0b2748 100%);
+  opacity: 1;
+}
+
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
+  .audio-waveform-line {
+  stroke: #159bd2;
+  stroke-width: 1.15px;
+}
+
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
+  > .timeline-clip-video,
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
+  > .timeline-clip-image,
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
+  .timeline-cutout-media,
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip)
+  .timeline-clip-filmstrip {
+  bottom: 26px;
 }
 
 .clip-visibility-button:hover,

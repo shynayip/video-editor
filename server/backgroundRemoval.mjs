@@ -51,6 +51,23 @@ const getResultMetadata = (mediaKind) => mediaKind === "image"
 const getFrameName = (frameNumber) =>
   `frame-${String(frameNumber).padStart(8, "0")}.png`;
 
+const normalizeSubjectBounds = (bounds, width, height) => {
+  if (!bounds || !width || !height) return null;
+  const paddingX = Math.max(2, Math.round(width * 0.02));
+  const paddingY = Math.max(2, Math.round(height * 0.02));
+  const left = Math.max(0, bounds.left - paddingX);
+  const top = Math.max(0, bounds.top - paddingY);
+  const right = Math.min(width - 1, bounds.right + paddingX);
+  const bottom = Math.min(height - 1, bounds.bottom + paddingY);
+
+  return {
+    left: (left / width) * 100,
+    top: (top / height) * 100,
+    width: ((right - left + 1) / width) * 100,
+    height: ((bottom - top + 1) / height) * 100,
+  };
+};
+
 export const createBackgroundRemovalProcessor = ({
   pipelineFactory = defaultPipelineFactory,
   subjectEngine,
@@ -100,7 +117,7 @@ export const createBackgroundRemovalProcessor = ({
 
       try {
         if (mediaKind === "image") {
-          const {image} = await engine.process(inputPath, {mode: "image", signal});
+          const {image, subject} = await engine.process(inputPath, {mode: "image", signal});
           throwIfAborted(signal);
           const temporaryOutputPath = join(tempDirectory, "output.png");
           await image.save(temporaryOutputPath);
@@ -108,7 +125,16 @@ export const createBackgroundRemovalProcessor = ({
           await renameFileImpl(temporaryOutputPath, outputPath);
           onProgress?.(100);
 
-          return {outputPath, extension, mimeType};
+          return {
+            outputPath,
+            extension,
+            mimeType,
+            subjectBounds: normalizeSubjectBounds(
+              subject?.bounds,
+              image.width,
+              image.height,
+            ),
+          };
         }
 
         const sourceFramesDirectory = join(tempDirectory, "source-frames");
@@ -181,6 +207,9 @@ export const createBackgroundRemovalProcessor = ({
         }
 
         let previousSubject;
+        let combinedSubjectBounds = null;
+        let subjectFrameWidth = 0;
+        let subjectFrameHeight = 0;
         for (const [frameIndex, frameName] of frameNames.entries()) {
           throwIfAborted(signal);
           const result = await engine.process(
@@ -197,6 +226,19 @@ export const createBackgroundRemovalProcessor = ({
             getFrameName(frameIndex + 1),
           ));
           previousSubject = result.subject;
+          if (result.subject?.bounds) {
+            const bounds = result.subject.bounds;
+            combinedSubjectBounds = combinedSubjectBounds
+              ? {
+                  left: Math.min(combinedSubjectBounds.left, bounds.left),
+                  top: Math.min(combinedSubjectBounds.top, bounds.top),
+                  right: Math.max(combinedSubjectBounds.right, bounds.right),
+                  bottom: Math.max(combinedSubjectBounds.bottom, bounds.bottom),
+                }
+              : {...bounds};
+            subjectFrameWidth = result.image.width;
+            subjectFrameHeight = result.image.height;
+          }
           throwIfAborted(signal);
           onProgress?.(
             10 + Math.round(((frameIndex + 1) / frameNames.length) * 80),
@@ -235,7 +277,16 @@ export const createBackgroundRemovalProcessor = ({
         await renameFileImpl(temporaryOutputPath, outputPath);
         onProgress?.(100);
 
-        return {outputPath, extension, mimeType};
+        return {
+          outputPath,
+          extension,
+          mimeType,
+          subjectBounds: normalizeSubjectBounds(
+            combinedSubjectBounds,
+            subjectFrameWidth,
+            subjectFrameHeight,
+          ),
+        };
       } catch (error) {
         primaryFailureOccurred = true;
         throw error;

@@ -83,6 +83,63 @@ const dilateMask = (mask, width, height, iterations) => {
   return current;
 };
 
+const erodeMask = (mask, width, height, iterations) => {
+  let current = mask;
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const next = new Uint8Array(current);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const index = y * width + x;
+        if (!current[index]) continue;
+        let keep = true;
+        for (let offsetY = -1; offsetY <= 1 && keep; offsetY += 1) {
+          for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+            const nextX = x + offsetX;
+            const nextY = y + offsetY;
+            if (
+              nextX < 0 || nextX >= width ||
+              nextY < 0 || nextY >= height ||
+              !current[nextY * width + nextX]
+            ) {
+              keep = false;
+              break;
+            }
+          }
+        }
+        if (!keep) next[index] = 0;
+      }
+    }
+    current = next;
+  }
+  return current;
+};
+
+const restoreHeldObjectGaps = (alpha, width, height) => {
+  const binary = new Uint8Array(alpha.length);
+  for (let index = 0; index < alpha.length; index += 1) {
+    if (alpha[index] > 0) binary[index] = 1;
+  }
+
+  // Human parsing models can leave a microphone or another held object as a
+  // narrow opening between the face and hand. A conservative closing repairs
+  // those openings without filling broad background regions around the person.
+  const radius = Math.max(
+    1,
+    Math.min(10, Math.round(Math.min(width, height) * 0.012)),
+  );
+  const closed = erodeMask(
+    dilateMask(binary, width, height, radius),
+    width,
+    height,
+    radius,
+  );
+  const restored = new Uint8ClampedArray(alpha);
+  for (let index = 0; index < restored.length; index += 1) {
+    if (closed[index] && !binary[index]) restored[index] = 255;
+  }
+  return restored;
+};
+
 const fillSmallEnclosedHoles = (alpha, width, height) => {
   const filled = new Uint8ClampedArray(alpha);
   const visited = new Uint8Array(alpha.length);
@@ -300,7 +357,11 @@ const extractHumanAlpha = (output, width, height) => {
   }
 
   return hasAnatomy
-    ? fillSmallEnclosedHoles(alpha, width, height)
+    ? restoreHeldObjectGaps(
+        fillSmallEnclosedHoles(alpha, width, height),
+        width,
+        height,
+      )
     : new Uint8ClampedArray(width * height);
 };
 

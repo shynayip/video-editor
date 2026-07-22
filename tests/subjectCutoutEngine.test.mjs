@@ -95,6 +95,39 @@ test("human parsing removes furniture and preserves a small held-object hole", a
   assert.equal(result.alpha[29], 0);
 });
 
+test("human parsing keeps a held object connected through a narrow hand gap", async () => {
+  const person = new Uint8ClampedArray(100);
+  const background = new Uint8ClampedArray(100);
+  for (let y = 1; y < 9; y += 1) {
+    for (let x = 2; x < 8; x += 1) person[y * 10 + x] = 255;
+  }
+  // A narrow opening from the silhouette edge reaches the held object area.
+  person[25] = 0;
+  person[35] = 0;
+  person[45] = 0;
+  person[46] = 0;
+
+  const {engine} = createEngineHarness({
+    pipelineFactory: async (_task, modelId) => async () =>
+      modelId === "Xenova/segformer_b2_clothes"
+        ? [
+            {label: "Face", mask: createImage(person)},
+            {label: "Background", mask: createImage(background)},
+          ]
+        : createImage(emptyMatte()),
+  });
+
+  const result = await engine.process("person-holding-microphone.png", {
+    mode: "video-first",
+  });
+
+  assert.equal(result.route, "human");
+  assert.equal(result.alpha[45] > 0, true);
+  assert.equal(result.alpha[46] > 0, true);
+  assert.equal(result.alpha[20], 0);
+  assert.equal(result.alpha[29], 0);
+});
+
 test("video cutout keeps only the primary subject component", async () => {
   const matte = new Uint8ClampedArray(100);
   for (let y = 3; y < 7; y += 1) {

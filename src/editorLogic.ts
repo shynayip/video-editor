@@ -76,6 +76,13 @@ export type TextOverlay = {
   boxHeight?: number;
 };
 
+export type CutoutSubjectBounds = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
 export type CutoutTransform = StickerTransform & {
   mediaKind: "image" | "video";
   scaleX?: number;
@@ -84,6 +91,7 @@ export type CutoutTransform = StickerTransform & {
   maskStrokes?: CutoutMaskStroke[];
   originalSrc?: string;
   originalSourceStart?: number;
+  subjectBounds?: CutoutSubjectBounds;
 };
 
 export type CutoutMaskPoint = { x: number; y: number };
@@ -2055,6 +2063,7 @@ export const applyAutomaticCutoutById = (
   clips: TimelineClip[],
   clipId: string,
   processedSrc: string,
+  subjectBounds?: CutoutSubjectBounds | null,
 ): TimelineClip[] => {
   let changed = false;
   const nextClips = clips.map((clip) => {
@@ -2082,6 +2091,7 @@ export const applyAutomaticCutoutById = (
           : {}),
         maskStrokes: [],
         chromaKey: "none" as const,
+        ...(subjectBounds ? {subjectBounds} : {}),
       },
     };
   });
@@ -6800,7 +6810,7 @@ export const setClipAdjustmentById = (
     return {
       ...clip,
       adjustment: {
-        scale: clamp(next.scale, 0.25, 4),
+        scale: clamp(next.scale, 0.05, 4),
         rotation: clamp(next.rotation, -180, 180),
         positionX: clamp(next.positionX, -100, 100),
         positionY: clamp(next.positionY, -100, 100),

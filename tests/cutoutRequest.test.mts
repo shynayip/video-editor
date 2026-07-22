@@ -185,6 +185,26 @@ test("a split processed video reprocesses and resets its right segment at the ef
   assert.equal(restoredAudio?.sourceStart, restoredVideo?.sourceStart);
 });
 
+test("automatic cutout keeps the detected subject bounds for a tight editor frame", () => {
+  const [video, audio] = createCutoutVideoPair({
+    videoId: "tight-cutout-video",
+    audioId: "tight-cutout-audio",
+    label: "Speaker",
+    src: "uploads/speaker.mp4",
+    start: 0,
+    duration: 90,
+  });
+  const subjectBounds = {left: 18, top: 12, width: 64, height: 84};
+  const processed = applyAutomaticCutoutById(
+    [video, audio],
+    video.id,
+    "uploads/speaker-transparent.webm",
+    subjectBounds,
+  );
+
+  assert.deepEqual(processed[0].cutout?.subjectBounds, subjectBounds);
+});
+
 test("a left-trimmed processed video reprocesses and resets at the effective original offset", () => {
   const [createdVideo, createdAudio] = createCutoutVideoPair({
     videoId: "cutout-trim-video",

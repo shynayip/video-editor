@@ -910,6 +910,7 @@ export const createTranscriptionApp = ({
       result = {
         src: `uploads/${storedName}`,
         mimeType: expectedOutput.mimeType,
+        subjectBounds: processed.subjectBounds ?? null,
       };
     } catch (error) {
       primaryError = error;

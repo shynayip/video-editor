@@ -677,14 +677,20 @@ const sampleWaveformAudio = async (
     return Math.sqrt(sumSquares / Math.max(1, samples));
   });
   const sortedLevels = [...levels].sort((left, right) => left - right);
-  const referenceLevel = Math.max(
-    0.001,
-    sortedLevels[Math.floor(sortedLevels.length * 0.92)] ?? 0,
+  const noiseFloor = sortedLevels[Math.floor(sortedLevels.length * 0.05)] ?? 0;
+  const peakLevel = Math.max(
+    noiseFloor + 0.001,
+    sortedLevels[Math.floor(sortedLevels.length * 0.95)] ?? 0,
   );
+  const dynamicRange = peakLevel - noiseFloor;
 
-  return levels.map((level) =>
-    Math.max(0.035, Math.min(1, Math.pow(level / referenceLevel, 0.72))),
-  );
+  return levels.map((level) => {
+    const normalized = Math.max(
+      0,
+      Math.min(1, (level - noiseFloor) / dynamicRange),
+    );
+    return Math.max(0.06, Math.pow(normalized, 0.85));
+  });
 };
 
 const TimelineWaveform = ({
@@ -700,7 +706,7 @@ const TimelineWaveform = ({
   sourceStart?: number;
   speed?: number;
 }) => {
-  const lineCount = Math.max(16, Math.min(100, Math.round(duration / 6)));
+  const lineCount = Math.max(120, Math.min(900, Math.round(duration)));
   const fallbackAmplitudes = useMemo(
     () => createWaveformBars(clipId, lineCount),
     [clipId, lineCount],
@@ -738,7 +744,7 @@ const TimelineWaveform = ({
       preserveAspectRatio="none"
     >
       {amplitudes.map((amplitude, index) => {
-        const height = Math.max(0.8, amplitude * 8.5);
+        const height = Math.max(1.65, amplitude * 7.4);
         const x = index * step + step / 2;
         return (
           <line

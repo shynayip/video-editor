@@ -28,14 +28,14 @@ button {
 
 .editor-shell {
   position: relative;
-  width: 100vw;
-  min-width: 1180px;
+  width: 100%;
+  min-width: 0;
   height: 100vh;
   display: grid;
   grid-template-columns:
-    var(--details-panel-width, clamp(360px, 26vw, 440px))
-    minmax(420px, 1fr)
-    var(--preview-panel-width, calc((100vh - 48px) * 9 / 16));
+    var(--details-panel-width, clamp(280px, 24vw, 380px))
+    minmax(0, 1fr)
+    var(--preview-panel-width, clamp(280px, 34vw, 520px));
   grid-template-rows:
     48px
     minmax(260px, 1fr)
@@ -54,6 +54,87 @@ button {
   padding: 0 18px;
   background: #0b0f15;
   border-bottom: 1px solid #242b35;
+  min-width: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 1280px) {
+  .editor-shell {
+    grid-template-columns: 300px minmax(0, 1fr) 360px;
+  }
+
+  .topbar {
+    grid-template-columns: 150px minmax(0, 1fr) max-content;
+    gap: 10px;
+    padding-inline: 12px;
+  }
+
+  .tool-tabs {
+    gap: 12px;
+  }
+
+  .project-status {
+    display: none;
+  }
+}
+
+@media (max-width: 1020px) {
+  .editor-shell {
+    grid-template-columns: 260px minmax(0, 1fr) 300px;
+  }
+
+  .topbar {
+    grid-template-columns: 132px minmax(0, 1fr) max-content;
+  }
+
+  .tool-tabs {
+    gap: 9px;
+    font-size: 11px;
+  }
+
+  .topbar {
+    grid-template-columns: 118px minmax(0, 1fr) max-content;
+    gap: 8px;
+    padding-inline: 8px;
+  }
+
+  .project-actions {
+    gap: 5px;
+  }
+
+  .workspace-reset-button {
+    display: none;
+  }
+
+  .save-state {
+    display: none;
+  }
+
+  .save-button,
+  .export-button {
+    padding-inline: 9px;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    grid-template-columns: 96px minmax(0, 1fr) max-content;
+  }
+
+  .brand {
+    font-size: 14px;
+  }
+
+  .tool-tabs {
+    gap: 8px;
+    font-size: 10px;
+  }
+
+  .save-button,
+  .export-button {
+    padding-inline: 7px;
+    font-size: 11px;
+  }
 }
 
 .brand {
@@ -99,6 +180,8 @@ button {
   justify-self: end;
   gap: 8px;
   min-width: 0;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .project-status {
@@ -109,6 +192,126 @@ button {
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.save-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #8ea1b4;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.save-state::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.save-state-saved {
+  color: #63d9a1;
+}
+
+.save-state-unsaved {
+  color: #f5b800;
+}
+
+.save-state-saving {
+  color: #7cc7ff;
+}
+
+.shortcut-help-button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #3b4b5e;
+  border-radius: 50%;
+  background: #17202b;
+  color: #d8e1eb;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.shortcut-help-button:hover {
+  border-color: #13b8aa;
+  color: #63e6d9;
+}
+
+.shortcut-help-dialog {
+  width: min(360px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid #34465a;
+  border-radius: 12px;
+  background: #111923;
+  color: #eef4f8;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+
+.shortcut-help-dialog::backdrop {
+  background: rgba(2, 6, 12, 0.68);
+}
+
+.shortcut-help-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.shortcut-help-heading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.shortcut-help-heading p {
+  margin: 5px 0 0;
+  color: #91a0af;
+  font-size: 12px;
+}
+
+.shortcut-help-heading button {
+  border: 0;
+  background: transparent;
+  color: #91a0af;
+  cursor: pointer;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.shortcut-help-list {
+  display: grid;
+  gap: 9px;
+}
+
+.shortcut-help-list span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #c7d3df;
+  font-size: 12px;
+}
+
+.shortcut-help-list kbd {
+  min-width: 34px;
+  padding: 4px 6px;
+  border: 1px solid #405267;
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: #1b2735;
+  color: #f8fafc;
+  font-size: 11px;
+  text-align: center;
+}
+
+.shortcut-help-list em {
+  margin-left: auto;
+  color: #91a0af;
+  font-style: normal;
 }
 
 .export-button,
@@ -3873,6 +4076,39 @@ button {
 .timeline-tools .icon-tool-button:disabled {
   cursor: default;
   opacity: 0.38;
+}
+
+.timeline-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.timeline-zoom-controls button {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid #334155;
+  border-radius: 5px;
+  background: #17202b;
+  color: #d8e1eb;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.timeline-zoom-controls button:hover {
+  background: #263446;
+}
+
+.timeline-zoom-controls input[type="range"] {
+  width: 92px;
+  accent-color: #13b8aa;
+}
+
+.timeline-zoom-controls .timeline-zoom-fit {
+  min-width: 34px;
+  font-size: 11px;
 }
 
 .timeline-toolbar strong {

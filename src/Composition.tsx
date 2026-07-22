@@ -44,7 +44,6 @@ import {
   createTextClip,
   defaultCaptionStyle,
   defaultClipAdjustment,
-  deleteClipById,
   duplicateClipById,
   ensureLinkedAudioForVideo,
   keepDominantVoiceInLinkedVideo,
@@ -226,7 +225,7 @@ const fps = 30;
 const defaultMediaDurationInFrames = 16 * fps;
 const defaultImageDurationInFrames = 5 * fps;
 const remotionRegistrationFallbackInFrames = 24 * 60 * 60 * fps;
-const timelineScale = 1.15;
+const defaultTimelineScale = 1.15;
 const timelineOrigin = 148;
 const timelineDragActivationDistance = 6;
 const mediaSelectionActivationDistance = 4;
@@ -276,11 +275,11 @@ const getDefaultWorkspaceLayout = (): WorkspaceLayout => {
   const viewportHeight =
     typeof window === "undefined" ? 900 : window.innerHeight;
   return {
-    detailsWidth: clampWorkspaceSize(viewportWidth * 0.26, 360, 440),
+    detailsWidth: clampWorkspaceSize(viewportWidth * 0.24, 280, 380),
     previewWidth: clampWorkspaceSize(
       ((viewportHeight - 48) * 9) / 16,
-      300,
-      620,
+      280,
+      520,
     ),
     timelineHeight: clampWorkspaceSize(viewportHeight * 0.32, 220, 320),
   };
@@ -296,21 +295,21 @@ const readWorkspaceLayout = (): WorkspaceLayout => {
       window.localStorage.getItem(workspaceLayoutStorageKey) ?? "null",
     ) as Partial<WorkspaceLayout> | null;
     const viewportWidth = window.innerWidth;
-    const detailsMaximum = Math.max(360, viewportWidth - 760);
-    const previewMaximum = Math.max(300, viewportWidth - 820);
+    const detailsMaximum = Math.max(280, viewportWidth - 640);
+    const previewMaximum = Math.max(280, viewportWidth - 620);
     return {
       detailsWidth: clampWorkspaceSize(
         typeof stored?.detailsWidth === "number"
           ? stored.detailsWidth
           : defaults.detailsWidth,
-        360,
+        280,
         detailsMaximum,
       ),
       previewWidth: clampWorkspaceSize(
         typeof stored?.previewWidth === "number"
           ? stored.previewWidth
           : defaults.previewWidth,
-        300,
+        280,
         previewMaximum,
       ),
       timelineHeight: clampWorkspaceSize(
@@ -586,7 +585,7 @@ const shouldShowTimelineWaveform = (clip: TimelineClip) =>
       : clip.track === "cutout" && clip.cutout?.mediaKind === "video"));
 
 const getTimelineThumbnailCount = (clip: TimelineClip) =>
-  Math.max(1, Math.min(12, Math.ceil((clip.duration * timelineScale) / 84)));
+  Math.max(1, Math.min(12, Math.ceil((clip.duration * defaultTimelineScale) / 84)));
 
 const seekTimelineThumbnail = (
   video: HTMLVideoElement,
@@ -2974,9 +2973,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const [, setMediaPreviewFrame] = useState(0);
   const [projectStatus, setProjectStatus] = useState("");
+  const [isShortcutHelpOpen, setIsShortcutHelpOpen] = useState(false);
+  const [saveState, setSaveState] = useState<
+    "saved" | "unsaved" | "saving"
+  >("saved");
   const [isExporting, setIsExporting] = useState(false);
   const [workspaceLayout, setWorkspaceLayout] =
     useState<WorkspaceLayout>(readWorkspaceLayout);
+  const [timelineScale, setTimelineScale] = useState(defaultTimelineScale);
   const [playheadFrame, setPlayheadFrame] = useState(0);
   const [timelineHoverFrame, setTimelineHoverFrame] = useState<number | null>(
     null,
@@ -3121,6 +3125,66 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }
   }, [workspaceLayout]);
 
+  useEffect(() => {
+    const fitWorkspaceToViewport = () => {
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const minimumDetailsWidth = 280;
+      const minimumPreviewWidth = 280;
+      const minimumMiddleWidth = 360;
+      const availablePanelWidth = Math.max(
+        minimumDetailsWidth + minimumPreviewWidth,
+        viewportWidth - minimumMiddleWidth,
+      );
+
+      setWorkspaceLayout((current) => {
+        let detailsWidth = clampWorkspaceSize(
+          current.detailsWidth,
+          minimumDetailsWidth,
+          380,
+        );
+        let previewWidth = clampWorkspaceSize(
+          current.previewWidth,
+          minimumPreviewWidth,
+          520,
+        );
+
+        if (detailsWidth + previewWidth > availablePanelWidth) {
+          const overflow = detailsWidth + previewWidth - availablePanelWidth;
+          const previewReduction = Math.min(
+            overflow,
+            previewWidth - minimumPreviewWidth,
+          );
+          previewWidth -= previewReduction;
+          detailsWidth = Math.max(
+            minimumDetailsWidth,
+            detailsWidth - (overflow - previewReduction),
+          );
+        }
+
+        const timelineHeight = clampWorkspaceSize(
+          current.timelineHeight,
+          200,
+          Math.max(220, viewportHeight - 300),
+        );
+
+        if (
+          detailsWidth === current.detailsWidth &&
+          previewWidth === current.previewWidth &&
+          timelineHeight === current.timelineHeight
+        ) {
+          return current;
+        }
+
+        return { detailsWidth, previewWidth, timelineHeight };
+      });
+    };
+
+    fitWorkspaceToViewport();
+    window.addEventListener("resize", fitWorkspaceToViewport);
+    return () => window.removeEventListener("resize", fitWorkspaceToViewport);
+  }, []);
+
   const resizeWorkspace = useCallback(
     (target: WorkspaceResizeTarget, clientPosition: number) => {
       const shell = editorShellRef.current;
@@ -3232,6 +3296,24 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }));
   }, []);
 
+  const resetWorkspaceLayout = useCallback(() => {
+    const defaults = getDefaultWorkspaceLayout();
+    setWorkspaceLayout(defaults);
+    setProjectStatus("Workspace layout reset");
+  }, []);
+
+  const togglePreviewFullscreen = useCallback(async () => {
+    const previewWindow = previewWindowRef.current;
+    if (!previewWindow) return;
+
+    if (document.fullscreenElement === previewWindow) {
+      await document.exitFullscreen();
+      return;
+    }
+
+    await previewWindow.requestFullscreen();
+  }, []);
+
   clipsRef.current = clips;
   pointerDragRef.current = pointerDrag;
   selectedClipIdRef.current = selectedClipId;
@@ -3250,6 +3332,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   }, [selectedClipId]);
 
   const projectDuration = useMemo(() => getTimelineDuration(clips), [clips]);
+  const fitTimelineToViewport = useCallback(() => {
+    const viewportWidth = timelineScrollRef.current?.clientWidth ?? 0;
+    const availableWidth = Math.max(240, viewportWidth - timelineOrigin - 24);
+    const nextScale = availableWidth / Math.max(1, projectDuration);
+    setTimelineScale(Math.max(0.35, Math.min(4, nextScale)));
+    setProjectStatus("Timeline fitted to viewport");
+  }, [projectDuration]);
   const videoPlaybackDuration = useMemo(
     () => getVideoPlaybackDuration(clips),
     [clips],
@@ -4054,12 +4143,47 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
   const commitClipChange = useCallback(
     (updater: (currentClips: TimelineClip[]) => TimelineClip[]) => {
+      setSaveState("unsaved");
       setTimelineHistory((currentHistory) =>
         applyTimelineHistoryEdit(
           currentHistory,
           updater(currentHistory.present),
         ),
       );
+    },
+    [],
+  );
+
+  const deleteTimelineClipsWithRipple = useCallback(
+    (currentClips: TimelineClip[], clipIds: string[]) => {
+      const selectedIds = new Set(clipIds);
+      currentClips.forEach((clip) => {
+        if (selectedIds.has(clip.id) && clip.linkedClipId) {
+          selectedIds.add(clip.linkedClipId);
+        }
+      });
+
+      const removedClips = currentClips.filter((clip) => selectedIds.has(clip.id));
+      const laneKey = (clip: TimelineClip) =>
+        clip.track === "main" || clip.track === "upper"
+          ? `video:${getVideoLayer(clip) ?? clip.track}`
+          : `track:${clip.track}`;
+
+      return currentClips
+        .filter((clip) => !selectedIds.has(clip.id))
+        .map((clip) => {
+          const shift = removedClips
+            .filter(
+              (removedClip) =>
+                laneKey(removedClip) === laneKey(clip) &&
+                removedClip.start <= clip.start,
+            )
+            .reduce((total, removedClip) => total + removedClip.duration, 0);
+
+          return shift > 0
+            ? { ...clip, start: Math.max(0, clip.start - shift) }
+            : clip;
+        });
     },
     [],
   );
@@ -4092,10 +4216,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           ? selectedClipIdsRef.current
           : [selectedClipIdRef.current];
       commitClipChange((currentClips) =>
-        clipIds.reduce(
-          (nextClips, clipId) => deleteClipById(nextClips, clipId),
-          currentClips,
-        ),
+        deleteTimelineClipsWithRipple(currentClips, clipIds),
       );
       setSelectedClipId(null);
       setSelectedClipIds([]);
@@ -4107,13 +4228,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
     window.addEventListener("keydown", handleDeleteShortcut);
     return () => window.removeEventListener("keydown", handleDeleteShortcut);
-  }, [commitClipChange]);
+  }, [commitClipChange, deleteTimelineClipsWithRipple]);
 
   const undoLastClipChange = () => {
+    setSaveState("unsaved");
     setTimelineHistory(undoTimelineHistory);
   };
 
   const redoLastClipChange = () => {
+    setSaveState("unsaved");
     setTimelineHistory(redoTimelineHistory);
   };
 
@@ -4961,6 +5084,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   );
 
   const saveProjectToStorage = useCallback(() => {
+    setSaveState("saving");
     try {
       const nextProject = getCurrentSavedProject();
       const serializedProject = JSON.stringify(nextProject, null, 2);
@@ -4970,18 +5094,155 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         `video-editor-project-${Date.now()}.json`,
       );
       setProjectStatus("Project saved and downloaded");
+      setSaveState("saved");
     } catch (error) {
       setProjectStatus(
         error instanceof Error
           ? `Save failed: ${error.message}`
           : "Save failed.",
       );
+      setSaveState("unsaved");
     }
   }, [getCurrentSavedProject]);
 
   useEffect(() => {
+    const handleSaveShortcut = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() !== "s" ||
+        (!event.ctrlKey && !event.metaKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        event.defaultPrevented
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      const isEditingText =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(
+            target.closest("input, textarea, select, [contenteditable='true']"),
+          ));
+      if (isEditingText) {
+        return;
+      }
+      if (document.querySelector("dialog[open]")) {
+        event.preventDefault();
+        return;
+      }
+
+      event.preventDefault();
+      saveProjectToStorage();
+    };
+
+    window.addEventListener("keydown", handleSaveShortcut);
+    return () => window.removeEventListener("keydown", handleSaveShortcut);
+  }, [saveProjectToStorage]);
+
+  useEffect(() => {
+    const handleSelectAllShortcut = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() !== "a" ||
+        (!event.ctrlKey && !event.metaKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        event.defaultPrevented
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      const isEditingText =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(
+            target.closest("input, textarea, select, [contenteditable='true']"),
+          ));
+      if (isEditingText) {
+        return;
+      }
+      if (document.querySelector("dialog[open]")) {
+        event.preventDefault();
+        return;
+      }
+
+      const nextSelectedIds = clips.map((clip) => clip.id);
+      if (nextSelectedIds.length === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      const primaryClip = clips[0];
+      selectedClipIdsRef.current = nextSelectedIds;
+      setSelectedClipIds(nextSelectedIds);
+      setSelectedClipId(primaryClip.id);
+      setSelectedTrack(primaryClip.track);
+      setSelectedVideoLayer(null);
+      setPreviewMode("timeline");
+      setProjectStatus(`${nextSelectedIds.length} clips selected`);
+    };
+
+    window.addEventListener("keydown", handleSelectAllShortcut);
+    return () => window.removeEventListener("keydown", handleSelectAllShortcut);
+  }, [clips]);
+
+  useEffect(() => {
+    const handleTimelineNavigationShortcut = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.shiftKey
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      const isEditingText =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(
+            target.closest("input, textarea, select, [contenteditable='true']"),
+          ));
+      if (isEditingText || document.querySelector("dialog[open]")) {
+        return;
+      }
+
+      if (event.key === "Home") {
+        event.preventDefault();
+        setPlayheadFrame(0);
+        setPreviewMode("timeline");
+        setProjectStatus("Moved to timeline start");
+      } else if (event.key === "End") {
+        event.preventDefault();
+        setPlayheadFrame(projectDuration);
+        setPreviewMode("timeline");
+        setProjectStatus("Moved to timeline end");
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        selectedClipIdsRef.current = [];
+        setSelectedClipIds([]);
+        setSelectedClipId(null);
+        setSelectedVideoLayer(null);
+        setTimelineSelectionBox(null);
+        setProjectStatus("Selection cleared");
+      }
+    };
+
+    window.addEventListener("keydown", handleTimelineNavigationShortcut);
+    return () =>
+      window.removeEventListener("keydown", handleTimelineNavigationShortcut);
+  }, [projectDuration]);
+
+  useEffect(() => {
     const autosave = createTrailingAutosaveScheduler(
-      () => persistProjectToStorage(getCurrentSavedProject()),
+      () => {
+        persistProjectToStorage(getCurrentSavedProject());
+        setSaveState("saved");
+      },
       {
         schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
         cancel: (timerId) => window.clearTimeout(timerId),
@@ -5508,7 +5769,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     });
   };
 
-  const splitSelectedTrackClip = () => {
+  const splitSelectedTrackClip = useCallback(() => {
     const targetClip = selectedClipId
       ? clips.find((clip) => clip.id === selectedClipId)
       : clips.find(
@@ -5533,7 +5794,39 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setSelectedClipId(`${targetClip.id}-b`);
     setSelectedTrack(targetClip.track);
     setProjectStatus("Clip split at the red playhead");
-  };
+  }, [clips, commitClipChange, playheadFrame, selectedClipId, selectedTrack]);
+
+  useEffect(() => {
+    const handleSplitShortcut = (event: KeyboardEvent) => {
+      if (
+        event.code !== "KeyS" ||
+        event.repeat ||
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      const isEditingText =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(
+            target.closest("input, textarea, select, [contenteditable='true']"),
+          ));
+      if (isEditingText || document.querySelector("dialog[open]")) {
+        return;
+      }
+
+      event.preventDefault();
+      splitSelectedTrackClip();
+    };
+
+    window.addEventListener("keydown", handleSplitShortcut);
+    return () => window.removeEventListener("keydown", handleSplitShortcut);
+  }, [splitSelectedTrackClip]);
 
   const splitSelectedCutoutAtPlayhead = () => {
     if (isAutoCutoutLoading) return;
@@ -5567,16 +5860,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           : [];
     if (clipIds.length === 0) return;
     commitClipChange((currentClips) =>
-      clipIds.reduce(
-        (nextClips, clipId) => deleteClipById(nextClips, clipId),
-        currentClips,
-      ),
+      deleteTimelineClipsWithRipple(currentClips, clipIds),
     );
     setSelectedClipId(null);
     setSelectedClipIds([]);
   };
 
-  const duplicateSelectedClip = () => {
+  const duplicateSelectedClip = useCallback(() => {
     if (!selectedClipId) return;
 
     const duplicatePrefix = `duplicate-${Date.now()}`;
@@ -5594,7 +5884,39 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setIsAudioTrackVisible(
       sourceClip?.track === "audio" || Boolean(sourceClip?.linkedClipId),
     );
-  };
+  }, [clips, commitClipChange, selectedClipId]);
+
+  useEffect(() => {
+    const handleDuplicateShortcut = (event: KeyboardEvent) => {
+      if (
+        event.code !== "KeyD" ||
+        event.repeat ||
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      const isEditingText =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(
+            target.closest("input, textarea, select, [contenteditable='true']"),
+          ));
+      if (isEditingText || document.querySelector("dialog[open]")) {
+        return;
+      }
+
+      event.preventDefault();
+      duplicateSelectedClip();
+    };
+
+    window.addEventListener("keydown", handleDuplicateShortcut);
+    return () => window.removeEventListener("keydown", handleDuplicateShortcut);
+  }, [duplicateSelectedClip]);
 
   const toggleClipMute = (clipId: string) => {
     commitClipChange((currentClips) =>
@@ -5702,6 +6024,40 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }
   };
 
+  const selectTimelineClipRange = (clip: TimelineClip) => {
+    const anchor = clips.find((candidate) => candidate.id === selectedClipId);
+    if (!anchor || anchor.track !== clip.track) {
+      selectTimelineClip(clip);
+      return;
+    }
+
+    const laneClips = clips
+      .filter((candidate) => candidate.track === clip.track)
+      .sort((left, right) => left.start - right.start);
+    const anchorIndex = laneClips.findIndex(
+      (candidate) => candidate.id === anchor.id,
+    );
+    const targetIndex = laneClips.findIndex(
+      (candidate) => candidate.id === clip.id,
+    );
+    if (anchorIndex < 0 || targetIndex < 0) {
+      selectTimelineClip(clip);
+      return;
+    }
+
+    const startIndex = Math.min(anchorIndex, targetIndex);
+    const endIndex = Math.max(anchorIndex, targetIndex);
+    const nextIds = laneClips
+      .slice(startIndex, endIndex + 1)
+      .map((candidate) => candidate.id);
+    selectedClipIdsRef.current = nextIds;
+    setSelectedClipIds(nextIds);
+    setSelectedClipId(clip.id);
+    setSelectedTrack(clip.track);
+    setSelectedVideoLayer(null);
+    setPreviewMode("timeline");
+  };
+
   useEffect(() => {
     const handleTimelineArrowNavigation = (event: KeyboardEvent) => {
       const direction =
@@ -5717,10 +6073,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       if (
         !direction ||
         event.defaultPrevented ||
-        event.altKey ||
         event.ctrlKey ||
         event.metaKey ||
-        !selectedClipIdRef.current
+        !selectedClipIdRef.current ||
+        (event.altKey && (direction === "up" || direction === "down"))
       ) {
         return;
       }
@@ -5744,11 +6100,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         ["caption", "text", "sticker", "cutout"].includes(selectedClip.track);
       if (
         canNudgeSelectedClip &&
-        event.shiftKey &&
+        (event.shiftKey || event.altKey) &&
         (direction === "left" || direction === "right")
       ) {
         event.preventDefault();
-        const frameStep = 5;
+        const frameStep = event.altKey ? (event.shiftKey ? 10 : 1) : 5;
         const targetStart = Math.max(
           0,
           selectedClip.start + (direction === "left" ? -frameStep : frameStep),
@@ -8745,6 +9101,49 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setPointerDrag(nextDrag);
   };
 
+  const getSnappedTimelineStart = useCallback(
+    ({
+      currentClips,
+      movingClipIds,
+      targetStart,
+      duration,
+    }: {
+      currentClips: TimelineClip[];
+      movingClipIds: string[];
+      targetStart: number;
+      duration: number;
+    }) => {
+      const movingIds = new Set(movingClipIds);
+      const snapPoints = new Set<number>([0, playheadFrame]);
+
+      currentClips.forEach((clip) => {
+        if (movingIds.has(clip.id)) return;
+        snapPoints.add(clip.start);
+        snapPoints.add(clip.start + clip.duration);
+      });
+
+      let closestStart = targetStart;
+      let closestDistance = Number.POSITIVE_INFINITY;
+      snapPoints.forEach((point) => {
+        const startDistance = Math.abs(point - targetStart);
+        const endDistance = Math.abs(point - (targetStart + duration));
+        if (startDistance < closestDistance) {
+          closestDistance = startDistance;
+          closestStart = point;
+        }
+        if (endDistance < closestDistance) {
+          closestDistance = endDistance;
+          closestStart = point - duration;
+        }
+      });
+
+      return closestDistance <= 8
+        ? Math.max(0, Math.round(closestStart))
+        : targetStart;
+    },
+    [playheadFrame],
+  );
+
   useEffect(() => {
     if (!pointerDrag) {
       return;
@@ -8840,8 +9239,21 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         if (draggedClip) {
           const targetStart =
             pointerFrame - (pointerDrag.grabOffsetFrames ?? 0);
-          const requestedDelta = Math.round(targetStart - draggedClip.start);
           const selectedIds = new Set(pointerDrag.timelineClipIds);
+          const movingClips = clips.filter((clip) => selectedIds.has(clip.id));
+          const groupStart = Math.min(
+            ...movingClips.map((clip) => clip.start),
+          );
+          const groupEnd = Math.max(
+            ...movingClips.map((clip) => clip.start + clip.duration),
+          );
+          const snappedGroupStart = getSnappedTimelineStart({
+            currentClips: clips,
+            movingClipIds: [...selectedIds],
+            targetStart: groupStart + Math.round(targetStart - draggedClip.start),
+            duration: groupEnd - groupStart,
+          });
+          const requestedDelta = snappedGroupStart - groupStart;
           const anchorVideoLayer = getVideoLayer(draggedClip);
           const anchorLayerForMove = anchorVideoLayer ?? 0;
           const videoLayerDelta =
@@ -8945,10 +9357,21 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           const targetStart =
             pointerFrame - (pointerDrag.grabOffsetFrames ?? 0);
           const draggedClip = clips.find((clip) => clip.id === pointerDrag.id);
+          const linkedClipIds = draggedClip?.linkedClipId
+            ? [pointerDrag.id, draggedClip.linkedClipId]
+            : [pointerDrag.id];
+          const snappedTargetStart = draggedClip
+            ? getSnappedTimelineStart({
+                currentClips: clips,
+                movingClipIds: linkedClipIds,
+                targetStart,
+                duration: draggedClip.duration,
+              })
+            : targetStart;
           const timelineBoundary = draggedClip
             ? getExpandedTimelineBoundary(
                 projectDuration,
-                targetStart,
+                snappedTargetStart,
                 draggedClip.duration,
               )
             : projectDuration;
@@ -8957,7 +9380,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               currentClips,
               pointerDrag.id,
               targetVideoLayer,
-              targetStart,
+              snappedTargetStart,
               timelineBoundary,
             );
             if (target?.kind !== "row-gap") return movedClips;
@@ -8985,12 +9408,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
-    };
+  };
   }, [
     clips,
     commitClipChange,
     getPointerTimelineFrame,
     getVideoDropTargetFromElement,
+    getSnappedTimelineStart,
     mediaItems,
     placeMediaOnTimelineTrack,
     placeMediaBatchOnVideoLayer,
@@ -10343,11 +10767,40 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           </button>
         </nav>
         <div className="project-actions">
+          <span
+            className={`save-state save-state-${saveState}`}
+            role="status"
+            aria-live="polite"
+          >
+            {saveState === "saving"
+              ? "Saving…"
+              : saveState === "unsaved"
+                ? "Unsaved changes"
+                : "Saved"}
+          </span>
           {projectStatus ? (
             <span className="project-status" role="status">
               {projectStatus}
             </span>
           ) : null}
+          <button
+            className="shortcut-help-button"
+            type="button"
+            aria-label="Show keyboard shortcuts"
+            title="Keyboard shortcuts"
+            onClick={() => setIsShortcutHelpOpen(true)}
+          >
+            ?
+          </button>
+          <button
+            className="secondary-action-button workspace-reset-button"
+            type="button"
+            title="Reset panel sizes for this screen"
+            aria-label="Reset workspace layout"
+            onClick={resetWorkspaceLayout}
+          >
+            Reset layout
+          </button>
           <button
             className="save-button"
             type="button"
@@ -13087,6 +13540,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             </div>
                           ) : null}
                         </div>
+                        <button
+                          type="button"
+                          className="media-preview-icon-button"
+                          aria-label="Toggle fullscreen preview"
+                          title="Fullscreen"
+                          onClick={() => void togglePreviewFullscreen()}
+                        >
+                          ⛶
+                        </button>
                       </div>
                     </div>
                   ) : null}
@@ -13693,6 +14155,48 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               🗑
             </button>
           </div>
+          <div className="timeline-zoom-controls" aria-label="Timeline zoom">
+            <button
+              type="button"
+              aria-label="Zoom timeline out"
+              title="Zoom out"
+              onClick={() =>
+                setTimelineScale((currentScale) =>
+                  Math.max(0.35, Number((currentScale - 0.15).toFixed(2))),
+                )
+              }
+            >
+              −
+            </button>
+            <input
+              type="range"
+              min="0.35"
+              max="4"
+              step="0.05"
+              value={timelineScale}
+              aria-label="Timeline zoom level"
+              onChange={(event) => setTimelineScale(Number(event.target.value))}
+            />
+            <button
+              type="button"
+              aria-label="Zoom timeline in"
+              title="Zoom in"
+              onClick={() =>
+                setTimelineScale((currentScale) =>
+                  Math.min(4, Number((currentScale + 0.15).toFixed(2))),
+                )
+              }
+            >
+              +
+            </button>
+            <button
+              type="button"
+              className="timeline-zoom-fit"
+              onClick={fitTimelineToViewport}
+            >
+              Fit
+            </button>
+          </div>
           <strong>
             {formatTimelineTimecode(playheadFrame, fps)} /{" "}
             {formatTimelineTimecode(projectDuration, fps)}
@@ -14118,6 +14622,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 );
                                 return;
                               }
+                              if (
+                                event.shiftKey &&
+                                !event.ctrlKey &&
+                                !event.metaKey
+                              ) {
+                                event.preventDefault();
+                                selectTimelineClipRange(clip);
+                                return;
+                              }
                               if (isAdditiveSelection) {
                                 event.preventDefault();
                                 toggleTimelineClipSelection(clip);
@@ -14507,6 +15020,40 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           >
             Cancel
           </button>
+        </div>
+      </dialog>
+
+      <dialog
+        open={isShortcutHelpOpen}
+        className="shortcut-help-dialog"
+        aria-labelledby="shortcut-help-title"
+        onCancel={(event) => {
+          event.preventDefault();
+          setIsShortcutHelpOpen(false);
+        }}
+      >
+        <div className="shortcut-help-heading">
+          <div>
+            <h2 id="shortcut-help-title">Keyboard shortcuts</h2>
+            <p>Speed up your editing workflow.</p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close keyboard shortcuts"
+            onClick={() => setIsShortcutHelpOpen(false)}
+          >
+            ×
+          </button>
+        </div>
+        <div className="shortcut-help-list">
+          <span><kbd>Space</kbd><em>Play / pause</em></span>
+          <span><kbd>S</kbd><em>Split at playhead</em></span>
+          <span><kbd>D</kbd><em>Duplicate selected clip</em></span>
+          <span><kbd>Ctrl</kbd> + <kbd>A</kbd><em>Select all clips</em></span>
+          <span><kbd>Ctrl</kbd> + <kbd>Z</kbd><em>Undo</em></span>
+          <span><kbd>Ctrl</kbd> + <kbd>Y</kbd><em>Redo</em></span>
+          <span><kbd>Esc</kbd><em>Clear selection</em></span>
+          <span><kbd>Home</kbd> / <kbd>End</kbd><em>Jump to start / end</em></span>
         </div>
       </dialog>
 

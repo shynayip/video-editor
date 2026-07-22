@@ -1766,7 +1766,7 @@ test("Task 2 playback uses the executable step in the timeline interval", () => 
   assert.equal(calls.length, 1);
   assert.deepEqual(
     calls[0].arguments.map((argument) => argument.getText(sourceFile)),
-    ["currentFrame", "projectDuration"],
+    ["currentFrame", "videoPlaybackDuration"],
   );
 });
 

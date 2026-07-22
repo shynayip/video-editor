@@ -225,6 +225,18 @@ const remotionRegistrationFallbackInFrames = 24 * 60 * 60 * fps;
 const timelineScale = 1.15;
 const timelineOrigin = 148;
 const timelineDragActivationDistance = 6;
+const mediaSelectionActivationDistance = 4;
+
+type MediaSelectionBox = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+  initialIds: string[];
+  additive: boolean;
+  activated: boolean;
+};
 const minimumTransitionDuration = 1;
 const savedProjectStorageKey = "video-editor-project-v1";
 const favoriteAnimationsStorageKey = "video-editor-favorite-animations-v1";
@@ -689,7 +701,7 @@ const TimelineWaveform = ({
   }, [duration, fallbackAmplitudes, lineCount, sourceStart, speed, src]);
 
   const step = 100 / amplitudes.length;
-  const centerY = 10;
+  const baselineY = 19;
 
   return (
     <svg
@@ -698,7 +710,7 @@ const TimelineWaveform = ({
       preserveAspectRatio="none"
     >
       {amplitudes.map((amplitude, index) => {
-        const height = Math.max(2, amplitude * 17);
+        const height = Math.max(1.5, amplitude * 18);
         const x = index * step + step / 2;
         return (
           <line
@@ -706,8 +718,8 @@ const TimelineWaveform = ({
             key={`${clipId}-wave-${index}`}
             x1={x}
             x2={x}
-            y1={centerY - height / 2}
-            y2={centerY + height / 2}
+            y1={baselineY - height}
+            y2={baselineY}
           />
         );
       })}
@@ -1612,6 +1624,71 @@ const cutoutLineStyleOptions: Array<{
   { id: "glow", label: "Glow" },
   { id: "double", label: "Double" },
   { id: "sketch", label: "Sketch" },
+];
+
+const cutoutLinePresetOptions: Array<{
+  id: string;
+  label: string;
+  effect: ClipEffect;
+  style: CutoutLineStyle;
+  color: string;
+  opacity: number;
+  width: number;
+}> = [
+  {
+    id: "clean",
+    label: "Clean Line",
+    effect: "outline",
+    style: "solid",
+    color: "#ffffff",
+    opacity: 100,
+    width: 2,
+  },
+  {
+    id: "color",
+    label: "Color Line",
+    effect: "outline",
+    style: "solid",
+    color: "#facc15",
+    opacity: 100,
+    width: 3,
+  },
+  {
+    id: "bold",
+    label: "Bold Line",
+    effect: "outline",
+    style: "solid",
+    color: "#ffffff",
+    opacity: 100,
+    width: 6,
+  },
+  {
+    id: "double",
+    label: "Double Line",
+    effect: "outline",
+    style: "double",
+    color: "#ffffff",
+    opacity: 100,
+    width: 2,
+  },
+  {
+    id: "sketch",
+    label: "Sketch Line",
+    effect: "moving-outline",
+    style: "sketch",
+    color: "#facc15",
+    opacity: 100,
+    width: 3,
+  },
+  {
+    id: "moving",
+    label: "Moving Line",
+    effect: "moving-outline",
+    style: "solid",
+    color: "#ffffff",
+    opacity: 100,
+    width: 3,
+  },
 ];
 
 const effectSections: Array<{
@@ -2634,6 +2711,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const previewSourceRef = useRef<string | null>(null);
   const timelineContentRef = useRef<HTMLDivElement>(null);
   const timelineScrollRef = useRef<HTMLDivElement>(null);
+  const mediaLibraryRef = useRef<HTMLDivElement>(null);
+  const mediaGridRef = useRef<HTMLDivElement>(null);
+  const mediaSelectionBoxRef = useRef<MediaSelectionBox | null>(null);
   const suppressMediaClickRef = useRef(false);
   const pointerDragStartedRef = useRef(false);
   const animationQuickMenuRef = useRef<HTMLDivElement>(null);
@@ -2683,6 +2763,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       initialMediaItems[0]?.id;
     return initialId ? [initialId] : [];
   });
+  const [mediaSelectionBox, setMediaSelectionBox] =
+    useState<MediaSelectionBox | null>(null);
   const [mediaPreviewTime, setMediaPreviewTime] = useState(0);
   const [mediaPreviewDuration, setMediaPreviewDuration] = useState(0);
   const [isMediaPreviewPlaying, setIsMediaPreviewPlaying] = useState(false);
@@ -3747,6 +3829,45 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setTimelineHistory(redoTimelineHistory);
   };
 
+  useEffect(() => {
+    const handleHistoryShortcut = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        (!event.ctrlKey && !event.metaKey) ||
+        event.altKey ||
+        event.shiftKey
+      ) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key !== "z" && key !== "r") return;
+
+      const target = event.target;
+      const isEditingText =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(
+            target.closest("input, textarea, select, [contenteditable='true']"),
+          ));
+      if (isEditingText || document.querySelector("dialog[open]")) return;
+
+      event.preventDefault();
+      if (key === "z") {
+        setTimelineHistory(undoTimelineHistory);
+        setProjectStatus("Undo");
+        return;
+      }
+
+      setTimelineHistory(redoTimelineHistory);
+      setProjectStatus("Redo");
+    };
+
+    window.addEventListener("keydown", handleHistoryShortcut);
+    return () => window.removeEventListener("keydown", handleHistoryShortcut);
+  }, []);
+
   const resetCaptionStatus = () => {
     if (captionStatus.kind !== "idle") {
       setCaptionStatus({ kind: "idle", message: "" });
@@ -3853,6 +3974,138 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setIsPreviewPlaying(false);
     setIsMediaPreviewPlaying(false);
     setPreviewMode("media");
+  };
+
+  const mediaSelectionPointerId = mediaSelectionBox?.pointerId;
+  useEffect(() => {
+    if (mediaSelectionPointerId === undefined) return;
+
+    const clearSelectionBox = (event: globalThis.PointerEvent) => {
+      if (event.pointerId !== mediaSelectionPointerId) return;
+      mediaSelectionBoxRef.current = null;
+      setMediaSelectionBox(null);
+    };
+
+    window.addEventListener("pointerup", clearSelectionBox);
+    window.addEventListener("pointercancel", clearSelectionBox);
+    return () => {
+      window.removeEventListener("pointerup", clearSelectionBox);
+      window.removeEventListener("pointercancel", clearSelectionBox);
+    };
+  }, [mediaSelectionPointerId]);
+
+  const startMediaSelection = (event: PointerEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const isScrollbarPointer = event.clientX >= bounds.right - 14;
+
+    if (
+      event.button !== 0 ||
+      isScrollbarPointer ||
+      target.closest(".media-thumb, .library-actions, button, input")
+    ) {
+      return;
+    }
+
+    const additive = event.ctrlKey || event.metaKey;
+    if (!additive) {
+      setSelectedMediaIds([]);
+      setSelectedMediaId(null);
+    }
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const nextSelection: MediaSelectionBox = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      currentX: event.clientX,
+      currentY: event.clientY,
+      initialIds: additive ? selectedMediaIds : [],
+      additive,
+      activated: false,
+    };
+    mediaSelectionBoxRef.current = nextSelection;
+    setMediaSelectionBox(nextSelection);
+  };
+
+  const moveMediaSelection = (event: PointerEvent<HTMLDivElement>) => {
+    const activeSelection = mediaSelectionBoxRef.current;
+    if (!activeSelection || event.pointerId !== activeSelection.pointerId) {
+      return;
+    }
+
+    const library = mediaLibraryRef.current;
+    const grid = mediaGridRef.current;
+    if (!library || !grid) return;
+
+    const bounds = library.getBoundingClientRect();
+    const currentX = Math.max(bounds.left, Math.min(event.clientX, bounds.right));
+    const currentY = Math.max(bounds.top, Math.min(event.clientY, bounds.bottom));
+    const activated =
+      activeSelection.activated ||
+      Math.hypot(
+        currentX - activeSelection.startX,
+        currentY - activeSelection.startY,
+      ) >= mediaSelectionActivationDistance;
+
+    if (event.clientY < bounds.top + 34) {
+      library.scrollBy({ top: -14 });
+    } else if (event.clientY > bounds.bottom - 34) {
+      library.scrollBy({ top: 14 });
+    }
+
+    if (activated) {
+      const selectionBounds = {
+        left: Math.min(activeSelection.startX, currentX),
+        right: Math.max(activeSelection.startX, currentX),
+        top: Math.min(activeSelection.startY, currentY),
+        bottom: Math.max(activeSelection.startY, currentY),
+      };
+      const hitIds = Array.from(
+        grid.querySelectorAll<HTMLElement>("[data-media-id]"),
+      )
+        .filter((element) => {
+          const cardBounds = element.getBoundingClientRect();
+          return (
+            cardBounds.right >= selectionBounds.left &&
+            cardBounds.left <= selectionBounds.right &&
+            cardBounds.bottom >= selectionBounds.top &&
+            cardBounds.top <= selectionBounds.bottom
+          );
+        })
+        .map((element) => element.dataset.mediaId)
+        .filter((id): id is string => Boolean(id));
+      const nextIds = activeSelection.additive
+        ? Array.from(new Set([...activeSelection.initialIds, ...hitIds]))
+        : hitIds;
+
+      setSelectedMediaIds(nextIds);
+      setSelectedMediaId(
+        hitIds[hitIds.length - 1] ?? nextIds[nextIds.length - 1] ?? null,
+      );
+    }
+
+    const nextSelection = {
+      ...activeSelection,
+      currentX,
+      currentY,
+      activated,
+    };
+    mediaSelectionBoxRef.current = nextSelection;
+    setMediaSelectionBox(nextSelection);
+  };
+
+  const finishMediaSelection = (event: PointerEvent<HTMLDivElement>) => {
+    const activeSelection = mediaSelectionBoxRef.current;
+    if (!activeSelection || event.pointerId !== activeSelection.pointerId) {
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    mediaSelectionBoxRef.current = null;
+    setMediaSelectionBox(null);
   };
 
   const openMediaTrimEditor = (mediaItem: MediaItem) => {
@@ -4478,6 +4731,25 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         currentClips,
         clipControlTarget?.id ?? null,
         updates,
+      ),
+    );
+    setPreviewMode("timeline");
+  };
+
+  const applySelectedCutoutLinePreset = (
+    preset: (typeof cutoutLinePresetOptions)[number],
+  ) => {
+    const clipId = clipControlTarget?.id ?? null;
+    commitClipChange((currentClips) =>
+      setCutoutLineStyleById(
+        setClipEffectById(currentClips, clipId, preset.effect),
+        clipId,
+        {
+          color: preset.color,
+          opacity: preset.opacity,
+          width: preset.width,
+          style: preset.style,
+        },
       ),
     );
     setPreviewMode("timeline");
@@ -8804,7 +9076,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         const playbackStep = stepTimelinePlayback(
           currentFrame,
           videoPlaybackDuration,
-          false,
         );
 
         if (!playbackStep.continues) {
@@ -9004,7 +9275,40 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         }`}
       >
         <aside className="media-panel">
-          <div className="media-library">
+          <div
+            className={`media-library ${mediaSelectionBox?.activated ? "is-selecting-media" : ""}`}
+            ref={mediaLibraryRef}
+            onPointerDown={startMediaSelection}
+            onPointerMove={moveMediaSelection}
+            onPointerUp={finishMediaSelection}
+            onPointerCancel={finishMediaSelection}
+            onLostPointerCapture={() => {
+              mediaSelectionBoxRef.current = null;
+              setMediaSelectionBox(null);
+            }}
+          >
+            {mediaSelectionBox?.activated ? (
+              <div
+                className="media-selection-box"
+                aria-hidden="true"
+                style={{
+                  left: Math.min(
+                    mediaSelectionBox.startX,
+                    mediaSelectionBox.currentX,
+                  ),
+                  top: Math.min(
+                    mediaSelectionBox.startY,
+                    mediaSelectionBox.currentY,
+                  ),
+                  width: Math.abs(
+                    mediaSelectionBox.currentX - mediaSelectionBox.startX,
+                  ),
+                  height: Math.abs(
+                    mediaSelectionBox.currentY - mediaSelectionBox.startY,
+                  ),
+                }}
+              />
+            ) : null}
             {activeTool === "media" ? (
               <>
                 <div className="library-actions">
@@ -9042,7 +9346,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   </div>
                 ) : null}
 
-                <div className="media-grid" aria-label="Imported media">
+                <div
+                  className="media-grid"
+                  ref={mediaGridRef}
+                  aria-label="Imported media"
+                >
                   {analyzingMediaItems.map((analyzingItem) => (
                     <div
                       className="media-thumb is-analyzing"
@@ -9063,6 +9371,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   {mediaItems.map((mediaItem) => (
                     <div
                       className={`media-thumb ${selectedMediaIds.includes(mediaItem.id) ? "selected-media" : ""} ${selectedMediaId === mediaItem.id ? "active-media" : ""}`}
+                      data-media-id={mediaItem.id}
                       key={mediaItem.id}
                     >
                       <button
@@ -9924,6 +10233,47 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       </section>
                     );
                   })}
+                  {clipControlTarget?.track === "cutout" ? (
+                    <section className="effect-library-section">
+                      <h3>Cutout lines</h3>
+                      <div className="effect-card-grid">
+                        {cutoutLinePresetOptions.map((preset) => {
+                          const isActivePreset =
+                            selectedClipEffect === preset.effect &&
+                            selectedCutoutLineStyle === preset.style &&
+                            selectedCutoutLineColor.toLowerCase() ===
+                              preset.color.toLowerCase() &&
+                            selectedCutoutLineWidth === preset.width;
+
+                          return (
+                            <button
+                              aria-label={`Apply ${preset.label} cutout effect`}
+                              className={
+                                isActivePreset
+                                  ? "effect-card cutout-line-preset-card active-visual-option"
+                                  : "effect-card cutout-line-preset-card"
+                              }
+                              data-line-preset={preset.id}
+                              key={preset.id}
+                              type="button"
+                              disabled={!canEditSelectedVisual}
+                              onClick={() =>
+                                applySelectedCutoutLinePreset(preset)
+                              }
+                            >
+                              <span
+                                className="effect-card-preview cutout-line-preset-preview"
+                                aria-hidden="true"
+                              >
+                                <i />
+                              </span>
+                              <strong>{preset.label}</strong>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ) : null}
                   {clipControlTarget?.track === "cutout" ? (
                     <section className="effect-library-section">
                       <h3>Cutout motion &amp; doodles</h3>

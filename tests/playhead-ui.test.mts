@@ -1320,6 +1320,26 @@ test("shows customizable line controls for cutout edge effects", () => {
   assert.match(stylesheetSource, /\.cutout-line-style-control/);
 });
 
+test("uses plain arrow keys for timeline selection and shift arrows for nudging", () => {
+  const compositionSource = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    compositionSource,
+    /canNudgeSelectedClip\s*&&\s*event\.shiftKey\s*&&\s*\(direction === "left" \|\| direction === "right"\)/,
+  );
+  assert.match(
+    compositionSource,
+    /const frameStep = 5;/,
+  );
+  assert.match(
+    compositionSource,
+    /getTimelineKeyboardNavigationTarget\(\{\s*clips,\s*selectedClipId: selectedClipIdRef\.current,\s*direction,\s*\}\)/,
+  );
+});
+
 test("offers an on-canvas rotation handle in manual adjustment mode", () => {
   const compositionSource = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
@@ -2988,4 +3008,51 @@ test("adds a track visibility eye beside the delete action", () => {
     toolbar.indexOf("visibility-icon-tool") <
       toolbar.indexOf("danger-icon-tool"),
   );
+});
+
+test("marquee-selects clips across every timeline row", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /type TimelineSelectionBox/);
+  assert.match(source, /data-timeline-clip-id={clip\.id}/);
+  assert.match(source, /getTimelineClipsInsideSelection/);
+  assert.match(source, /const scrollWhileSelecting/);
+  assert.match(source, /scrollArea\.scrollLeft \+= horizontalDelta/);
+  assert.match(source, /scrollArea\.scrollTop \+= verticalDelta/);
+  assert.match(source, /event\.shiftKey \|\| event\.ctrlKey \|\| event\.metaKey/);
+  assert.match(source, /multi-selected-timeline-clip/);
+  assert.match(source, /timelineClipIds\?: string\[\]/);
+  assert.match(source, /selected clips moved together/);
+  assert.match(
+    source,
+    /startPointerDrag\(event, clip, selectedGroup\)/,
+  );
+  assert.match(source, /moveIds\.add\(clip\.linkedClipId\)/);
+  assert.match(source, /startedFromTrackLabel: boolean/);
+  assert.match(
+    source,
+    /event\.currentTarget\.classList\.contains\("track-label"\)/,
+  );
+  assert.match(source, /suppressTrackLabelClickRef/);
+  assert.match(source, /const timelineGroupDragPreview = useMemo/);
+  assert.match(source, /timelineGroupDragPreview\?\.ids\.has\(clip\.id\)/);
+  assert.match(source, /onPointerDownCapture=\{\(event\) => \{/);
+  assert.match(source, /Moving \$\{timelineClipIds\.length\} selected clips together/);
+  assert.match(source, /const startTimelineGroupDrag = \(/);
+  assert.match(source, /window\.addEventListener\("pointermove", moveGroup\)/);
+  assert.match(source, /startTimelineGroupDrag\([\s\S]*?selectedGroup/);
+  assert.doesNotMatch(
+    source,
+    /"button, \.timeline-trim-handle, \.timeline-transition-button"/,
+  );
+  assert.match(source, /event\.key !== "Delete" && event\.key !== "Backspace"/);
+  assert.match(css, /\.timeline-selection-box\s*\{/);
+  assert.match(css, /\.timeline-clip\.multi-selected-timeline-clip\s*\{/);
 });

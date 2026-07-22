@@ -336,7 +336,7 @@ export const trimMediaItemRange = ({
       ? {
           ...item,
           trimOriginalSourceStart:
-            item.trimOriginalSourceStart ?? (item.sourceStart ?? 0),
+            item.trimOriginalSourceStart ?? item.sourceStart ?? 0,
           trimOriginalDurationInFrames:
             item.trimOriginalDurationInFrames ?? item.durationInFrames,
           sourceStart: (item.sourceStart ?? 0) + startFrame,
@@ -505,7 +505,12 @@ const clipFilterFormulas: Record<ClipFilter, ClipFilterFormula> = {
   "light-boost": { brightness: 1.16, contrast: 1.08, saturate: 1.1 },
   "cyber-soft": { hueRotate: 165, saturate: 1.25, brightness: 1.05 },
   tokyo: { contrast: 1.2, saturate: 1.35, hueRotate: -8 },
-  "dreamy-rose": { brightness: 1.08, saturate: 1.12, sepia: 0.16, hueRotate: 315 },
+  "dreamy-rose": {
+    brightness: 1.08,
+    saturate: 1.12,
+    sepia: 0.16,
+    hueRotate: 315,
+  },
   "pearl-glow": { brightness: 1.14, contrast: 0.92, saturate: 0.8 },
   "lavender-dream": { hueRotate: 250, saturate: 0.95, brightness: 1.06 },
   "stage-light": { contrast: 1.15, brightness: 0.96, saturate: 0.78 },
@@ -964,10 +969,7 @@ export const getPlaybackFollowScrollLeft = ({
   if (playheadX > visibleRight) {
     return Math.max(
       0,
-      Math.min(
-        maximumScrollLeft,
-        playheadX - viewportWidth + edgePadding,
-      ),
+      Math.min(maximumScrollLeft, playheadX - viewportWidth + edgePadding),
     );
   }
 
@@ -1419,9 +1421,7 @@ export const createVideoMediaPair = (
     speed: 1,
     volume: 1,
     linkedClipId: options.audioId,
-    ...(options.adjustment
-      ? { adjustment: { ...options.adjustment } }
-      : {}),
+    ...(options.adjustment ? { adjustment: { ...options.adjustment } } : {}),
     ...(options.track === "upper"
       ? { overlayLane: options.overlayLane ?? 0 }
       : {}),
@@ -1467,9 +1467,7 @@ export const createImageMediaClip = (options: {
   speed: 1,
   volume: 1,
   mediaType: "image",
-  ...(options.adjustment
-    ? { adjustment: { ...options.adjustment } }
-    : {}),
+  ...(options.adjustment ? { adjustment: { ...options.adjustment } } : {}),
   ...(options.track === "upper"
     ? { overlayLane: options.overlayLane ?? 0 }
     : {}),
@@ -2588,6 +2586,83 @@ type TextPositionBounds = {
   halfHeightPercent: number;
 };
 
+export type PreviewAlignmentGuides = {
+  horizontal: boolean;
+  vertical: boolean;
+  horizontalPositions?: number[];
+  verticalPositions?: number[];
+};
+
+const previewSnapPoints = [0, 33.333, 50, 66.667, 100];
+
+const getNearestPreviewSnapPoint = (
+  value: number,
+  thresholdPercent: number,
+) => {
+  let closestPoint: number | null = null;
+  let closestDistance = Number.POSITIVE_INFINITY;
+
+  previewSnapPoints.forEach((point) => {
+    const distance = Math.abs(value - point);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestPoint = point;
+    }
+  });
+
+  return closestPoint !== null && closestDistance <= thresholdPercent
+    ? closestPoint
+    : null;
+};
+
+export const snapPreviewPositionToCenter = (
+  position: TextPosition,
+  thresholdPercent = 1.5,
+): TextPosition & { guides: PreviewAlignmentGuides } => {
+  const verticalSnap = getNearestPreviewSnapPoint(
+    position.x,
+    thresholdPercent,
+  );
+  const horizontalSnap = getNearestPreviewSnapPoint(
+    position.y,
+    thresholdPercent,
+  );
+  const vertical = verticalSnap !== null;
+  const horizontal = horizontalSnap !== null;
+
+  return {
+    x: vertical ? verticalSnap : position.x,
+    y: horizontal ? horizontalSnap : position.y,
+    guides: {
+      horizontal,
+      vertical,
+      horizontalPositions: horizontal && horizontalSnap !== null ? [horizontalSnap] : [],
+      verticalPositions: vertical && verticalSnap !== null ? [verticalSnap] : [],
+    },
+  };
+};
+
+export const movePreviewTransform = <T extends TextPosition>(
+  transform: T,
+  position: TextPosition,
+): T => ({ ...transform, x: position.x, y: position.y });
+
+export const snapPreviewOffsetToCenter = (
+  offset: TextPosition,
+  thresholdPercent = 1.5,
+): TextPosition & { guides: PreviewAlignmentGuides } => {
+  const snapped = snapPreviewPositionToCenter(
+    { x: offset.x + 50, y: offset.y + 50 },
+    thresholdPercent,
+  );
+
+  return {
+    x: snapped.x - 50,
+    y: snapped.y - 50,
+    guides: snapped.guides,
+  };
+};
+
 export const moveTextOverlay = (
   clips: TimelineClip[],
   clipId: string,
@@ -3344,8 +3419,7 @@ export const getTimelineKeyboardNavigationTarget = ({
         firstRow.key.localeCompare(secondRow.key),
     );
   const selectedRowIndex = rows.findIndex((row) => row.key === selectedRow.key);
-  const targetRow =
-    rows[selectedRowIndex + (direction === "up" ? -1 : 1)];
+  const targetRow = rows[selectedRowIndex + (direction === "up" ? -1 : 1)];
   if (!targetRow) return null;
 
   const anchorFrame = selectedClip.start + selectedClip.duration / 2;
@@ -3555,7 +3629,7 @@ export const getTimelineTransitionBoundaries = (
 
 const withoutClipTransition = (clip: TimelineClip): TimelineClip => {
   if (!clip.transition) return clip;
-  const clipWithoutTransition = {...clip};
+  const clipWithoutTransition = { ...clip };
   delete clipWithoutTransition.transition;
   return clipWithoutTransition;
 };
@@ -3881,12 +3955,7 @@ const resolveVideoLayerCollision = (
       clip.id !== clipId &&
       clip.id !== collision.id &&
       getVideoLayer(clip) === videoLayer &&
-      clipRangesOverlap(
-        snappedStart,
-        duration,
-        clip.start,
-        clip.duration,
-      ),
+      clipRangesOverlap(snappedStart, duration, clip.start, clip.duration),
   );
   return hasSecondaryCollision ? null : snappedStart;
 };
@@ -4781,7 +4850,7 @@ export const intersectSourceRanges = (
       right[rightIndex].endSeconds,
     );
     if (endSeconds > startSeconds) {
-      intersections.push({startSeconds, endSeconds});
+      intersections.push({ startSeconds, endSeconds });
     }
 
     if (left[leftIndex].endSeconds <= right[rightIndex].endSeconds) {
@@ -4860,7 +4929,7 @@ const createSynchronizedLinkedSegments = (
       duration: segment.duration,
       sourceStart: (linkedAudio.sourceStart ?? 0) + segment.sourceOffset,
       linkedClipId: `${videoClip.id}-${segmentLabel}-${index}`,
-      ...(audioReplacementSrc ? {src: audioReplacementSrc} : {}),
+      ...(audioReplacementSrc ? { src: audioReplacementSrc } : {}),
     })),
     compactDuration,
   };
@@ -5038,9 +5107,7 @@ export const keepDominantVoiceInLinkedVideo = (
   if (removedFrames <= 0) {
     if (!cleanedSrc?.trim()) return clips;
     return clips.map((clip) =>
-      clip.id === linkedAudio.id
-        ? {...clip, src: cleanedSrc}
-        : clip,
+      clip.id === linkedAudio.id ? { ...clip, src: cleanedSrc } : clip,
     );
   }
 
@@ -5106,7 +5173,7 @@ export const restoreDominantVideoSources = (
     if (!sourceMedia || sourceMedia.src === clip.src) return clip;
 
     changed = true;
-    return {...clip, src: sourceMedia.src};
+    return { ...clip, src: sourceMedia.src };
   });
 
   return changed ? restored : clips;
@@ -5138,7 +5205,7 @@ export const ensureLinkedAudioForVideo = (
   if (matchingAudio) {
     return clips.map((clip) => {
       if (clip.id === videoClip.id) {
-        return {...clip, linkedClipId: matchingAudio.id};
+        return { ...clip, linkedClipId: matchingAudio.id };
       }
       if (clip.id === matchingAudio.id) {
         return {
@@ -5167,7 +5234,7 @@ export const ensureLinkedAudioForVideo = (
     duration: videoClip.duration,
     sourceStart: videoClip.sourceStart ?? 0,
     ...(Number.isFinite(videoClip.sourceDuration)
-      ? {sourceDuration: videoClip.sourceDuration}
+      ? { sourceDuration: videoClip.sourceDuration }
       : {}),
     color: "#2563eb",
     src: videoClip.src,
@@ -5179,7 +5246,7 @@ export const ensureLinkedAudioForVideo = (
 
   return [
     ...clips.map((clip) =>
-      clip.id === videoClip.id ? {...clip, linkedClipId: audioId} : clip,
+      clip.id === videoClip.id ? { ...clip, linkedClipId: audioId } : clip,
     ),
     linkedAudio,
   ];
@@ -5943,24 +6010,31 @@ export const getCutoutLineEffectCss = (
   }
 
   const visual = clip.visual;
-  const color = visual?.cutoutLineColor ??
+  const color =
+    visual?.cutoutLineColor ??
     (effect === "moving-white-outline" || effect === "outline"
       ? "#ffffff"
       : defaultCutoutLineStyle.color);
   const baseOpacity = Math.max(
     0,
-    Math.min(1, (visual?.cutoutLineOpacity ?? defaultCutoutLineStyle.opacity) / 100),
+    Math.min(
+      1,
+      (visual?.cutoutLineOpacity ?? defaultCutoutLineStyle.opacity) / 100,
+    ),
   );
-  const flicker = effect === "flicker-outline"
-    ? 0.35 + Math.abs(Math.sin(frame * 0.83)) * 0.65
-    : 1;
-  const opacity = baseOpacity * flicker * Math.max(0, Math.min(1, effectAmount));
+  const flicker =
+    effect === "flicker-outline"
+      ? 0.35 + Math.abs(Math.sin(frame * 0.83)) * 0.65
+      : 1;
+  const opacity =
+    baseOpacity * flicker * Math.max(0, Math.min(1, effectAmount));
   const width = Math.max(
     0.5,
     (visual?.cutoutLineWidth ?? defaultCutoutLineStyle.width) *
       Math.max(0.15, effectAmount),
   );
-  const style = visual?.cutoutLineStyle ??
+  const style =
+    visual?.cutoutLineStyle ??
     (effect === "neon-outline" || effect === "electric-glow"
       ? "glow"
       : defaultCutoutLineStyle.style);
@@ -6169,7 +6243,10 @@ export const getClipVisualPresentation = (
     const beat = Math.pow(Math.abs(Math.sin(frame * 0.16)), 5);
     scale *= 1 + beat * 0.13 * effectAmount;
     rotate = Math.sin(frame * 0.16) * beat * 1.8 * effectAmount;
-    parts.push(`contrast(${1 + 0.2 * effectAmount})`, `saturate(${1 + 0.3 * effectAmount})`);
+    parts.push(
+      `contrast(${1 + 0.2 * effectAmount})`,
+      `saturate(${1 + 0.3 * effectAmount})`,
+    );
   }
   if (effect === "sway") {
     translateX = Math.sin(frame * 0.065) * 2.4 * effectAmount;
@@ -6501,9 +6578,7 @@ const applyAnimationPreset = (
       ...neutralAnimationPresentation,
       opacity: Math.max(0.45, amount),
       translateY:
-        -Math.abs(Math.sin(progress * Math.PI * 2.5)) *
-        (1 - progress) *
-        14,
+        -Math.abs(Math.sin(progress * Math.PI * 2.5)) * (1 - progress) * 14,
     };
   }
 
@@ -6511,8 +6586,7 @@ const applyAnimationPreset = (
     return {
       ...neutralAnimationPresentation,
       opacity: Math.max(0.6, amount),
-      translateX:
-        Math.sin(progress * Math.PI * 8) * (1 - progress) * 9,
+      translateX: Math.sin(progress * Math.PI * 8) * (1 - progress) * 9,
     };
   }
 
@@ -6526,13 +6600,7 @@ const applyAnimationPreset = (
 
   if (preset === "flash") {
     const flashOpacity =
-      progress < 0.25
-        ? 0.25
-        : progress < 0.5
-          ? 1
-          : progress < 0.72
-            ? 0.42
-            : 1;
+      progress < 0.25 ? 0.25 : progress < 0.5 ? 1 : progress < 0.72 ? 0.42 : 1;
     return {
       ...neutralAnimationPresentation,
       opacity: flashOpacity,
@@ -6595,7 +6663,9 @@ const applyAnimationPreset = (
     return {
       ...neutralAnimationPresentation,
       opacity: Math.max(0.3, amount),
-      translateY: -38 * (1 - progress) + Math.sin(progress * Math.PI * 3) * (1 - progress) * 7,
+      translateY:
+        -38 * (1 - progress) +
+        Math.sin(progress * Math.PI * 3) * (1 - progress) * 7,
     };
   }
 
@@ -6714,7 +6784,9 @@ export const setClipAdjustmentById = (
   return clips.map((clip) => {
     if (
       clip.id !== clipId ||
-      (clip.track !== "main" && clip.track !== "upper")
+      (clip.track !== "main" &&
+        clip.track !== "upper" &&
+        clip.track !== "cutout")
     ) {
       return clip;
     }

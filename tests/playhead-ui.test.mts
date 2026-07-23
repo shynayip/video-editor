@@ -1025,13 +1025,14 @@ test("routes speed and volume to a selected video layer or one selected clip", (
     source,
     /const \[selectedVideoLayer, setSelectedVideoLayer\] = useState<number \| null>\(null\)/,
   );
-  assert.match(
+  assert.doesNotMatch(source, /const selectWholeVideoLayer = /);
+  assert.doesNotMatch(
     source,
-    /const selectWholeVideoLayer = \(videoLayer: number\) => \{[\s\S]*?setSelectedVideoLayer\(videoLayer\);[\s\S]*?setSelectedClipId\(null\);/,
+    /event\.target === event\.currentTarget[\s\S]*?selectWholeVideoLayer\(track\.videoLayer\)/,
   );
   assert.match(
     source,
-    /event\.target === event\.currentTarget[\s\S]*?selectWholeVideoLayer\(track\.videoLayer\)/,
+    /className={`track-label[\s\S]*?onPointerDown=\{\(event\) => \{[\s\S]*?startTimelineSelection\(event\)[\s\S]*?clearEditorSelection\(\);[\s\S]*?setSelectedTrack\(track\.id\);/,
   );
   assert.match(
     source,
@@ -2985,8 +2986,8 @@ test("opens every selected caption type for wording edits", () => {
     source,
     /clip\.track === "caption"[\s\S]*?setCaptionMode\("manual"\)[\s\S]*?setActiveTool\("captions"\)/,
   );
-  assert.match(source, />Commit changes<\/button>/);
-  assert.match(source, /applySelectedCaption/);
+  assert.match(source, /"Commit changes"/);
+  assert.match(source, /commitSelectedCaptionContent/);
 });
 
 test("adds a track visibility eye beside the delete action", () => {
@@ -3032,7 +3033,7 @@ test("marquee-selects clips across every timeline row", () => {
   assert.match(source, /selected clips moved together/);
   assert.match(
     source,
-    /startPointerDrag\(event, clip, selectedGroup\)/,
+    /startPointerDrag\(\s*event,\s*clip,\s*selectedGroup,\s*isAdditiveSelection,\s*\)/,
   );
   assert.match(source, /moveIds\.add\(clip\.linkedClipId\)/);
   assert.match(source, /startedFromTrackLabel: boolean/);
@@ -3043,11 +3044,12 @@ test("marquee-selects clips across every timeline row", () => {
   assert.match(source, /suppressTrackLabelClickRef/);
   assert.match(source, /const timelineGroupDragPreview = useMemo/);
   assert.match(source, /timelineGroupDragPreview\?\.ids\.has\(clip\.id\)/);
-  assert.match(source, /onPointerDownCapture=\{\(event\) => \{/);
+  assert.match(source, /onPointerDownCapture=\{holdTimelinePreviewFromPointer\}/);
   assert.match(source, /Moving \$\{timelineClipIds\.length\} selected clips together/);
-  assert.match(source, /const startTimelineGroupDrag = \(/);
-  assert.match(source, /window\.addEventListener\("pointermove", moveGroup\)/);
-  assert.match(source, /startTimelineGroupDrag\([\s\S]*?selectedGroup/);
+  assert.match(
+    source,
+    /startPointerDrag\(\s*event,\s*clip,\s*selectedGroup,\s*isAdditiveSelection,\s*\)/,
+  );
   assert.doesNotMatch(
     source,
     /"button, \.timeline-trim-handle, \.timeline-transition-button"/,

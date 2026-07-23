@@ -11,7 +11,7 @@ test("empty preview space clears video controls instead of selecting the top vid
 
   assert.ok(previewHandler);
   assert.match(previewHandler, /setVideoQuickMenu\(null\)/);
-  assert.match(previewHandler, /setSelectedClipId\(null\)/);
+  assert.match(previewHandler, /clearEditorSelection\(\)/);
   assert.match(previewHandler, /setSelectedPreviewFrameBase\(null\)/);
   assert.doesNotMatch(previewHandler, /topVideoClip/);
   assert.doesNotMatch(previewHandler, /showPreviewVideoControls/);

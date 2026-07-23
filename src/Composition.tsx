@@ -186,6 +186,7 @@ import {
 } from "./dominantVoiceRequest";
 import { detectVideoScenes as requestVideoSceneDetection } from "./sceneDetectionClient";
 import { BrowserVoiceRecorder } from "./voiceRecorder";
+import { ExportComposition } from "./ExportComposition";
 
 type Props = {
   project?: SavedEditorProject;
@@ -218,6 +219,13 @@ type AnalyzingMediaItem = { id: string; label: string };
 
 type ImportVideoMode = "whole" | "scenes";
 
+const focusTextareaOnPointerDown = (
+  event: PointerEvent<HTMLTextAreaElement>,
+) => {
+  event.stopPropagation();
+  event.currentTarget.focus();
+};
+
 type UploadedMediaResponse = {
   src: string;
   label: string;
@@ -235,6 +243,556 @@ const maximumTimelineScale = 4;
 const timelineZoomStep = 0.15;
 const timelineDragActivationDistance = 6;
 const mediaSelectionActivationDistance = 4;
+
+type AudioLibraryTab = "music" | "sound-effects";
+
+type AudioLibraryItem = {
+  id: string;
+  kind: AudioLibraryTab;
+  label: string;
+  creator: string;
+  category: string;
+  durationSeconds: number;
+  accent: string;
+  keywords: string[];
+  preset: number;
+};
+
+const musicLibraryItems: AudioLibraryItem[] = [
+  {
+    id: "music-city-pop",
+    kind: "music",
+    label: "Hope, City Pop",
+    creator: "Editor Studio",
+    category: "Pop",
+    durationSeconds: 30,
+    accent: "#3157c7",
+    keywords: ["background music", "happy", "city", "pop"],
+    preset: 0,
+  },
+  {
+    id: "music-hip-hop",
+    kind: "music",
+    label: "Dynamic Hip Hop",
+    creator: "Editor Studio",
+    category: "Hip hop",
+    durationSeconds: 24,
+    accent: "#a42374",
+    keywords: ["background music", "phonk", "beat", "urban"],
+    preset: 1,
+  },
+  {
+    id: "music-healing",
+    kind: "music",
+    label: "Calm Morning",
+    creator: "Editor Studio",
+    category: "Healing",
+    durationSeconds: 30,
+    accent: "#3c7b62",
+    keywords: ["calm", "healing", "soft", "relax"],
+    preset: 2,
+  },
+  {
+    id: "music-warm",
+    kind: "music",
+    label: "Warm Memories",
+    creator: "Editor Studio",
+    category: "Warm",
+    durationSeconds: 28,
+    accent: "#a55a2a",
+    keywords: ["warm", "cinematic", "gentle", "story"],
+    preset: 3,
+  },
+  {
+    id: "music-rnb",
+    kind: "music",
+    label: "Midnight R&B",
+    creator: "Editor Studio",
+    category: "R&B",
+    durationSeconds: 26,
+    accent: "#653c91",
+    keywords: ["r&b", "smooth", "night", "vocal"],
+    preset: 4,
+  },
+  {
+    id: "music-corporate",
+    kind: "music",
+    label: "Bright Presentation",
+    creator: "Editor Studio",
+    category: "Recommend",
+    durationSeconds: 30,
+    accent: "#237f8d",
+    keywords: ["corporate", "background music", "clean", "business"],
+    preset: 5,
+  },
+  {
+    id: "music-electronic",
+    kind: "music",
+    label: "Electric Motion",
+    creator: "Editor Studio",
+    category: "Electronic",
+    durationSeconds: 25,
+    accent: "#266c9a",
+    keywords: ["electronic", "energy", "technology", "dance"],
+    preset: 6,
+  },
+  {
+    id: "music-cinematic",
+    kind: "music",
+    label: "Cinematic Journey",
+    creator: "Editor Studio",
+    category: "Cinematic",
+    durationSeconds: 30,
+    accent: "#79553d",
+    keywords: ["cinematic", "film", "travel", "dramatic"],
+    preset: 7,
+  },
+  {
+    id: "music-upbeat",
+    kind: "music",
+    label: "Good Day",
+    creator: "Editor Studio",
+    category: "Upbeat",
+    durationSeconds: 24,
+    accent: "#a36f22",
+    keywords: ["happy", "upbeat", "fun", "vlog"],
+    preset: 8,
+  },
+  {
+    id: "music-lofi",
+    kind: "music",
+    label: "Lo-fi Study",
+    creator: "Editor Studio",
+    category: "Lo-fi",
+    durationSeconds: 30,
+    accent: "#58678d",
+    keywords: ["lofi", "lo-fi", "study", "chill", "background music"],
+    preset: 9,
+  },
+  {
+    id: "music-fashion",
+    kind: "music",
+    label: "Runway Lights",
+    creator: "Editor Studio",
+    category: "Fashion",
+    durationSeconds: 22,
+    accent: "#9c3d65",
+    keywords: ["fashion", "runway", "style", "modern"],
+    preset: 10,
+  },
+  {
+    id: "music-acoustic",
+    kind: "music",
+    label: "Sunday Acoustic",
+    creator: "Editor Studio",
+    category: "Acoustic",
+    durationSeconds: 28,
+    accent: "#70854a",
+    keywords: ["acoustic", "gentle", "natural", "lifestyle"],
+    preset: 11,
+  },
+  {
+    id: "music-phonk-drift",
+    kind: "music",
+    label: "Midnight Drift Phonk",
+    creator: "Editor Studio",
+    category: "Phonk",
+    durationSeconds: 24,
+    accent: "#7c2948",
+    keywords: ["phonk", "drift", "cowbell", "dark", "car"],
+    preset: 12,
+  },
+  {
+    id: "music-phonk-aggressive",
+    kind: "music",
+    label: "Aggressive Phonk",
+    creator: "Editor Studio",
+    category: "Phonk",
+    durationSeconds: 22,
+    accent: "#8d332d",
+    keywords: ["phonk", "aggressive", "bass", "gym", "edit"],
+    preset: 13,
+  },
+  {
+    id: "music-phonk-brazilian",
+    kind: "music",
+    label: "Brazilian Phonk Energy",
+    creator: "Editor Studio",
+    category: "Phonk",
+    durationSeconds: 26,
+    accent: "#357648",
+    keywords: ["phonk", "brazilian", "funk", "energy", "dance"],
+    preset: 14,
+  },
+  {
+    id: "music-phonk-chill",
+    kind: "music",
+    label: "Chill Phonk Drive",
+    creator: "Editor Studio",
+    category: "Phonk",
+    durationSeconds: 28,
+    accent: "#4d4f82",
+    keywords: ["phonk", "chill", "drive", "night", "background music"],
+    preset: 15,
+  },
+];
+
+const soundEffectLibraryItems: AudioLibraryItem[] = [
+  {
+    id: "sfx-swish",
+    kind: "sound-effects",
+    label: "Swish",
+    creator: "Editor Studio",
+    category: "Performance",
+    durationSeconds: 1,
+    accent: "#7049a8",
+    keywords: ["swish", "whoosh", "transition", "performance"],
+    preset: 0,
+  },
+  {
+    id: "sfx-vine-boom",
+    kind: "sound-effects",
+    label: "Vine Boom",
+    creator: "Editor Studio",
+    category: "Impact",
+    durationSeconds: 1.2,
+    accent: "#ad4937",
+    keywords: ["vine boom", "boom", "impact", "bass"],
+    preset: 1,
+  },
+  {
+    id: "sfx-laugh",
+    kind: "sound-effects",
+    label: "Quick Laugh",
+    creator: "Editor Studio",
+    category: "Laugh",
+    durationSeconds: 2,
+    accent: "#a46b39",
+    keywords: ["laugh", "funny", "comedy", "reaction"],
+    preset: 2,
+  },
+  {
+    id: "sfx-mechanical",
+    kind: "sound-effects",
+    label: "Mechanical Click",
+    creator: "Editor Studio",
+    category: "Mechanical",
+    durationSeconds: 1.5,
+    accent: "#52616c",
+    keywords: ["mechanical", "click", "machine", "button"],
+    preset: 3,
+  },
+  {
+    id: "sfx-magic",
+    kind: "sound-effects",
+    label: "Magic Reveal",
+    creator: "Editor Studio",
+    category: "Magic",
+    durationSeconds: 2,
+    accent: "#6b45b9",
+    keywords: ["magic", "reveal", "sparkle", "fantasy"],
+    preset: 4,
+  },
+  {
+    id: "sfx-explosion",
+    kind: "sound-effects",
+    label: "Explosion",
+    creator: "Editor Studio",
+    category: "Impact",
+    durationSeconds: 2.5,
+    accent: "#9a3f29",
+    keywords: ["explosion", "boom", "impact", "action"],
+    preset: 5,
+  },
+  {
+    id: "sfx-notification",
+    kind: "sound-effects",
+    label: "Notification Pop",
+    creator: "Editor Studio",
+    category: "Interface",
+    durationSeconds: 1,
+    accent: "#2c7d86",
+    keywords: ["notification", "pop", "interface", "message"],
+    preset: 6,
+  },
+  {
+    id: "sfx-camera",
+    kind: "sound-effects",
+    label: "Camera Shutter",
+    creator: "Editor Studio",
+    category: "Mechanical",
+    durationSeconds: 1,
+    accent: "#725b43",
+    keywords: ["camera", "shutter", "photo", "click"],
+    preset: 7,
+  },
+  {
+    id: "sfx-pop",
+    kind: "sound-effects",
+    label: "Bubble Pop",
+    creator: "Editor Studio",
+    category: "Interface",
+    durationSeconds: 1,
+    accent: "#3c8d80",
+    keywords: ["pop", "bubble", "button", "interface"],
+    preset: 8,
+  },
+  {
+    id: "sfx-applause",
+    kind: "sound-effects",
+    label: "Applause",
+    creator: "Editor Studio",
+    category: "Performance",
+    durationSeconds: 3,
+    accent: "#8b5843",
+    keywords: ["applause", "clap", "crowd", "performance"],
+    preset: 9,
+  },
+  {
+    id: "sfx-error",
+    kind: "sound-effects",
+    label: "Error Alert",
+    creator: "Editor Studio",
+    category: "Interface",
+    durationSeconds: 1.2,
+    accent: "#a23e46",
+    keywords: ["error", "alert", "warning", "interface"],
+    preset: 10,
+  },
+  {
+    id: "sfx-success",
+    kind: "sound-effects",
+    label: "Success Chime",
+    creator: "Editor Studio",
+    category: "Interface",
+    durationSeconds: 1.5,
+    accent: "#3d8a58",
+    keywords: ["success", "complete", "chime", "interface"],
+    preset: 11,
+  },
+  {
+    id: "sfx-drum-roll",
+    kind: "sound-effects",
+    label: "Drum Roll",
+    creator: "Editor Studio",
+    category: "Performance",
+    durationSeconds: 3,
+    accent: "#87543a",
+    keywords: ["drum", "roll", "reveal", "performance"],
+    preset: 12,
+  },
+  {
+    id: "sfx-sparkle",
+    kind: "sound-effects",
+    label: "Sparkle Trail",
+    creator: "Editor Studio",
+    category: "Magic",
+    durationSeconds: 2.2,
+    accent: "#7656b5",
+    keywords: ["sparkle", "magic", "fairy", "glitter"],
+    preset: 13,
+  },
+  {
+    id: "sfx-door",
+    kind: "sound-effects",
+    label: "Door Close",
+    creator: "Editor Studio",
+    category: "Mechanical",
+    durationSeconds: 1.4,
+    accent: "#66584b",
+    keywords: ["door", "close", "slam", "mechanical"],
+    preset: 14,
+  },
+  {
+    id: "sfx-riser",
+    kind: "sound-effects",
+    label: "Cinematic Riser",
+    creator: "Editor Studio",
+    category: "Impact",
+    durationSeconds: 3,
+    accent: "#77455a",
+    keywords: ["riser", "cinematic", "tension", "transition"],
+    preset: 15,
+  },
+];
+
+const audioLibraryItems = [...musicLibraryItems, ...soundEffectLibraryItems];
+
+const audioLibraryItemMatchesQuery = (
+  item: AudioLibraryItem,
+  normalizedQuery: string,
+) =>
+  [item.label, item.creator, item.category, ...item.keywords]
+    .join(" ")
+    .toLowerCase()
+    .includes(normalizedQuery);
+
+const formatAudioLibraryDuration = (durationSeconds: number) => {
+  const minutes = Math.floor(durationSeconds / 60);
+  const seconds = Math.round(durationSeconds % 60);
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+};
+
+const createAudioLibraryFile = (item: AudioLibraryItem): File => {
+  const sampleRate = 22_050;
+  const sampleCount = Math.ceil(item.durationSeconds * sampleRate);
+  const bytesPerSample = 2;
+  const buffer = new ArrayBuffer(44 + sampleCount * bytesPerSample);
+  const view = new DataView(buffer);
+  const writeText = (offset: number, value: string) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  };
+  writeText(0, "RIFF");
+  view.setUint32(4, 36 + sampleCount * bytesPerSample, true);
+  writeText(8, "WAVE");
+  writeText(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeText(36, "data");
+  view.setUint32(40, sampleCount * bytesPerSample, true);
+
+  let noiseState = 17_311 + item.preset * 9_973;
+  const nextNoise = () => {
+    noiseState = (noiseState * 48_271) % 2_147_483_647;
+    return (noiseState / 2_147_483_647) * 2 - 1;
+  };
+  const musicRoots = [220, 164.81, 196, 146.83, 174.61, 246.94];
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const time = index / sampleRate;
+    let sample = 0;
+    if (item.kind === "music") {
+      const root = musicRoots[item.preset % musicRoots.length];
+      const beat = time % 0.5;
+      const beatEnvelope = Math.exp(-beat * 9);
+      const phraseStep = Math.floor(time / 2) % 4;
+      const ratios = [1, 1.25, 1.5, 1.125];
+      const tone = root * ratios[phraseStep];
+      sample =
+        Math.sin(2 * Math.PI * tone * time) * 0.18 +
+        Math.sin(2 * Math.PI * tone * 1.5 * time) * 0.09 +
+        Math.sin(2 * Math.PI * (root / 2) * time) * 0.2 * beatEnvelope +
+        nextNoise() * 0.025 * beatEnvelope;
+      const fade = Math.min(1, time / 0.6, (item.durationSeconds - time) / 0.8);
+      sample *= Math.max(0, fade);
+    } else {
+      const progress = Math.min(1, time / item.durationSeconds);
+      const envelope = Math.pow(Math.max(0, 1 - progress), 1.7);
+      switch (item.preset) {
+        case 0:
+          sample = nextNoise() * envelope * 0.38;
+          break;
+        case 1:
+          sample =
+            Math.sin(2 * Math.PI * (75 - progress * 35) * time) *
+            envelope *
+            0.72;
+          break;
+        case 2:
+          sample =
+            Math.sin(2 * Math.PI * (320 + Math.sin(time * 22) * 70) * time) *
+            envelope *
+            0.34;
+          break;
+        case 3:
+          sample =
+            Math.sign(Math.sin(2 * Math.PI * 120 * time)) *
+            Math.exp(-((time % 0.28) * 24)) *
+            0.32;
+          break;
+        case 4:
+          sample =
+            Math.sin(2 * Math.PI * (320 + progress * 900) * time) *
+            envelope *
+            0.38;
+          break;
+        case 5:
+          sample =
+            (nextNoise() * 0.52 +
+              Math.sin(2 * Math.PI * (58 - progress * 24) * time) * 0.48) *
+            envelope;
+          break;
+        case 6:
+          sample =
+            Math.sin(2 * Math.PI * (progress < 0.45 ? 660 : 880) * time) *
+            envelope *
+            0.42;
+          break;
+        case 7:
+          sample =
+            nextNoise() * Math.exp(-((time % 0.16) * 36)) * envelope * 0.42;
+          break;
+        case 8:
+          sample =
+            Math.sin(2 * Math.PI * (520 + progress * 240) * time) *
+            Math.exp(-time * 8) *
+            0.5;
+          break;
+        case 9:
+          sample =
+            nextNoise() *
+            Math.pow(Math.max(0, Math.sin(time * Math.PI * 13)), 8) *
+            envelope *
+            0.28;
+          break;
+        case 10:
+          sample =
+            Math.sign(Math.sin(2 * Math.PI * 170 * time)) * envelope * 0.34;
+          break;
+        case 11:
+          sample =
+            Math.sin(
+              2 *
+                Math.PI *
+                (progress < 0.34 ? 523.25 : progress < 0.68 ? 659.25 : 783.99) *
+                time,
+            ) *
+            envelope *
+            0.4;
+          break;
+        case 12:
+          sample =
+            nextNoise() *
+            Math.pow(
+              Math.max(0, Math.sin(time * Math.PI * (9 + progress * 24))),
+              7,
+            ) *
+            0.36;
+          break;
+        case 13:
+          sample =
+            Math.sin(2 * Math.PI * (700 + progress * 1_200) * time) *
+            (0.25 + nextNoise() * 0.08) *
+            envelope;
+          break;
+        case 14:
+          sample =
+            (nextNoise() * 0.34 + Math.sin(2 * Math.PI * 92 * time) * 0.3) *
+            Math.exp(-time * 3.2);
+          break;
+        default:
+          sample =
+            (nextNoise() * 0.2 +
+              Math.sin(2 * Math.PI * (120 + progress * 680) * time) * 0.34) *
+            Math.pow(progress, 0.8);
+      }
+    }
+    view.setInt16(
+      44 + index * bytesPerSample,
+      Math.round(Math.max(-1, Math.min(1, sample)) * 32_767),
+      true,
+    );
+  }
+
+  return new File([buffer], `${item.id}.wav`, { type: "audio/wav" });
+};
 
 type MediaSelectionBox = {
   pointerId: number;
@@ -2201,6 +2759,7 @@ type StickerItem = {
   id: string;
   label: string;
   src: string;
+  category?: string;
   uploaded?: boolean;
 };
 
@@ -2209,10 +2768,21 @@ const svgSticker = (body: string) =>
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160">${body}</svg>`,
   )}`;
 
+const stickerTile = (
+  label: string,
+  background: string,
+  body: string,
+  textColor = "#f8fafc",
+) =>
+  svgSticker(
+    `<rect width="160" height="160" rx="22" fill="${background}"/>${body}<text x="80" y="144" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="800" fill="${textColor}">${label}</text>`,
+  );
+
 const builtInStickers: StickerItem[] = [
   {
     id: "sticker-star",
     label: "Star",
+    category: "Stickers",
     src: svgSticker(
       '<path fill="#facc15" d="M80 12l20 42 46 6-33 32 8 46-41-22-41 22 8-46-33-32 46-6z"/>',
     ),
@@ -2220,6 +2790,7 @@ const builtInStickers: StickerItem[] = [
   {
     id: "sticker-heart",
     label: "Heart",
+    category: "Stickers",
     src: svgSticker(
       '<path fill="#fb496f" d="M80 140C24 108 10 77 20 47 31 15 68 16 80 42c12-26 49-27 60 5 10 30-4 61-60 93z"/>',
     ),
@@ -2227,6 +2798,7 @@ const builtInStickers: StickerItem[] = [
   {
     id: "sticker-sparkles",
     label: "Sparkles",
+    category: "Stickers",
     src: svgSticker(
       '<path fill="#a855f7" d="M80 8l12 45 44 12-44 12-12 45-12-45-44-12 44-12z"/><path fill="#facc15" d="M125 92l6 20 20 6-20 6-6 20-6-20-20-6 20-6z"/>',
     ),
@@ -2234,6 +2806,7 @@ const builtInStickers: StickerItem[] = [
   {
     id: "sticker-smile",
     label: "Smile",
+    category: "Stickers",
     src: svgSticker(
       '<circle cx="80" cy="80" r="65" fill="#facc15"/><circle cx="57" cy="66" r="7"/><circle cx="103" cy="66" r="7"/><path d="M48 92c12 28 52 28 64 0" fill="none" stroke="#111827" stroke-width="9" stroke-linecap="round"/>',
     ),
@@ -2241,6 +2814,7 @@ const builtInStickers: StickerItem[] = [
   {
     id: "sticker-fire",
     label: "Fire",
+    category: "Stickers",
     src: svgSticker(
       '<path fill="#f97316" d="M84 8c9 31-13 40 1 59 7 9 18 3 21-9 30 25 38 80-24 94-57-7-68-57-30-91-3 26 15 28 20 13 8-24-8-36 12-66z"/><path fill="#facc15" d="M81 76c18 19 20 48 0 61-20-10-25-34 0-61z"/>',
     ),
@@ -2248,8 +2822,199 @@ const builtInStickers: StickerItem[] = [
   {
     id: "sticker-check",
     label: "Check",
+    category: "Stickers",
     src: svgSticker(
       '<circle cx="80" cy="80" r="66" fill="#22c55e"/><path d="M43 82l24 24 51-55" fill="none" stroke="white" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>',
+    ),
+  },
+  {
+    id: "sticker-rain-cloud",
+    label: "Rain Cloud",
+    category: "Stickers",
+    src: stickerTile(
+      "Rain Cloud",
+      "#1f2937",
+      '<path d="M45 76c-13 0-24-10-24-23s11-23 24-23c4 0 8 1 12 3 8-14 27-18 40-7 5 4 8 9 10 15h4c16 0 29 12 29 28s-13 28-29 28H45z" fill="#7dd3fc"/><path d="M42 106l-7 24M72 106l-7 24M102 106l-7 24M132 106l-7 24" stroke="#38bdf8" stroke-width="7" stroke-linecap="round"/><path d="M113 35l-12 27h18l-18 35" fill="none" stroke="#facc15" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>',
+    ),
+  },
+  {
+    id: "sticker-subscribe",
+    label: "Subscribe",
+    category: "Stickers",
+    src: stickerTile(
+      "Subscribe",
+      "#111827",
+      '<rect x="24" y="52" width="112" height="42" rx="8" fill="#ef4444" stroke="#fff" stroke-width="5"/><text x="80" y="79" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="900" fill="white">SUBSCRIBE</text><path d="M99 96l20 12-14 5 7 16-10 4-7-17-12 10z" fill="white" stroke="#111827" stroke-width="3"/>',
+    ),
+  },
+  {
+    id: "sticker-down-arrow",
+    label: "Down Arrow",
+    category: "Stickers",
+    src: stickerTile(
+      "Down Arrow",
+      "#172554",
+      '<path d="M80 28v70" stroke="#7dd3fc" stroke-width="24" stroke-linecap="round"/><path d="M38 81l42 48 42-48z" fill="#38bdf8" stroke="#bae6fd" stroke-width="7" stroke-linejoin="round"/>',
+    ),
+  },
+  {
+    id: "sticker-blue-leaf",
+    label: "Blue Leaf",
+    category: "Stickers",
+    src: stickerTile(
+      "Blue Leaf",
+      "#0f172a",
+      '<path d="M42 125C46 51 101 22 132 30c-5 56-45 96-90 95z" fill="#60a5fa"/><path d="M45 122c34-31 58-55 83-90M63 102l-18-16M82 83l-23-22M101 63l-18-18" stroke="#1e3a8a" stroke-width="5" stroke-linecap="round"/>',
+    ),
+  },
+  {
+    id: "sticker-cream-cloud",
+    label: "Cream Cloud",
+    category: "Stickers",
+    src: stickerTile(
+      "Cream Cloud",
+      "#111827",
+      '<path d="M44 112c36 14 79 10 93-9 8-11 3-25-10-29 3-16-10-31-27-28-5-19-31-22-43-7-17-3-30 11-27 27-15 5-20 24-8 36 5 5 12 8 22 10z" fill="#fff7ed"/><path d="M55 77c20 4 40 4 61-3M48 96c26 9 55 9 83 0" stroke="#fed7aa" stroke-width="6" stroke-linecap="round"/>',
+    ),
+  },
+  {
+    id: "sticker-astronaut-waiting",
+    label: "Still Waiting",
+    category: "Giphy",
+    src: stickerTile(
+      "Still Waiting",
+      "#020617",
+      '<circle cx="80" cy="60" r="36" fill="#e5e7eb"/><circle cx="80" cy="60" r="26" fill="#111827"/><path d="M54 106c18 15 34 15 52 0v30H54z" fill="#d1d5db"/><text x="80" y="104" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="900" fill="#f8fafc">STILL</text>',
+    ),
+  },
+  {
+    id: "sticker-whatever",
+    label: "Whatever",
+    category: "Giphy",
+    src: stickerTile(
+      "Whatever",
+      "#312e81",
+      '<circle cx="80" cy="56" r="27" fill="#facc15"/><path d="M48 105c18-19 46-19 64 0v29H48z" fill="#111827"/><path d="M54 74c15 13 37 13 52 0" stroke="#111827" stroke-width="6" stroke-linecap="round"/><text x="80" y="102" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="900" fill="#fff">WHATEVER</text>',
+    ),
+  },
+  {
+    id: "sticker-running-cat",
+    label: "Run Loop",
+    category: "Giphy",
+    src: stickerTile(
+      "Run Loop",
+      "#14532d",
+      '<path d="M41 87c16-26 48-30 76-11l16-15v27c0 22-21 39-51 39-28 0-48-12-41-40z" fill="#f8fafc"/><circle cx="110" cy="74" r="6" fill="#111827"/><path d="M67 119l-15 18M98 119l15 18M44 101H20M47 83H24" stroke="#111827" stroke-width="7" stroke-linecap="round"/>',
+    ),
+  },
+  {
+    id: "sticker-laughing",
+    label: "Laugh",
+    category: "Giphy",
+    src: stickerTile(
+      "Laugh",
+      "#7c2d12",
+      '<circle cx="80" cy="64" r="38" fill="#fed7aa"/><path d="M52 53c10-12 46-17 61 3" stroke="#111827" stroke-width="7" stroke-linecap="round"/><path d="M52 79c21 25 53 25 56 0" fill="#111827"/><path d="M61 82c11 7 28 7 39 0" stroke="#fff" stroke-width="5" stroke-linecap="round"/>',
+    ),
+  },
+  {
+    id: "stock-color-bars",
+    label: "Color Bars",
+    category: "Stock videos",
+    src: stickerTile(
+      "00:01",
+      "#27272a",
+      '<rect x="30" y="36" width="100" height="64" fill="#fff"/><rect x="30" y="36" width="14" height="64" fill="#fef08a"/><rect x="44" y="36" width="14" height="64" fill="#22d3ee"/><rect x="58" y="36" width="14" height="64" fill="#22c55e"/><rect x="72" y="36" width="14" height="64" fill="#f0f"/><rect x="86" y="36" width="14" height="64" fill="#ef4444"/><rect x="100" y="36" width="14" height="64" fill="#2563eb"/><rect x="114" y="36" width="16" height="64" fill="#111827"/>',
+    ),
+  },
+  {
+    id: "stock-mountain",
+    label: "Mountain",
+    category: "Stock videos",
+    src: stickerTile(
+      "00:20",
+      "#0c4a6e",
+      '<rect x="20" y="24" width="120" height="86" rx="8" fill="#7dd3fc"/><path d="M20 110l40-55 24 32 18-22 38 45z" fill="#475569"/><path d="M54 64l6-9 7 9zM96 72l6-7 6 7z" fill="#f8fafc"/><path d="M20 104c34-9 76-7 120 3v20H20z" fill="#65a30d"/>',
+    ),
+  },
+  {
+    id: "stock-spark-sign",
+    label: "Spark Sign",
+    category: "Stock videos",
+    src: stickerTile(
+      "00:04",
+      "#0f172a",
+      '<path d="M52 54h56v17H70v15h34v17H52z" fill="none" stroke="#fde68a" stroke-width="8" stroke-linejoin="round"/><path d="M30 32l10 12M128 36l-12 12M132 102l-16-5M32 112l18-9M80 20v17" stroke="#f97316" stroke-width="5" stroke-linecap="round"/>',
+    ),
+  },
+  {
+    id: "photo-city",
+    label: "City",
+    category: "Photos",
+    src: stickerTile(
+      "City",
+      "#0f172a",
+      '<rect x="18" y="28" width="124" height="92" rx="9" fill="#93c5fd"/><path d="M23 93h114v27H23z" fill="#1e293b"/><rect x="38" y="62" width="16" height="58" fill="#f59e0b"/><rect x="62" y="48" width="20" height="72" fill="#475569"/><rect x="91" y="70" width="25" height="50" fill="#334155"/><path d="M18 46c36-16 83-12 124 8" stroke="#f8fafc" stroke-width="7"/>',
+    ),
+  },
+  {
+    id: "photo-ocean",
+    label: "Ocean",
+    category: "Photos",
+    src: stickerTile(
+      "Ocean",
+      "#082f49",
+      '<rect x="18" y="28" width="124" height="92" rx="9" fill="#67e8f9"/><path d="M18 74c29-10 49 11 75 0 17-7 31-4 49 5v41H18z" fill="#0891b2"/><path d="M105 59h29v13h-29zM115 48v42" stroke="#ef4444" stroke-width="5"/><path d="M31 90c21 7 41 7 61 0" stroke="#cffafe" stroke-width="5" stroke-linecap="round"/>',
+    ),
+  },
+  {
+    id: "photo-food",
+    label: "Food",
+    category: "Photos",
+    src: stickerTile(
+      "Food",
+      "#292524",
+      '<rect x="34" y="48" width="92" height="62" rx="12" fill="#f59e0b" transform="rotate(-12 80 79)"/><circle cx="62" cy="73" r="16" fill="#fee2e2"/><circle cx="94" cy="73" r="16" fill="#dc2626"/><path d="M45 100c25-16 48-17 77-5" stroke="#22c55e" stroke-width="9" stroke-linecap="round"/>',
+    ),
+  },
+  {
+    id: "photo-puppy",
+    label: "Puppy",
+    category: "Photos",
+    src: stickerTile(
+      "Puppy",
+      "#365314",
+      '<circle cx="80" cy="77" r="35" fill="#f8fafc"/><path d="M50 67c-25-9-25 30-2 29M110 67c25-9 25 30 2 29" fill="#e2e8f0"/><circle cx="67" cy="75" r="5" fill="#111827"/><circle cx="93" cy="75" r="5" fill="#111827"/><path d="M80 84l-8 9h16z" fill="#111827"/><path d="M68 101c9 7 15 7 24 0" stroke="#111827" stroke-width="4" stroke-linecap="round"/>',
+    ),
+  },
+  {
+    id: "avatar-pink",
+    label: "AI Avatar 1",
+    category: "AI avatars",
+    src: stickerTile(
+      "Avatar 1",
+      "#27272a",
+      '<circle cx="80" cy="50" r="24" fill="#fbcfe8"/><path d="M53 51c7-25 47-31 56 5-14-8-32-10-56-5z" fill="#111827"/><path d="M42 137c4-35 20-53 38-53s34 18 38 53z" fill="#ec4899"/><path d="M60 112h40" stroke="#f8fafc" stroke-width="5" stroke-linecap="round"/>',
+    ),
+  },
+  {
+    id: "avatar-fitness",
+    label: "AI Avatar 2",
+    category: "AI avatars",
+    src: stickerTile(
+      "Avatar 2",
+      "#1f2937",
+      '<circle cx="80" cy="48" r="23" fill="#fed7aa"/><path d="M59 42c10-22 42-18 48 5-16-5-31-4-48-5z" fill="#7c2d12"/><path d="M48 137l12-49h40l12 49z" fill="#94a3b8"/><path d="M46 98l-20 17M114 98l20 17" stroke="#fed7aa" stroke-width="9" stroke-linecap="round"/>',
+    ),
+  },
+  {
+    id: "avatar-glasses",
+    label: "AI Avatar 3",
+    category: "AI avatars",
+    src: stickerTile(
+      "Avatar 3",
+      "#27272a",
+      '<circle cx="80" cy="48" r="23" fill="#fde68a"/><path d="M58 42c11-22 37-25 49 3-14-2-31-3-49-3z" fill="#475569"/><circle cx="69" cy="51" r="8" fill="none" stroke="#111827" stroke-width="4"/><circle cx="91" cy="51" r="8" fill="none" stroke="#111827" stroke-width="4"/><path d="M50 137V90h60v47z" fill="#cbd5e1"/>',
     ),
   },
 ];
@@ -2582,7 +3347,7 @@ const TranscriptSentenceEditor: React.FC<TranscriptSentenceEditorProps> = ({
       rows={2}
       onChange={(event) => setDraft(event.currentTarget.value)}
       onBlur={commitDeletedWords}
-      onPointerDown={(event) => event.stopPropagation()}
+      onPointerDown={focusTextareaOnPointerDown}
       onKeyDown={(event) => {
         if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
           event.preventDefault();
@@ -2765,7 +3530,10 @@ type CutoutInteraction = {
 const hasPreviewAlignmentGuides = (guides: PreviewAlignmentGuides) =>
   guides.horizontal || guides.vertical;
 
-const renderPreviewAlignmentGuides = (guides: PreviewAlignmentGuides) => {
+const renderPreviewAlignmentGuides = (
+  guides: PreviewAlignmentGuides,
+  tone: "yellow" | "white" = "yellow",
+) => {
   if (!hasPreviewAlignmentGuides(guides)) return null;
 
   const verticalPositions =
@@ -2782,7 +3550,10 @@ const renderPreviewAlignmentGuides = (guides: PreviewAlignmentGuides) => {
         : [];
 
   return (
-    <div className="preview-alignment-guides" aria-hidden="true">
+    <div
+      className={`preview-alignment-guides preview-alignment-guides-${tone}`}
+      aria-hidden="true"
+    >
       {verticalPositions.map((position) => (
         <span
           className="preview-alignment-guide preview-alignment-guide-vertical"
@@ -2927,7 +3698,7 @@ export const MyComposition = () => {
   return (
     <Composition
       id="MyComp"
-      component={MyComponent}
+      component={ExportComposition}
       durationInFrames={remotionRegistrationFallbackInFrames}
       fps={fps}
       width={1280}
@@ -2948,6 +3719,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const stickerInputRef = useRef<HTMLInputElement>(null);
   const cutoutInputRef = useRef<HTMLInputElement>(null);
   const captionFileInputRef = useRef<HTMLInputElement>(null);
+  const exportAbortControllerRef = useRef<AbortController | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const previewLayerVideoRefs = useRef(new Map<string, HTMLVideoElement>());
   const previewAudioRefs = useRef(new Map<string, HTMLAudioElement>());
@@ -3053,6 +3825,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     "saved",
   );
   const [isExporting, setIsExporting] = useState(false);
+  const [exportMode, setExportMode] = useState<"fast" | "hd">("fast");
   const [workspaceLayout, setWorkspaceLayout] =
     useState<WorkspaceLayout>(readWorkspaceLayout);
   const [timelineScale, setTimelineScale] = useState(defaultTimelineScale);
@@ -3100,6 +3873,69 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [recordingError, setRecordingError] = useState("");
   const [activeTool, setActiveTool] = useState<ActiveTool>("media");
   const activeToolRef = useRef(activeTool);
+  const [audioLibraryTab, setAudioLibraryTab] =
+    useState<AudioLibraryTab>("music");
+  const [audioLibraryQuery, setAudioLibraryQuery] = useState("");
+  const [audioLibraryCategory, setAudioLibraryCategory] = useState<
+    string | null
+  >(null);
+  const [showAllAudioLibraryItems, setShowAllAudioLibraryItems] =
+    useState(false);
+  const hasAudioLibrarySearch = audioLibraryQuery.trim().length > 0;
+  const [addingAudioLibraryItemId, setAddingAudioLibraryItemId] = useState<
+    string | null
+  >(null);
+  const activeAudioLibraryItems = useMemo(
+    () => audioLibraryItems.filter((item) => item.kind === audioLibraryTab),
+    [audioLibraryTab],
+  );
+  const audioLibraryCategories = useMemo(
+    () =>
+      Array.from(new Set(activeAudioLibraryItems.map((item) => item.category))),
+    [activeAudioLibraryItems],
+  );
+  const filteredAudioLibraryItems = useMemo(() => {
+    const normalizedQuery = audioLibraryQuery.trim().toLowerCase();
+    const matchingItems = activeAudioLibraryItems.filter((item) => {
+      if (audioLibraryCategory && item.category !== audioLibraryCategory) {
+        return false;
+      }
+      if (!normalizedQuery) return true;
+      return audioLibraryItemMatchesQuery(item, normalizedQuery);
+    });
+    return normalizedQuery || audioLibraryCategory || showAllAudioLibraryItems
+      ? matchingItems
+      : matchingItems.slice(0, 6);
+  }, [
+    activeAudioLibraryItems,
+    audioLibraryCategory,
+    audioLibraryQuery,
+    showAllAudioLibraryItems,
+  ]);
+  const updateAudioLibrarySearch = (value: string) => {
+    const normalizedQuery = value.trim().toLowerCase();
+    setAudioLibraryCategory(null);
+    setAudioLibraryQuery(value);
+
+    if (!normalizedQuery) return;
+    const currentTabHasMatch = audioLibraryItems.some(
+      (item) =>
+        item.kind === audioLibraryTab &&
+        audioLibraryItemMatchesQuery(item, normalizedQuery),
+    );
+    if (currentTabHasMatch) return;
+
+    const otherTab: AudioLibraryTab =
+      audioLibraryTab === "music" ? "sound-effects" : "music";
+    const otherTabHasMatch = audioLibraryItems.some(
+      (item) =>
+        item.kind === otherTab &&
+        audioLibraryItemMatchesQuery(item, normalizedQuery),
+    );
+    if (otherTabHasMatch) {
+      setAudioLibraryTab(otherTab);
+    }
+  };
   const [favoriteAnimationIds, setFavoriteAnimationIds] = useState<
     ClipAnimationPreset[]
   >(() =>
@@ -3126,6 +3962,32 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     left: number;
     top: number;
   } | null>(null);
+  useEffect(() => {
+    if (!videoQuickMenu) return;
+
+    const dismissVideoQuickMenu = (event: globalThis.PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        target.closest(
+          ".video-quick-menu, .preview-layer-video, .preview-layer-image",
+        )
+      ) {
+        return;
+      }
+      setVideoQuickMenu(null);
+    };
+    const dismissVideoQuickMenuWithEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setVideoQuickMenu(null);
+    };
+
+    document.addEventListener("pointerdown", dismissVideoQuickMenu, true);
+    window.addEventListener("keydown", dismissVideoQuickMenuWithEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissVideoQuickMenu, true);
+      window.removeEventListener("keydown", dismissVideoQuickMenuWithEscape);
+    };
+  }, [videoQuickMenu]);
   const [replaceVideoClipId, setReplaceVideoClipId] = useState<string | null>(
     null,
   );
@@ -3144,6 +4006,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [isKeepMainVoiceLoading, setIsKeepMainVoiceLoading] = useState(false);
   const [stickerItems, setStickerItems] =
     useState<StickerItem[]>(builtInStickers);
+  const [expandedStickerSections, setExpandedStickerSections] = useState<
+    string[]
+  >([]);
   const [stickerInteraction, setStickerInteraction] =
     useState<StickerInteraction | null>(null);
   const [cutoutInteraction, setCutoutInteraction] =
@@ -3178,6 +4043,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   );
   const [captionRotateDrag, setCaptionRotateDrag] =
     useState<CaptionRotateDrag | null>(null);
+  const useWhitePreviewAlignmentGuides = Boolean(
+    stickerInteraction ||
+    textPreviewDrag ||
+    captionPreviewDrag ||
+    textResizeDrag ||
+    captionResizeDrag ||
+    textRotateDrag ||
+    captionRotateDrag,
+  );
   const [cropInputMode, setCropInputMode] = useState<"sliders" | "manual">(
     "sliders",
   );
@@ -3520,6 +4394,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       frameDelta: Math.max(-earliestStart, requestedDelta),
     };
   }, [clips, pointerDrag]);
+  const timelineDragPreviewOffsetY =
+    pointerDrag?.activated &&
+    pointerDrag.type === "timeline" &&
+    pointerDrag.pointerStartY !== undefined
+      ? pointerDrag.y - pointerDrag.pointerStartY
+      : 0;
   const isVideoPointerDrag = Boolean(
     pointerDrag?.activated &&
     (draggedMediaItem ||
@@ -4047,24 +4927,23 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     timelinePreviewFrame,
   ).filter(
     (clip) =>
-      clip.caption &&
-      !clip.caption.generationId?.startsWith("transcript-"),
+      clip.caption && !clip.caption.generationId?.startsWith("transcript-"),
   );
-  const selectedTranscriptSourceClipId = selectedCaptionClip?.caption
-    ?.generationId?.startsWith("transcript-")
-    ? selectedCaptionClip.caption.sourceClipId
-    : selectedCaptionSourceClip
-      ? clips.find(
-          (clip) =>
-            clip.track === "caption" &&
-            clip.caption?.generationId?.startsWith("transcript-") &&
-            clip.caption.sourceClipId &&
-            (selectedCaptionSourceClip.id === clip.caption.sourceClipId ||
-              selectedCaptionSourceClip.id.startsWith(
-                `${clip.caption.sourceClipId}-speech-`,
-              )),
-        )?.caption?.sourceClipId ?? selectedCaptionSourceClip.id
-      : null;
+  const selectedTranscriptSourceClipId =
+    selectedCaptionClip?.caption?.generationId?.startsWith("transcript-")
+      ? selectedCaptionClip.caption.sourceClipId
+      : selectedCaptionSourceClip
+        ? (clips.find(
+            (clip) =>
+              clip.track === "caption" &&
+              clip.caption?.generationId?.startsWith("transcript-") &&
+              clip.caption.sourceClipId &&
+              (selectedCaptionSourceClip.id === clip.caption.sourceClipId ||
+                selectedCaptionSourceClip.id.startsWith(
+                  `${clip.caption.sourceClipId}-speech-`,
+                )),
+          )?.caption?.sourceClipId ?? selectedCaptionSourceClip.id)
+        : null;
   const transcriptClips = useMemo(
     () =>
       selectedTranscriptSourceClipId
@@ -4149,7 +5028,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               key: "caption",
               id: "caption" as TrackName,
               label: "Caption track",
-              order: 50,
+              order: 10_000,
             },
           ]
         : []),
@@ -4311,7 +5190,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     [],
   );
 
-  const deleteTimelineClipsWithRipple = useCallback(
+  const deleteTimelineClips = useCallback(
     (currentClips: TimelineClip[], clipIds: string[]) => {
       const selectedIds = new Set(clipIds);
       currentClips.forEach((clip) => {
@@ -4320,29 +5199,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         }
       });
 
-      const removedClips = currentClips.filter((clip) =>
-        selectedIds.has(clip.id),
-      );
-      const laneKey = (clip: TimelineClip) =>
-        clip.track === "main" || clip.track === "upper"
-          ? `video:${getVideoLayer(clip) ?? clip.track}`
-          : `track:${clip.track}`;
-
-      return currentClips
-        .filter((clip) => !selectedIds.has(clip.id))
-        .map((clip) => {
-          const shift = removedClips
-            .filter(
-              (removedClip) =>
-                laneKey(removedClip) === laneKey(clip) &&
-                removedClip.start <= clip.start,
-            )
-            .reduce((total, removedClip) => total + removedClip.duration, 0);
-
-          return shift > 0
-            ? { ...clip, start: Math.max(0, clip.start - shift) }
-            : clip;
-        });
+      return currentClips.filter((clip) => !selectedIds.has(clip.id));
     },
     [],
   );
@@ -4378,7 +5235,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             : [];
       if (clipIds.length === 0) return;
       commitClipChange((currentClips) =>
-        deleteTimelineClipsWithRipple(currentClips, clipIds),
+        deleteTimelineClips(currentClips, clipIds),
       );
       setIsPreviewPlaying(false);
       setSelectedClipId(null);
@@ -4396,7 +5253,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
     window.addEventListener("keydown", handleDeleteShortcut);
     return () => window.removeEventListener("keydown", handleDeleteShortcut);
-  }, [commitClipChange, deleteTimelineClipsWithRipple]);
+  }, [commitClipChange, deleteTimelineClips]);
 
   const undoLastClipChange = () => {
     setSaveState("unsaved");
@@ -4581,6 +5438,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setPreviewMode("media");
   };
 
+  const clearMediaSelection = () => {
+    setSelectedMediaIds([]);
+    setSelectedMediaId(null);
+    mediaSelectionAnchorIdRef.current = null;
+  };
+
   const mediaSelectionPointerId = mediaSelectionBox?.pointerId;
   useEffect(() => {
     if (mediaSelectionPointerId === undefined) return;
@@ -4599,7 +5462,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     };
   }, [mediaSelectionPointerId]);
 
-  const startMediaSelection = (event: PointerEvent<HTMLDivElement>) => {
+  const startMediaSelection = (event: PointerEvent<HTMLElement>) => {
     const target = event.target as HTMLElement;
     const bounds = event.currentTarget.getBoundingClientRect();
     const isScrollbarPointer = event.clientX >= bounds.right - 14;
@@ -4614,8 +5477,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
     const additive = event.ctrlKey || event.metaKey;
     if (!additive) {
-      setSelectedMediaIds([]);
-      setSelectedMediaId(null);
+      clearEditorSelection();
     }
 
     event.preventDefault();
@@ -4634,7 +5496,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setMediaSelectionBox(nextSelection);
   };
 
-  const moveMediaSelection = (event: PointerEvent<HTMLDivElement>) => {
+  const moveMediaSelection = (event: PointerEvent<HTMLElement>) => {
     const activeSelection = mediaSelectionBoxRef.current;
     if (!activeSelection || event.pointerId !== activeSelection.pointerId) {
       return;
@@ -4707,7 +5569,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setMediaSelectionBox(nextSelection);
   };
 
-  const finishMediaSelection = (event: PointerEvent<HTMLDivElement>) => {
+  const finishMediaSelection = (event: PointerEvent<HTMLElement>) => {
     const activeSelection = mediaSelectionBoxRef.current;
     if (!activeSelection || event.pointerId !== activeSelection.pointerId) {
       return;
@@ -5296,7 +6158,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     if (nextClips === clips) {
       setCaptionStatus({
         kind: "error",
-        message: "Those words could not be matched to the linked video and audio.",
+        message:
+          "Those words could not be matched to the linked video and audio.",
       });
       return;
     }
@@ -5561,13 +6424,84 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }
 
     setIsExporting(true);
-    setProjectStatus("Rendering video... this can take a few minutes");
+    const exportAbortController = new AbortController();
+    exportAbortControllerRef.current = exportAbortController;
+    const exportJobId =
+      typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `export-${Date.now()}`;
+    let exportStatusTimer: number | null = null;
+    let exportStatusRequestActive = false;
+    const renderScale = exportMode === "fast" ? 0.75 : 1;
+    setProjectStatus(
+      exportMode === "fast"
+        ? "Preparing fast 960 x 540 export..."
+        : "Preparing HD 1280 x 720 export...",
+    );
+
+    const refreshExportStatus = async () => {
+      if (exportStatusRequestActive || exportAbortController.signal.aborted) {
+        return;
+      }
+
+      exportStatusRequestActive = true;
+      try {
+        const statusResponse = await fetch(
+          `/api/export/status/${exportJobId}`,
+          { signal: exportAbortController.signal },
+        );
+        if (!statusResponse.ok) return;
+
+        const status = (await statusResponse.json()) as {
+          progress?: number;
+          phase?: string;
+          state?: string;
+          message?: string;
+        };
+        if (status.state === "failed") {
+          setProjectStatus(
+            `Export failed: ${status.message ?? "The renderer stopped."}`,
+          );
+          return;
+        }
+
+        const progress = Math.max(
+          0,
+          Math.min(100, Math.round(status.progress ?? 0)),
+        );
+        const phaseLabel =
+          status.phase === "encoding"
+            ? "Encoding MP4"
+            : status.phase === "download_ready"
+              ? "Preparing download"
+              : status.phase === "preparing"
+                ? "Preparing preview video"
+                : "Rendering preview video";
+        setProjectStatus(`${phaseLabel}... ${progress}% complete`);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setProjectStatus("Waiting for the local export server...");
+        }
+      } finally {
+        exportStatusRequestActive = false;
+      }
+    };
+
+    exportStatusTimer = window.setInterval(
+      () => void refreshExportStatus(),
+      750,
+    );
 
     try {
       const response = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project: nextProject }),
+        body: JSON.stringify({
+          project: nextProject,
+          jobId: exportJobId,
+          renderScale,
+        }),
+        signal: exportAbortController.signal,
       });
 
       if (!response.ok) {
@@ -5584,19 +6518,40 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         throw new Error(message || "Export failed.");
       }
 
+      setProjectStatus("Preparing download... 100% complete");
       const blob = await response.blob();
-      downloadBrowserFile(blob, `video-editor-export-${Date.now()}.mp4`);
-      setProjectStatus("Video exported");
+      const exportFileName = `video-editor-export-${Date.now()}.mp4`;
+      downloadBrowserFile(blob, exportFileName);
+      window.setTimeout(() => {
+        setProjectStatus(
+          `Download started. Check your Downloads folder for ${exportFileName}`,
+        );
+      }, 900);
     } catch (error) {
-      setProjectStatus(
-        error instanceof Error
-          ? `Export failed: ${error.message}`
-          : "Export failed. Start the API with npm.cmd run web.",
-      );
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setProjectStatus("Export cancelled");
+      } else {
+        setProjectStatus(
+          error instanceof Error
+            ? `Export failed: ${error.message}`
+            : "Export failed. Start the API with npm.cmd run web.",
+        );
+      }
     } finally {
+      if (exportStatusTimer) {
+        window.clearInterval(exportStatusTimer);
+      }
+      if (exportAbortControllerRef.current === exportAbortController) {
+        exportAbortControllerRef.current = null;
+      }
       setIsExporting(false);
     }
-  }, [getCurrentSavedProject, isExporting]);
+  }, [exportMode, getCurrentSavedProject, isExporting]);
+
+  const cancelProjectExport = useCallback(() => {
+    setProjectStatus("Cancelling export...");
+    exportAbortControllerRef.current?.abort();
+  }, []);
 
   const updateSelectedClipEffect = (effect: ClipEffect) => {
     commitClipChange((currentClips) =>
@@ -5770,24 +6725,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setRotateDrag(null);
     setPreviewAlignmentGuides({ horizontal: false, vertical: false });
     updateSelectedClipAdjustment(defaultClipAdjustment);
-  };
-
-  const openVideoQuickMenu = (
-    event: React.MouseEvent<HTMLElement>,
-    clip: TimelineClip,
-  ) => {
-    if (clip.track !== "main" && clip.track !== "upper") return;
-    event.preventDefault();
-    event.stopPropagation();
-    setSelectedClipId(clip.id);
-    setSelectedTrack(clip.track);
-    setSelectedVideoLayer(null);
-    setPreviewMode("timeline");
-    setVideoQuickMenu({
-      clipId: clip.id,
-      left: event.clientX,
-      top: event.clientY,
-    });
   };
 
   const fitTimelineClipToScreen = (clipId: string) => {
@@ -6120,7 +7057,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           : [];
     if (clipIds.length === 0) return;
     commitClipChange((currentClips) =>
-      deleteTimelineClipsWithRipple(currentClips, clipIds),
+      deleteTimelineClips(currentClips, clipIds),
     );
     setSelectedClipId(null);
     setSelectedClipIds([]);
@@ -6490,23 +7427,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   };
   void selectVideoLayerClipAtFrame;
 
-  const selectWholeVideoLayer = (videoLayer: number) => {
-    const rowClipIds = clips
-      .filter((clip) => getVideoLayer(clip) === videoLayer)
-      .map((clip) => clip.id);
-    setSelectedVideoLayer(videoLayer);
-    selectedClipIdsRef.current = rowClipIds;
-    setSelectedClipIds(rowClipIds);
-    setSelectedClipId(null);
-    setSelectedTrack(videoLayer === 0 ? "main" : "upper");
-    setIsAudioTrackVisible(
-      clips.some(
-        (clip) =>
-          getVideoLayer(clip) === videoLayer && Boolean(clip.linkedClipId),
-      ),
-    );
-  };
-
   const openAudioControls = () => {
     setActiveTool("audio");
     selectTrackClipAtFrame("audio", playheadFrame);
@@ -6544,6 +7464,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       id: `uploaded-sticker-${Date.now()}-${index}`,
       label: file.name.replace(/\.[^.]+$/, ""),
       src: URL.createObjectURL(file),
+      category: "Uploaded",
       uploaded: true,
     }));
     setStickerItems((currentItems) => [...uploadedItems, ...currentItems]);
@@ -8958,6 +9879,47 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     importChoiceDialogRef.current?.showModal();
   };
 
+  const addAudioLibraryItem = async (item: AudioLibraryItem) => {
+    if (addingAudioLibraryItemId) return;
+    setAddingAudioLibraryItemId(item.id);
+    setProjectStatus(`Adding ${item.label}...`);
+
+    try {
+      const file = createAudioLibraryFile(item);
+      const uploadedMedia = await uploadMediaFile(file);
+      const clip = createBackgroundMusicClip({
+        id: `library-audio-${item.id}-${Date.now()}`,
+        label: item.label,
+        src: uploadedMedia.src,
+        playheadFrame,
+        durationInFrames: Math.round(item.durationSeconds * fps),
+      });
+      const styledClip: TimelineClip = {
+        ...clip,
+        color: item.kind === "sound-effects" ? "#b8682b" : "#2563eb",
+        volume: item.kind === "sound-effects" ? 1 : 0.7,
+      };
+
+      commitClipChange((currentClips) => [...currentClips, styledClip]);
+      setSelectedClipId(styledClip.id);
+      setSelectedClipIds([styledClip.id]);
+      setSelectedTrack("audio");
+      setIsAudioTrackVisible(true);
+      setPreviewMode("timeline");
+      setProjectStatus(
+        `${item.label} added at ${formatTimelineClock(playheadFrame, fps)}`,
+      );
+    } catch (error) {
+      setProjectStatus(
+        error instanceof Error
+          ? `Could not add audio: ${error.message}`
+          : "Could not add audio.",
+      );
+    } finally {
+      setAddingAudioLibraryItemId(null);
+    }
+  };
+
   const importAudioSources = async (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -9071,7 +10033,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       if (
         target instanceof HTMLElement &&
         target.closest(
-          "button, input, select, textarea, [contenteditable='true'], .timeline-playhead, .timeline-trim-handle, .timeline-transition-button",
+          "button, input, select, textarea, [contenteditable='true'], [data-timeline-clip-id], .timeline-playhead, .timeline-trim-handle, .timeline-transition-button",
         )
       ) {
         return;
@@ -9148,8 +10110,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }
   };
 
-  const startTimelineSelection = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || event.target !== event.currentTarget) return;
+  const clearTimelineClipSelection = () => {
+    setSelectedVideoLayer(null);
+    selectedClipIdsRef.current = [];
+    setSelectedClipIds([]);
+    setSelectedClipId(null);
+  };
+
+  const clearEditorSelection = () => {
+    clearTimelineClipSelection();
+    clearMediaSelection();
+  };
+
+  const startTimelineSelection = (event: PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
     const point = getTimelineSelectionPoint(event.clientX, event.clientY);
     if (!point) return;
 
@@ -9176,9 +10150,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     timelineSelectionBoxRef.current = selection;
     setTimelineSelectionBox(selection);
     if (!additive) {
-      selectedClipIdsRef.current = [];
-      setSelectedClipIds([]);
-      setSelectedClipId(null);
+      clearEditorSelection();
     }
   };
 
@@ -9193,7 +10165,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     if (!point) return;
     const activated =
       selection.activated ||
-      Math.hypot(point.x - selection.startX, point.y - selection.startY) >= 4;
+      Math.hypot(point.x - selection.startX, point.y - selection.startY) >= 2;
     const nextSelection = {
       ...selection,
       currentX: point.x,
@@ -9208,11 +10180,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }
   };
 
-  const finishTimelineSelection = (event: PointerEvent<HTMLDivElement>) => {
+  const finishTimelineSelection = (event: PointerEvent<HTMLElement>) => {
     const selection = timelineSelectionBoxRef.current;
     if (!selection || selection.pointerId !== event.pointerId) return;
     if (!selection.activated) {
       updatePlayheadFromPointer(event.clientX);
+      clearEditorSelection();
       setProjectStatus("Timeline selection cleared");
     } else {
       applyTimelineSelectionBox(selection);
@@ -9525,14 +10498,29 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
     const handlePointerUp = (event: globalThis.PointerEvent) => {
       if (!pointerDragStartedRef.current) {
-        if (
-          pointerDrag.type === "timeline" &&
-          pointerDrag.toggleSelectionOnClick
-        ) {
+        if (pointerDrag.type === "timeline") {
           const clickedClip = clipsRef.current.find(
             (clip) => clip.id === pointerDrag.id,
           );
-          if (clickedClip) toggleTimelineClipSelection(clickedClip);
+          if (clickedClip) {
+            if (pointerDrag.toggleSelectionOnClick) {
+              toggleTimelineClipSelection(clickedClip);
+            } else {
+              selectedClipIdsRef.current = [clickedClip.id];
+              setSelectedClipIds([clickedClip.id]);
+              setSelectedClipId(clickedClip.id);
+              setSelectedTrack(clickedClip.track);
+              setSelectedVideoLayer(null);
+              setPreviewMode("timeline");
+            }
+          }
+        } else if (pointerDrag.type === "media") {
+          const clickedMedia = mediaItems.find(
+            (item) => item.id === pointerDrag.id,
+          );
+          if (clickedMedia) {
+            chooseMedia(clickedMedia, false, false);
+          }
         }
         setPointerDrag(null);
         pointerDragRef.current = null;
@@ -10659,10 +11647,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         const sine = Math.sin(radians);
         const localDeltaX = deltaX * cosine + deltaY * sine;
         const localDeltaY = -deltaX * sine + deltaY * cosine;
-        const startScaleX =
-          originalTransform.scaleX ?? originalTransform.scale;
-        const startScaleY =
-          originalTransform.scaleY ?? originalTransform.scale;
+        const startScaleX = originalTransform.scaleX ?? originalTransform.scale;
+        const startScaleY = originalTransform.scaleY ?? originalTransform.scale;
         const startWidth = stickerInteraction.baseWidth * startScaleX;
         const startHeight = stickerInteraction.baseHeight * startScaleY;
         const nextWidth =
@@ -11236,13 +12222,29 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           >
             Reset layout
           </button>
-          <button
-            className="save-button"
-            type="button"
-            onClick={saveProjectToStorage}
-          >
-            Save
-          </button>
+          {isExporting ? (
+            <button
+              className="cancel-export-button"
+              type="button"
+              onClick={cancelProjectExport}
+            >
+              Cancel
+            </button>
+          ) : null}
+          <label className="export-mode-control">
+            <span>Export quality</span>
+            <select
+              aria-label="Export quality"
+              disabled={isExporting}
+              value={exportMode}
+              onChange={(event) =>
+                setExportMode(event.target.value === "hd" ? "hd" : "fast")
+              }
+            >
+              <option value="fast">Fast 540p</option>
+              <option value="hd">HD 720p</option>
+            </select>
+          </label>
           <button
             className="export-button"
             type="button"
@@ -11261,18 +12263,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             : ""
         }`}
       >
-        <aside className="media-panel">
+        <aside
+          className={`media-panel ${mediaSelectionBox?.activated ? "is-selecting-media" : ""}`}
+          onPointerDown={startMediaSelection}
+          onPointerMove={moveMediaSelection}
+          onPointerUp={finishMediaSelection}
+          onPointerCancel={finishMediaSelection}
+          onLostPointerCapture={() => {
+            mediaSelectionBoxRef.current = null;
+            setMediaSelectionBox(null);
+          }}
+        >
           <div
             className={`media-library ${mediaSelectionBox?.activated ? "is-selecting-media" : ""}`}
             ref={mediaLibraryRef}
-            onPointerDown={startMediaSelection}
-            onPointerMove={moveMediaSelection}
-            onPointerUp={finishMediaSelection}
-            onPointerCancel={finishMediaSelection}
-            onLostPointerCapture={() => {
-              mediaSelectionBoxRef.current = null;
-              setMediaSelectionBox(null);
-            }}
           >
             {mediaSelectionBox?.activated ? (
               <div
@@ -11375,7 +12379,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           }
                           chooseMedia(
                             mediaItem,
-                            event.ctrlKey || event.metaKey || !event.shiftKey,
+                            event.ctrlKey || event.metaKey,
                             event.shiftKey,
                           );
                         }}
@@ -11642,20 +12646,68 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     onChange={uploadSticker}
                   />
                 </div>
-                <div className="sticker-grid" aria-label="Sticker library">
-                  {stickerItems.map((stickerItem) => (
-                    <button
-                      className="sticker-library-item"
-                      key={stickerItem.id}
-                      type="button"
-                      title={`Add ${stickerItem.label} at playhead`}
-                      onClick={() => addStickerAtPlayhead(stickerItem)}
-                    >
-                      {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
-                      <img src={stickerItem.src} alt="" />
-                      <span>{stickerItem.label}</span>
-                    </button>
-                  ))}
+                <div
+                  className="sticker-library-sections"
+                  aria-label="Sticker library"
+                >
+                  {Array.from(
+                    stickerItems.reduce((sections, stickerItem) => {
+                      const category = stickerItem.category ?? "Stickers";
+                      const items = sections.get(category) ?? [];
+                      items.push(stickerItem);
+                      sections.set(category, items);
+                      return sections;
+                    }, new Map<string, StickerItem[]>()),
+                  ).map(([category, items]) => {
+                    const isExpanded =
+                      expandedStickerSections.includes(category);
+
+                    return (
+                      <section
+                        className="sticker-library-section"
+                        key={category}
+                      >
+                        <div className="sticker-library-section-header">
+                          <h3>{category}</h3>
+                          <button
+                            type="button"
+                            className="sticker-view-all-button"
+                            aria-expanded={isExpanded}
+                            onClick={() =>
+                              setExpandedStickerSections((currentSections) =>
+                                currentSections.includes(category)
+                                  ? currentSections.filter(
+                                      (section) => section !== category,
+                                    )
+                                  : [...currentSections, category],
+                              )
+                            }
+                          >
+                            {isExpanded ? "Show less" : "View all"}
+                          </button>
+                        </div>
+                        <div
+                          className={`sticker-grid ${
+                            isExpanded ? "expanded-sticker-grid" : ""
+                          }`}
+                        >
+                          {items.map((stickerItem) => (
+                            <button
+                              className="sticker-library-item"
+                              key={stickerItem.id}
+                              type="button"
+                              title={`Add ${stickerItem.label} at playhead`}
+                              onClick={() => addStickerAtPlayhead(stickerItem)}
+                            >
+                              {/* eslint-disable-next-line @remotion/warn-native-media-tag */}
+                              <img src={stickerItem.src} alt="" />
+                              <span>{stickerItem.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })}
                 </div>
               </>
             ) : activeTool === "text" ? (
@@ -11672,6 +12724,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       ? "Edit the selected text"
                       : "Type your text"
                   }
+                  onPointerDown={focusTextareaOnPointerDown}
                   onChange={(event) => setTextDraft(event.currentTarget.value)}
                 />
                 <button
@@ -11797,10 +12850,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     aria-label="Transcript segments"
                   >
                     {transcriptClips.map((clip) => (
-                      <div
-                        className="transcript-segment"
-                        key={clip.id}
-                      >
+                      <div className="transcript-segment" key={clip.id}>
                         <div className="transcript-sentence-line">
                           <span className="transcript-sentence-time">
                             {formatTimelineClock(clip.start, fps)}
@@ -11885,6 +12935,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               ? "Edit the selected caption"
                               : "Type your caption"
                           }
+                          onPointerDown={focusTextareaOnPointerDown}
                           onChange={(event) => {
                             setCaptionDraft(event.currentTarget.value);
                             resetCaptionStatus();
@@ -12691,34 +13742,231 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 ) : null}
               </div>
             ) : (
-              <div className="library-actions">
-                <button
-                  className="import-button"
-                  type="button"
-                  onClick={() => musicInputRef.current?.click()}
-                >
-                  Import audio
-                </button>
-                <button
-                  className={`record-button ${isRecording ? "is-recording" : ""}`}
-                  type="button"
-                  onClick={() => void toggleVoiceRecording()}
-                  aria-label={
-                    isRecording
-                      ? "Stop voice recording"
-                      : "Record voice narration"
-                  }
-                >
-                  {isRecording ? "Stop" : "Record"}
-                </button>
-                <input
-                  ref={musicInputRef}
-                  className="hidden-file-input"
-                  type="file"
-                  accept="audio/*,video/*"
-                  multiple
-                  onChange={importAudioSources}
-                />
+              <div className="audio-library-panel">
+                <div className="library-actions audio-library-actions">
+                  <button
+                    className="import-button"
+                    type="button"
+                    onClick={() => musicInputRef.current?.click()}
+                  >
+                    Import audio
+                  </button>
+                  <button
+                    className={`record-button ${isRecording ? "is-recording" : ""}`}
+                    type="button"
+                    onClick={() => void toggleVoiceRecording()}
+                    aria-label={
+                      isRecording
+                        ? "Stop voice recording"
+                        : "Record voice narration"
+                    }
+                  >
+                    {isRecording ? "Stop" : "Record"}
+                  </button>
+                  <input
+                    ref={musicInputRef}
+                    className="hidden-file-input"
+                    type="file"
+                    accept="audio/*,video/*"
+                    multiple
+                    onChange={importAudioSources}
+                  />
+                </div>
+                {recordingError ? (
+                  <div className="recording-error" role="alert">
+                    {recordingError}
+                  </div>
+                ) : null}
+
+                <div className="audio-library-tabs" role="tablist">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={audioLibraryTab === "music"}
+                    className={audioLibraryTab === "music" ? "active" : ""}
+                    onClick={() => {
+                      setAudioLibraryTab("music");
+                      setAudioLibraryCategory(null);
+                      setAudioLibraryQuery("");
+                      setShowAllAudioLibraryItems(false);
+                    }}
+                  >
+                    Music
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={audioLibraryTab === "sound-effects"}
+                    className={
+                      audioLibraryTab === "sound-effects" ? "active" : ""
+                    }
+                    onClick={() => {
+                      setAudioLibraryTab("sound-effects");
+                      setAudioLibraryCategory(null);
+                      setAudioLibraryQuery("");
+                      setShowAllAudioLibraryItems(false);
+                    }}
+                  >
+                    Sound effects
+                  </button>
+                </div>
+
+                <label className="audio-library-search">
+                  <span aria-hidden="true">⌕</span>
+                  <input
+                    type="search"
+                    value={audioLibraryQuery}
+                    placeholder={
+                      audioLibraryTab === "music"
+                        ? "Search music"
+                        : "Search sound effects"
+                    }
+                    aria-label={
+                      audioLibraryTab === "music"
+                        ? "Search music"
+                        : "Search sound effects"
+                    }
+                    onChange={(event) =>
+                      updateAudioLibrarySearch(event.currentTarget.value)
+                    }
+                  />
+                  {!hasAudioLibrarySearch ? (
+                    <span
+                      className="audio-filter-icon"
+                      title="Filter by category"
+                    >
+                      ≡
+                    </span>
+                  ) : null}
+                </label>
+
+                {!hasAudioLibrarySearch ? (
+                  <>
+                    <div
+                      className="audio-search-chips"
+                      aria-label="Quick searches"
+                    >
+                      {(audioLibraryTab === "music"
+                        ? ["background music", "phonk", "happy"]
+                        : ["vine boom", "boom", "explosion"]
+                      ).map((keyword) => (
+                        <button
+                          key={keyword}
+                          type="button"
+                          className={
+                            audioLibraryQuery === keyword ? "active" : ""
+                          }
+                          onClick={() => updateAudioLibrarySearch(keyword)}
+                        >
+                          {keyword}
+                        </button>
+                      ))}
+                    </div>
+
+                    <section className="audio-library-categories">
+                      <header>
+                        <strong>Categories</strong>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAudioLibraryCategory(null);
+                            setAudioLibraryQuery("");
+                            setShowAllAudioLibraryItems((current) => !current);
+                          }}
+                        >
+                          {showAllAudioLibraryItems ? "Show less" : "View all"}
+                        </button>
+                      </header>
+                      <div className="audio-category-grid">
+                        {audioLibraryCategories.map((category, index) => {
+                          const categoryItem = activeAudioLibraryItems.find(
+                            (item) => item.category === category,
+                          );
+                          return (
+                            <button
+                              key={category}
+                              type="button"
+                              className={
+                                audioLibraryCategory === category
+                                  ? "active"
+                                  : ""
+                              }
+                              style={
+                                {
+                                  "--audio-category-color":
+                                    categoryItem?.accent ?? "#476778",
+                                  "--audio-category-index": index,
+                                } as CSSProperties
+                              }
+                              onClick={() =>
+                                setAudioLibraryCategory((current) =>
+                                  current === category ? null : category,
+                                )
+                              }
+                            >
+                              <span aria-hidden="true">
+                                {audioLibraryTab === "music" ? "♪" : "✦"}
+                              </span>
+                              <strong>{category}</strong>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  </>
+                ) : null}
+
+                <section className="audio-library-results">
+                  <header>
+                    <strong>
+                      {audioLibraryCategory ||
+                        (audioLibraryQuery
+                          ? "Results"
+                          : showAllAudioLibraryItems
+                            ? audioLibraryTab === "music"
+                              ? "All music"
+                              : "All sound effects"
+                            : "Recommended")}
+                    </strong>
+                    <span>{filteredAudioLibraryItems.length}</span>
+                  </header>
+                  <div className="audio-result-list">
+                    {filteredAudioLibraryItems.map((item) => (
+                      <button
+                        className="audio-result-item"
+                        key={item.id}
+                        type="button"
+                        title={`Add ${item.label} at the playhead`}
+                        aria-label={`Add ${item.label} at the playhead`}
+                        disabled={addingAudioLibraryItemId !== null}
+                        onClick={() => void addAudioLibraryItem(item)}
+                      >
+                        <span
+                          className="audio-result-art"
+                          style={{ background: item.accent }}
+                          aria-hidden="true"
+                        >
+                          {item.kind === "music" ? "♪" : "✦"}
+                        </span>
+                        <span className="audio-result-copy">
+                          <strong title={item.label}>{item.label}</strong>
+                          <small>
+                            {formatAudioLibraryDuration(item.durationSeconds)} ·{" "}
+                            {item.creator}
+                          </small>
+                        </span>
+                        <span className="audio-add-button" aria-hidden="true">
+                          {addingAudioLibraryItemId === item.id ? "…" : "+"}
+                        </span>
+                      </button>
+                    ))}
+                    {filteredAudioLibraryItems.length === 0 ? (
+                      <p className="audio-library-empty">
+                        No matches. Try another search or choose View all.
+                      </p>
+                    ) : null}
+                  </div>
+                </section>
               </div>
             )}
           </div>
@@ -12762,9 +14010,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 ) {
                   return;
                 }
-                setSelectedClipId(null);
-                setSelectedClipIds([]);
-                setSelectedVideoLayer(null);
+                clearEditorSelection();
                 setSelectedPreviewFrameBase(null);
                 setCutoutInteraction(null);
               }}
@@ -12772,7 +14018,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               onBlurCapture={handleMediaPreviewBlur}
             >
               {isTimelinePreview
-                ? renderPreviewAlignmentGuides(previewAlignmentGuides)
+                ? renderPreviewAlignmentGuides(
+                    previewAlignmentGuides,
+                    useWhitePreviewAlignmentGuides ? "white" : "yellow",
+                  )
                 : null}
               {previewSource?.src || isTimelinePreview ? (
                 <>
@@ -12807,9 +14056,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 event.currentTarget.naturalWidth,
                                 event.currentTarget.naturalHeight,
                               )
-                            }
-                            onContextMenu={(event) =>
-                              openVideoQuickMenu(event, videoClip)
                             }
                             style={{
                               ...getClipFrameStyle(
@@ -12879,9 +14125,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 event.currentTarget.videoWidth,
                                 event.currentTarget.videoHeight,
                               )
-                            }
-                            onContextMenu={(event) =>
-                              openVideoQuickMenu(event, videoClip)
                             }
                             onLoadedMetadata={(event) => {
                               reconcileTimelineClipSourceDuration(
@@ -14074,6 +15317,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   <textarea
                     aria-label="Caption words"
                     value={selectedCaptionClip.caption?.content ?? ""}
+                    onPointerDown={focusTextareaOnPointerDown}
                     onChange={(event) =>
                       updateSelectedCaptionContent(event.currentTarget.value)
                     }
@@ -14692,6 +15936,23 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         <div
           className="timeline-scroll"
           ref={timelineScrollRef}
+          onPointerDown={(event) => {
+            const target = event.target;
+            if (
+              target instanceof HTMLElement &&
+              target.closest(
+                "button, input, select, textarea, [contenteditable='true'], [data-timeline-clip-id], .timeline-playhead, .transition-anchor",
+              )
+            ) {
+              return;
+            }
+            startTimelineSelection(event);
+          }}
+          onPointerMove={(event) => {
+            updateTimelineSelection(event);
+          }}
+          onPointerUp={finishTimelineSelection}
+          onPointerCancel={finishTimelineSelection}
           onWheel={(event) => {
             if (!event.ctrlKey && !event.metaKey) return;
             event.preventDefault();
@@ -14701,12 +15962,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             );
           }}
         >
-          <div
-            className="timeline-content"
-            ref={timelineContentRef}
-            onPointerMove={(event) => {
-              updateTimelineSelection(event);
-              if (!timelineSelectionBoxRef.current) {
+            <div
+              className="timeline-content"
+              ref={timelineContentRef}
+              onPointerDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  startTimelineSelection(event);
+                }
+              }}
+              onPointerMove={(event) => {
+                updateTimelineSelection(event);
+                if (!timelineSelectionBoxRef.current) {
                 updateTimelineHoverFromPointer(event);
               }
             }}
@@ -14813,19 +16079,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           suppressTrackLabelClickRef.current = false;
                           return;
                         }
-                        if (track.videoLayer !== undefined) {
-                          selectWholeVideoLayer(track.videoLayer);
-                          return;
-                        }
-                        selectTrackClipAtFrame(
-                          track.id,
-                          playheadFrame,
-                          track.audioKind === "voiceover"
-                            ? isVoiceoverClip
-                            : track.audioKind === "imported"
-                              ? isImportedAudioClip
-                              : undefined,
-                        );
+                        clearEditorSelection();
+                        setSelectedTrack(track.id);
                       }}
                     >
                       {track.videoLayer !== undefined && track.videoLayer !== 0
@@ -14874,19 +16129,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           return;
                         }
                         if (event.target !== event.currentTarget) return;
-                        if (track.videoLayer !== undefined) {
-                          selectWholeVideoLayer(track.videoLayer);
-                          return;
-                        }
-                        const rowClipIds = clips
-                          .filter((clip) =>
-                            timelineRowContainsClip(track, clip),
-                          )
-                          .map((clip) => clip.id);
-                        setSelectedVideoLayer(null);
-                        selectedClipIdsRef.current = rowClipIds;
-                        setSelectedClipIds(rowClipIds);
-                        setSelectedClipId(null);
+                        clearEditorSelection();
                         setSelectedTrack(track.id);
                       }}
                       onDoubleClick={(event) => {
@@ -15109,6 +16352,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 ? "caption-timeline-clip"
                                 : ""
                             } ${
+                              clip.track === "text" && clip.text
+                                ? "text-timeline-clip"
+                                : ""
+                            } ${
                               (clip.track === "caption" ||
                                 clip.track === "text" ||
                                 clip.track === "sticker" ||
@@ -15124,6 +16371,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               clip.duration * timelineScale < 48
                                 ? "tiny-overlay-clip"
                                 : ""
+                            } ${
+                              pointerDrag?.activated &&
+                              pointerDrag.type === "timeline" &&
+                              (timelineGroupDragPreview?.ids.has(clip.id) ||
+                                pointerDrag.id === clip.id)
+                                ? "moving-timeline-clip"
+                                : ""
                             }`}
                             key={clip.id}
                             data-timeline-clip-id={clip.id}
@@ -15134,6 +16388,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 event.ctrlKey ||
                                 event.metaKey;
                               const selectedGroup =
+                                isAdditiveSelection &&
                                 selectedClipIdsRef.current.length > 1 &&
                                 selectedClipIdsRef.current.includes(clip.id)
                                   ? selectedClipIdsRef.current
@@ -15226,6 +16481,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                     : clip.start * timelineScale
                               }px`,
                               width: `${clip.duration * timelineScale}px`,
+                              translate:
+                                pointerDrag?.activated &&
+                                pointerDrag.type === "timeline" &&
+                                (timelineGroupDragPreview?.ids.has(clip.id) ||
+                                  pointerDrag.id === clip.id)
+                                  ? `0 ${timelineDragPreviewOffsetY}px`
+                                  : undefined,
                               ...(clip.track === "caption" ||
                               clip.track === "text"
                                 ? {
@@ -15409,7 +16671,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               </button>
                             ) : null}
                             <span className="timeline-clip-label">
-                              {clip.label}
+                              {clip.track === "text" && clip.text
+                                ? clip.text.content
+                                : clip.track === "caption" && clip.caption
+                                  ? clip.caption.content
+                                  : clip.label}
                             </span>
                             <small className="timeline-clip-duration">
                               {clip.track === "audio"

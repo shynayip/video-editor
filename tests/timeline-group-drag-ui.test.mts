@@ -126,3 +126,41 @@ test("blank media details panel can clear and start imported-media selection", (
     /<aside[\s\S]*className=\{`details-panel \$\{[\s\S]*activeTool === "media" && mediaSelectionBox\?\.activated[\s\S]*\}`\}[\s\S]*onPointerDown=\{[\s\S]*activeTool === "media" \? startMediaSelection : undefined[\s\S]*onPointerMove=\{[\s\S]*activeTool === "media" \? moveMediaSelection : undefined[\s\S]*onPointerUp=\{[\s\S]*activeTool === "media" \? finishMediaSelection : undefined/s,
   );
 });
+
+test("Delete removes every highlighted imported-media card as one batch", () => {
+  assert.match(
+    source,
+    /const handleMediaDeleteShortcut = \(event: KeyboardEvent\) => \{/,
+  );
+  assert.match(
+    source,
+    /event\.key !== "Delete" && event\.key !== "Backspace"/,
+  );
+  assert.match(
+    source,
+    /const selectedIds = new Set\(selectedMediaIdsRef\.current\);[\s\S]*const nextItems = currentItems\.filter\([\s\S]*!selectedIds\.has\(item\.id\)/,
+  );
+  assert.match(
+    source,
+    /activeToolRef\.current === "media" &&\s*selectedMediaIdsRef\.current\.length > 0/,
+  );
+});
+
+test("video and cutout timeline rows are taller than supporting tracks", () => {
+  assert.match(
+    source,
+    /const isVisualTimelineRow =\s*track\.id === "main" \|\|\s*track\.id === "upper" \|\|\s*track\.id === "cutout"/,
+  );
+  assert.match(
+    source,
+    /isVisualTimelineRow \? "visual-timeline-track" : ""/,
+  );
+  assert.match(
+    styles,
+    /\.timeline-track\.visual-timeline-track\s*\{\s*height:\s*92px;/,
+  );
+  assert.match(
+    styles,
+    /\.timeline-track\.visual-timeline-track \.track-lane\s*\{\s*height:\s*82px;/,
+  );
+});

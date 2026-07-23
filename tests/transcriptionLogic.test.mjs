@@ -445,14 +445,8 @@ test("uses repaired Windows render binaries and fast preview encoding", async (t
   assert.equal(renderCalls[0].jpegQuality, 70);
   assert.equal(renderCalls[0].everyNthFrame, 2);
   assert.equal(renderCalls[0].hardwareAcceleration, "disable");
-  assert.deepEqual(
-    renderCalls[0].ffmpegOverride({
-      type: "stitcher",
-      args: ["-c:v", "libx264"],
-    }),
-    ["-c:v", "h264_amf", "-quality", "speed"],
-  );
-  assert.equal(renderCalls[0].x264Preset, undefined);
+  assert.equal(renderCalls[0].ffmpegOverride, undefined);
+  assert.equal(renderCalls[0].x264Preset, "ultrafast");
   assert.deepEqual(cleanupCalls, [
     {
       directory: "C:/temp/export-route",
@@ -487,6 +481,7 @@ test("keeps full HD export available when explicitly requested", async (t) => {
   assert.equal(renderCalls[0].videoBitrate, "8M");
   assert.equal(renderCalls[0].jpegQuality, 85);
   assert.equal(renderCalls[0].everyNthFrame, 1);
+  assert.equal(renderCalls[0].x264Preset, "veryfast");
 });
 
 const postRawTranscriptionRequest = async (url, { headers = {} } = {}) =>

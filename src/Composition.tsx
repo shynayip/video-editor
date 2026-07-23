@@ -8,6 +8,7 @@ import {
   ChangeEvent,
   CSSProperties,
   Fragment,
+  memo,
   PointerEvent,
   SyntheticEvent,
   useCallback,
@@ -17,6 +18,7 @@ import {
   useState,
 } from "react";
 import {
+  alignDetachedAudioWithSourceVideos,
   appendCutoutMaskStroke,
   applyAutomaticCutoutById,
   appendStickerClip,
@@ -44,8 +46,8 @@ import {
   createTextClip,
   defaultCaptionStyle,
   defaultClipAdjustment,
-  duplicateClipById,
-  detachAudioFromVideoClip,
+  duplicateClipGroupByIds,
+  detachAudioFromVideoClips,
   ensureLinkedAudioForVideo,
   keepDominantVoiceInLinkedVideo,
   getActiveClipsAtFrame,
@@ -66,6 +68,7 @@ import {
   getMaximumFittingCaptionFontSize,
   getExpandedTimelineBoundary,
   getIndependentPlaybackAudioClips,
+  getAvailableSourceGroupIndexes,
   getInitialNextSourceGroupIndex,
   getPlaybackAudioClips,
   getRemovedTranscriptWordIndexes,
@@ -126,6 +129,7 @@ import {
   setClipFilterById,
   setClipAdjustmentById,
   setClipSpeedById,
+  setClipGroupSpeedByIds,
   setClipVolumeById,
   setClipAudioFadeById,
   setVideoLayerSpeed,
@@ -140,10 +144,10 @@ import {
   resetCutoutMask,
   isTrackHidden,
   toggleClipMuteById,
+  toggleClipGroupMuteByIds,
   toggleClipVisibilityById,
   toggleTrackVisibility,
   shouldMovePlayheadDuringScrub,
-  shouldMuteVideoNativeAudio,
   splitClipByIdAtFrame,
   intersectSourceRanges,
   subtractSourceRanges,
@@ -3368,50 +3372,49 @@ type TimelineRow = {
 };
 
 type TranscriptSentenceEditorProps = {
+  clipId: string;
   content: string;
   timestamp: string;
-  onDeleteWords: (wordIndexes: number[]) => void;
+  onDeleteWords: (clipId: string, wordIndexes: number[]) => void;
 };
 
-const TranscriptSentenceEditor: React.FC<TranscriptSentenceEditorProps> = ({
-  content,
-  timestamp,
-  onDeleteWords,
-}) => {
-  const [draft, setDraft] = useState(content);
+const TranscriptSentenceEditor = memo<TranscriptSentenceEditorProps>(
+  ({ clipId, content, timestamp, onDeleteWords }) => {
+    const [draft, setDraft] = useState(content);
 
-  useEffect(() => {
-    setDraft(content);
-  }, [content]);
-
-  const commitDeletedWords = () => {
-    const removedWordIndexes = getRemovedTranscriptWordIndexes(content, draft);
-    if (removedWordIndexes.length === 0) {
+    useEffect(() => {
       setDraft(content);
-      return;
-    }
-    onDeleteWords(removedWordIndexes);
-  };
+    }, [content]);
 
-  return (
-    <textarea
-      className="transcript-sentence-editor"
-      value={draft}
-      aria-label={`Edit transcript at ${timestamp}`}
-      title="Delete words, then click outside or press Ctrl+Enter to cut them from the video and audio"
-      rows={2}
-      onChange={(event) => setDraft(event.currentTarget.value)}
-      onBlur={commitDeletedWords}
-      onPointerDown={focusTextareaOnPointerDown}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-          event.preventDefault();
-          event.currentTarget.blur();
-        }
-      }}
-    />
-  );
-};
+    const commitDeletedWords = () => {
+      const removedWordIndexes = getRemovedTranscriptWordIndexes(content, draft);
+      if (removedWordIndexes.length === 0) {
+        setDraft(content);
+        return;
+      }
+      onDeleteWords(clipId, removedWordIndexes);
+    };
+
+    return (
+      <textarea
+        className="transcript-sentence-editor"
+        value={draft}
+        aria-label={`Edit transcript at ${timestamp}`}
+        title="Delete words, then press Enter to cut them from the video and audio. Use Shift+Enter for a new line."
+        rows={2}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onBlur={commitDeletedWords}
+        onPointerDown={focusTextareaOnPointerDown}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            event.currentTarget.blur();
+          }
+        }}
+      />
+    );
+  },
+);
 
 const isVoiceoverClip = (clip: TimelineClip) =>
   clip.track === "audio" &&
@@ -3915,6 +3918,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       initialMediaItems[0]?.id;
     return initialId ? [initialId] : [];
   });
+  const mediaItemsRef = useRef(mediaItems);
+  const selectedMediaIdRef = useRef(selectedMediaId);
+  const selectedMediaIdsRef = useRef(selectedMediaIds);
   const [mediaSelectionBox, setMediaSelectionBox] =
     useState<MediaSelectionBox | null>(null);
   const [timelineSelectionBox, setTimelineSelectionBox] =
@@ -3964,6 +3970,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     null,
   );
   const [selectedTrack, setSelectedTrack] = useState<TrackName>("main");
+  const [selectedTimelineRowKey, setSelectedTimelineRowKey] = useState<
+    string | null
+  >(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [selectedClipIds, setSelectedClipIds] = useState<string[]>([]);
   const [selectedVideoLayer, setSelectedVideoLayer] = useState<number | null>(
@@ -3971,6 +3980,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   );
   const selectedClipIdRef = useRef(selectedClipId);
   const selectedClipIdsRef = useRef(selectedClipIds);
+  const selectedTimelineRowClipIdsRef = useRef<string[]>([]);
+  const copiedTimelineClipIdsRef = useRef<string[]>([]);
   const autoCaptionRequestRef = useRef<symbol | null>(null);
   const autoCaptionAbortControllerRef = useRef<AbortController | null>(null);
   const autoCaptionSelectionVersionRef = useRef(0);
@@ -4012,6 +4023,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [audioLibraryCategory, setAudioLibraryCategory] = useState<
     string | null
   >(null);
+  const [showAudioLibraryFilterMenu, setShowAudioLibraryFilterMenu] =
+    useState(false);
   const [showAllAudioLibraryItems, setShowAllAudioLibraryItems] =
     useState(false);
   const hasAudioLibrarySearch = audioLibraryQuery.trim().length > 0;
@@ -4098,29 +4111,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   useEffect(() => {
     if (!videoQuickMenu) return;
 
-    const dismissVideoQuickMenu = (event: globalThis.PointerEvent) => {
-      const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        target.closest(
-          ".video-quick-menu, .preview-layer-video, .preview-layer-image",
-        )
-      ) {
-        return;
-      }
+    if (selectedClipId !== videoQuickMenu.clipId) {
       setVideoQuickMenu(null);
-    };
+      return;
+    }
+
     const dismissVideoQuickMenuWithEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setVideoQuickMenu(null);
     };
 
-    document.addEventListener("pointerdown", dismissVideoQuickMenu, true);
     window.addEventListener("keydown", dismissVideoQuickMenuWithEscape);
     return () => {
-      document.removeEventListener("pointerdown", dismissVideoQuickMenu, true);
       window.removeEventListener("keydown", dismissVideoQuickMenuWithEscape);
     };
-  }, [videoQuickMenu]);
+  }, [selectedClipId, videoQuickMenu]);
   const [replaceVideoClipId, setReplaceVideoClipId] = useState<string | null>(
     null,
   );
@@ -4400,6 +4404,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   }, []);
 
   clipsRef.current = clips;
+  mediaItemsRef.current = mediaItems;
+  selectedMediaIdRef.current = selectedMediaId;
+  selectedMediaIdsRef.current = selectedMediaIds;
   pointerDragRef.current = pointerDrag;
   selectedClipIdRef.current = selectedClipId;
   selectedClipIdsRef.current = selectedClipIds;
@@ -4410,6 +4417,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const projectDuration = useMemo(() => getTimelineDuration(clips), [clips]);
 
   useEffect(() => {
+    const alignedClips = alignDetachedAudioWithSourceVideos(clips);
+    if (alignedClips !== clips) {
+      setTimelineHistory((currentHistory) => ({
+        ...currentHistory,
+        present: alignDetachedAudioWithSourceVideos(currentHistory.present),
+      }));
+      return;
+    }
+
     const detachedVideoIds = new Set<string>();
     const attachedVideoIds = new Set<string>();
     const detachedAudioIds = new Set<string>();
@@ -4967,25 +4983,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     clipControlTarget.mediaType !== "image" &&
     clipControlTarget.cutout?.mediaKind !== "image",
   );
-  const clipControlTargetHasExtractedAudio = Boolean(
-    clipControlTarget &&
-      (clipControlTarget.track === "main" ||
-        clipControlTarget.track === "upper" ||
-        clipControlTarget.track === "cutout") &&
-      clips.some((audioClip) =>
-        isDetachedAudioForVideoClip(audioClip, clipControlTarget),
-      ),
-  );
-  const canExtractSelectedAudio = Boolean(
-    clipControlTarget &&
-    (clipControlTarget.track === "main" ||
-      clipControlTarget.track === "upper" ||
-      clipControlTarget.track === "cutout") &&
-    Boolean(clipControlTarget.src) &&
-    !isImageClip(clipControlTarget) &&
-    clipControlTarget.cutout?.mediaKind !== "image" &&
-    !clipControlTargetHasExtractedAudio,
-  );
   const selectedClipDurationSeconds = Math.max(
     0,
     (clipControlTarget?.duration ?? 0) / fps,
@@ -5140,8 +5137,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         transitionPresentation.translateX !== 0 ||
         transitionPresentation.scale !== 1;
       const isNearPlayhead =
-        clip.start <= timelinePreviewFrame + fps * 5 &&
-        clip.start + clip.duration >= timelinePreviewFrame - fps;
+        clip.start <= timelinePreviewFrame + fps &&
+        clip.start + clip.duration >=
+          timelinePreviewFrame - Math.ceil(fps / 4);
 
       return (
         activeVideoClipIds.has(clip.id) ||
@@ -5222,7 +5220,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   );
   const playbackAudioClips = useMemo(
     () => [
-      ...getPlaybackAudioClips(clips, playheadFrame),
+      ...getPlaybackAudioClips(clips, playheadFrame).filter((audioClip) =>
+        clips.some(
+          (clip) =>
+            clip.track === "cutout" && clip.id === audioClip.linkedClipId,
+        ),
+      ),
       ...getIndependentPlaybackAudioClips(clips, playheadFrame),
     ],
     [clips, playheadFrame],
@@ -5347,6 +5350,85 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
     return rows.sort((left, right) => right.order - left.order);
   }, [clips, isRecording]);
+  const selectedTimelineRow = selectedTimelineRowKey
+    ? (timelineRows.find((row) => row.key === selectedTimelineRowKey) ?? null)
+    : null;
+  const selectedTimelineRowClips = useMemo(
+    () =>
+      selectedTimelineRow
+        ? clips.filter((clip) =>
+            timelineRowContainsClip(selectedTimelineRow, clip),
+          )
+        : [],
+    [clips, selectedTimelineRow],
+  );
+  const selectedTimelineRowClipIds = useMemo(
+    () => selectedTimelineRowClips.map((clip) => clip.id),
+    [selectedTimelineRowClips],
+  );
+  selectedTimelineRowClipIdsRef.current = selectedTimelineRowClipIds;
+  const isWholeTimelineRowSelected =
+    selectedTimelineRow !== null &&
+    selectedClipId === null &&
+    selectedClipIds.length === 0;
+  const selectedOperationClipIds = useMemo(
+    () =>
+      selectedClipIds.length > 0
+        ? selectedClipIds
+        : selectedClipId
+          ? [selectedClipId]
+          : selectedTimelineRowClipIds,
+    [selectedClipId, selectedClipIds, selectedTimelineRowClipIds],
+  );
+  const selectedOperationClipIdSet = new Set(selectedOperationClipIds);
+  const extractableActionVideoClips = clips.filter(
+    (clip) =>
+      selectedOperationClipIdSet.has(clip.id) &&
+      (clip.track === "main" ||
+        clip.track === "upper" ||
+        clip.track === "cutout") &&
+      Boolean(clip.src) &&
+      !isImageClip(clip) &&
+      clip.cutout?.mediaKind !== "image" &&
+      !clips.some((audioClip) =>
+        isDetachedAudioForVideoClip(audioClip, clip),
+      ),
+  );
+  const canExtractActionAudio = extractableActionVideoClips.length > 0;
+  const selectedRowSpeed =
+    selectedTimelineRowClips.length > 0
+      ? selectedTimelineRowClips[0].speed ?? 1
+      : 1;
+  const effectiveSelectedClipSpeed = isWholeTimelineRowSelected
+    ? selectedRowSpeed
+    : selectedClipSpeed;
+  const canEditEffectiveSelectedSpeed =
+    canEditSelectedSpeed || selectedTimelineRowClips.length > 0;
+  const selectedRowVisibilityClipIds = isWholeTimelineRowSelected
+    ? selectedTimelineRowClipIds
+    : selectedVisibilityClipIds;
+  const selectedRowVisibilityLayer = isWholeTimelineRowSelected
+    ? (selectedTimelineRow?.videoLayer ?? null)
+    : selectedVisibilityVideoLayer;
+  const selectedRowVisibilityTargets = clips.filter((clip) =>
+    selectedRowVisibilityClipIds
+      ? selectedRowVisibilityClipIds.includes(clip.id)
+      : selectedTimelineRow
+        ? timelineRowContainsClip(selectedTimelineRow, clip)
+        : false,
+  );
+  const canToggleActionVisibility = isWholeTimelineRowSelected
+    ? selectedRowVisibilityTargets.length > 0
+    : canToggleSelectedTrackVisibility;
+  const isActionSelectionHidden = isWholeTimelineRowSelected
+    ? selectedRowVisibilityTargets.length > 0 &&
+      selectedRowVisibilityTargets.every((clip) => clip.hidden)
+    : isSelectedTrackHidden;
+  const isActionSelectionMuted =
+    selectedOperationClipIds.length > 0 &&
+    clips
+      .filter((clip) => selectedOperationClipIdSet.has(clip.id))
+      .every((clip) => (clip.volume ?? 1) === 0);
   const previewSource =
     previewMode === "timeline"
       ? topVisibleVideoClip
@@ -5378,14 +5460,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             )
           : 1)
       : mainClipVolume;
-  const previewVideoMuted =
-    previewVolume === 0 ||
-    (previewMode === "timeline" &&
-      shouldMuteVideoNativeAudio(
-        clips,
-        timelinePreviewFrame,
-        topVisibleVideoClip?.id ?? null,
-      ));
+  const previewVideoMuted = previewVolume === 0;
   useEffect(() => {
     mediaPreviewVolumeDragRef.current = false;
     setIsMediaPreviewVolumeAdjusting(false);
@@ -5408,10 +5483,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   }, [activeTool, selectedCaptionClip]);
 
   useEffect(() => {
-    if (activeTool !== "text" || selectedTextContent === null) {
-      return;
-    }
-    setTextDraft(selectedTextContent);
+    if (activeTool !== "text") return;
+    setTextDraft(selectedTextContent ?? "");
   }, [activeTool, selectedTextClip?.id, selectedTextContent]);
 
   useEffect(() => {
@@ -5456,7 +5529,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       setTimelineHistory((currentHistory) =>
         applyTimelineHistoryEdit(
           currentHistory,
-          updater(currentHistory.present),
+          alignDetachedAudioWithSourceVideos(
+            updater(currentHistory.present),
+          ),
         ),
       );
     },
@@ -5483,7 +5558,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         (event.key !== "Delete" && event.key !== "Backspace") ||
         event.repeat ||
         event.defaultPrevented ||
-        (!selectedClipIdRef.current && selectedClipIdsRef.current.length === 0)
+        (activeToolRef.current === "media" &&
+          selectedMediaIdsRef.current.length > 0) ||
+        (!selectedClipIdRef.current &&
+          selectedClipIdsRef.current.length === 0 &&
+          selectedTimelineRowClipIdsRef.current.length === 0)
       ) {
         return;
       }
@@ -5505,7 +5584,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           ? selectedClipIdsRef.current
           : selectedClipIdRef.current
             ? [selectedClipIdRef.current]
-            : [];
+            : selectedTimelineRowClipIdsRef.current;
       if (clipIds.length === 0) return;
       commitClipChange((currentClips) =>
         deleteTimelineClips(currentClips, clipIds),
@@ -5513,6 +5592,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       setIsPreviewPlaying(false);
       setSelectedClipId(null);
       setSelectedClipIds([]);
+      setSelectedTimelineRowKey(null);
       setSelectedVideoLayer(null);
       setStickerInteraction(null);
       setCutoutInteraction(null);
@@ -6241,6 +6321,71 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setProjectStatus(result.message);
   };
 
+  useEffect(() => {
+    const handleMediaDeleteShortcut = (event: KeyboardEvent) => {
+      if (
+        (event.key !== "Delete" && event.key !== "Backspace") ||
+        event.repeat ||
+        event.defaultPrevented ||
+        activeToolRef.current !== "media" ||
+        selectedMediaIdsRef.current.length === 0
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      const isEditing =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(
+            target.closest("input, textarea, select, [contenteditable='true']"),
+          ));
+      if (isEditing || document.querySelector("dialog[open]")) {
+        return;
+      }
+
+      const selectedIds = new Set(selectedMediaIdsRef.current);
+      const currentItems = mediaItemsRef.current;
+      const removedItems = currentItems.filter((item) =>
+        selectedIds.has(item.id),
+      );
+      if (removedItems.length === 0) return;
+
+      event.preventDefault();
+      const nextItems = currentItems.filter(
+        (item) => !selectedIds.has(item.id),
+      );
+      const currentPrimaryId = selectedMediaIdRef.current;
+      const nextPrimaryId =
+        currentPrimaryId && !selectedIds.has(currentPrimaryId)
+          ? currentPrimaryId
+          : (nextItems[0]?.id ?? null);
+      const nextSelectedIds = nextPrimaryId ? [nextPrimaryId] : [];
+
+      previewVideoRef.current?.pause();
+      mediaItemsRef.current = nextItems;
+      selectedMediaIdRef.current = nextPrimaryId;
+      selectedMediaIdsRef.current = nextSelectedIds;
+      mediaSelectionAnchorIdRef.current = nextPrimaryId;
+      setMediaItems(nextItems);
+      setSelectedMediaId(nextPrimaryId);
+      setSelectedMediaIds(nextSelectedIds);
+      setMediaPreviewTime(0);
+      setMediaPreviewDuration(0);
+      setMediaPreviewFrame(0);
+      setIsMediaPreviewPlaying(false);
+      setProjectStatus(
+        `${removedItems.length} imported media item${
+          removedItems.length === 1 ? "" : "s"
+        } removed`,
+      );
+    };
+
+    window.addEventListener("keydown", handleMediaDeleteShortcut);
+    return () =>
+      window.removeEventListener("keydown", handleMediaDeleteShortcut);
+  }, []);
+
   const openVisualTool = (
     tool: "animations" | "effects" | "filters" | "adjustment",
   ) => {
@@ -6299,6 +6444,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         ? setClipSpeedById(currentClips, clipControlTarget.id, speed)
         : selectedVideoLayer !== null
           ? setVideoLayerSpeed(currentClips, selectedVideoLayer, speed)
+          : isWholeTimelineRowSelected
+            ? setClipGroupSpeedByIds(
+                currentClips,
+                selectedTimelineRowClipIds,
+                speed,
+              )
           : currentClips,
     );
   };
@@ -6347,13 +6498,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
   const setPreviewMediaGain = useCallback(
     (media: HTMLMediaElement, gainValue: number) => {
-      const audioContext = getPreviewAudioContext();
-      if (!audioContext) {
-        media.volume = Math.min(gainValue, 1);
+      const clampedGain = clampAudioGain(gainValue);
+      const existingNode = previewMediaGainRefs.current.get(media);
+      if (!existingNode && clampedGain <= 1) {
+        media.volume = clampedGain;
         return;
       }
 
-      let node = previewMediaGainRefs.current.get(media);
+      const audioContext = getPreviewAudioContext();
+      if (!audioContext) {
+        media.volume = Math.min(clampedGain, 1);
+        return;
+      }
+
+      let node = existingNode;
       if (!node) {
         try {
           node = {
@@ -6369,7 +6527,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       }
 
       media.volume = 1;
-      node.gain.gain.value = clampAudioGain(gainValue);
+      node.gain.gain.value = clampedGain;
     },
     [getPreviewAudioContext],
   );
@@ -6391,21 +6549,22 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   );
 
   const detachSelectedClipAudio = () => {
-    if (
-      !clipControlTarget ||
-      (clipControlTarget.track !== "main" &&
-        clipControlTarget.track !== "upper" &&
-        clipControlTarget.track !== "cutout")
-    ) {
+    const videoClipIds = extractableActionVideoClips.map((clip) => clip.id);
+    if (videoClipIds.length === 0) {
+      setProjectStatus("Select one or more video clips to extract audio");
       return;
     }
 
     commitClipChange((currentClips) =>
-      detachAudioFromVideoClip(currentClips, clipControlTarget.id),
+      detachAudioFromVideoClips(currentClips, videoClipIds),
     );
     setIsAudioTrackVisible(true);
     setPreviewMode("timeline");
-    setProjectStatus("Audio detached from video");
+    setProjectStatus(
+      videoClipIds.length === 1
+        ? "Audio extracted from selected video"
+        : `Audio extracted from ${videoClipIds.length} selected videos`,
+    );
   };
 
   const updateSelectedTextStyle = (
@@ -6492,23 +6651,26 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     });
   };
 
-  const removeTranscriptWords = (
+  const removeTranscriptWords = useCallback((
     transcriptClipId: string,
     wordIndexes: number[],
   ) => {
-    const transcriptClip = clips.find((clip) => clip.id === transcriptClipId);
+    const currentClips = clipsRef.current;
+    const transcriptClip = currentClips.find(
+      (clip) => clip.id === transcriptClipId,
+    );
     const sourceClipId = transcriptClip?.caption?.sourceClipId;
     if (!transcriptClip || !sourceClipId || wordIndexes.length === 0) return;
 
     const nextClips = removeTranscriptWordsFromLinkedVideo(
-      clips,
+      currentClips,
       wordIndexes.map((wordIndex) => ({
         clipId: transcriptClipId,
         wordIndex,
       })),
       fps,
     );
-    if (nextClips === clips) {
+    if (nextClips === currentClips) {
       setCaptionStatus({
         kind: "error",
         message:
@@ -6534,7 +6696,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       kind: "success",
       message: `Removed ${wordIndexes.length} word${wordIndexes.length === 1 ? "" : "s"} from the transcript, video, and audio.`,
     });
-  };
+  }, [commitClipChange]);
 
   const updateSelectedTextRotation = (rotation: number) => {
     commitClipChange((currentClips) =>
@@ -6790,8 +6952,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     const renderScale = exportMode === "fast" ? 0.5 : 1;
     setProjectStatus(
       exportMode === "fast"
-        ? "Preparing fast 640 x 360 export..."
-        : "Preparing HD 1280 x 720 export...",
+        ? "Preparing fast 640 x 360 export... 0% complete"
+        : "Preparing HD 1280 x 720 export... 0% complete",
     );
 
     const refreshExportStatus = async () => {
@@ -6803,7 +6965,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       try {
         const statusResponse = await fetch(
           `/api/export/status/${exportJobId}`,
-          { signal: exportAbortController.signal },
+          {
+            headers: {
+              "X-Video-Editor-Request": "export-status",
+            },
+            signal: exportAbortController.signal,
+          },
         );
         if (!statusResponse.ok) {
           if (statusResponse.status === 404) {
@@ -6885,15 +7052,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         throw new Error(message || "Export failed.");
       }
 
-      setProjectStatus("Preparing download... 100% complete");
-      const blob = await response.blob();
-      const exportFileName = `video-editor-export-${Date.now()}.mp4`;
-      downloadBrowserFile(blob, exportFileName);
-      window.setTimeout(() => {
-        setProjectStatus(
-          `Download started. Check your Downloads folder for ${exportFileName}`,
-        );
-      }, 900);
+      const result = (await response.json()) as {
+        fileName?: string;
+        savedPath?: string;
+      };
+      const exportFileName =
+        result.fileName ?? `video-editor-export-${Date.now()}.mp4`;
+      setProjectStatus(
+        `Export complete. Saved in Downloads as ${exportFileName}`,
+      );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         setProjectStatus(exportStopReason ?? "Export cancelled");
@@ -7416,51 +7583,91 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   };
 
   const deleteSelectedClip = () => {
-    const clipIds =
-      selectedClipIds.length > 0
-        ? selectedClipIds
-        : selectedClipId
-          ? [selectedClipId]
-          : [];
+    const clipIds = selectedOperationClipIds;
     if (clipIds.length === 0) return;
     commitClipChange((currentClips) =>
       deleteTimelineClips(currentClips, clipIds),
     );
     setSelectedClipId(null);
     setSelectedClipIds([]);
+    setSelectedTimelineRowKey(null);
   };
 
   const duplicateSelectedClip = useCallback(() => {
-    const clipIds =
-      selectedClipIds.length > 0
-        ? selectedClipIds
-        : selectedClipId
-          ? [selectedClipId]
-          : [];
+    const clipIds = selectedOperationClipIds;
     if (clipIds.length === 0) return;
 
     const duplicatePrefix = `duplicate-${Date.now()}`;
-    const sourceClip = clips.find((clip) => clip.id === clipIds[0]);
     commitClipChange((currentClips) =>
-      clipIds.reduce(
-        (nextClips, clipId, index) =>
-          duplicateClipById(nextClips, clipId, `${duplicatePrefix}-${index}`),
-        currentClips,
-      ),
+      duplicateClipGroupByIds(currentClips, clipIds, duplicatePrefix),
     );
-    setSelectedClipId(
-      sourceClip?.track === "audio" && sourceClip.linkedClipId
-        ? `${duplicatePrefix}-0-video`
-        : `${duplicatePrefix}-0-video`,
-    );
+    setSelectedClipId(null);
     selectedClipIdsRef.current = [];
     setSelectedClipIds([]);
-    setSelectedTrack("upper");
     setPreviewMode("timeline");
-    setIsAudioTrackVisible(
-      sourceClip?.track === "audio" || Boolean(sourceClip?.linkedClipId),
+    setProjectStatus(
+      `${clipIds.length} row item${clipIds.length === 1 ? "" : "s"} duplicated`,
     );
-  }, [clips, commitClipChange, selectedClipId, selectedClipIds]);
+  }, [commitClipChange, selectedOperationClipIds]);
+
+  useEffect(() => {
+    const handleRowClipboardShortcut = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        (!event.ctrlKey && !event.metaKey) ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      const isEditingText =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(
+            target.closest("input, textarea, select, [contenteditable='true']"),
+          ));
+      if (isEditingText || document.querySelector("dialog[open]")) return;
+
+      const key = event.key.toLowerCase();
+      if (key === "c") {
+        const clipIds =
+          selectedClipIdsRef.current.length > 0
+            ? selectedClipIdsRef.current
+            : selectedClipIdRef.current
+              ? [selectedClipIdRef.current]
+              : selectedTimelineRowClipIdsRef.current;
+        if (clipIds.length === 0) return;
+        event.preventDefault();
+        copiedTimelineClipIdsRef.current = [...clipIds];
+        setProjectStatus(
+          `${clipIds.length} row item${clipIds.length === 1 ? "" : "s"} copied`,
+        );
+        return;
+      }
+
+      if (key === "v" && copiedTimelineClipIdsRef.current.length > 0) {
+        event.preventDefault();
+        const copiedIds = [...copiedTimelineClipIdsRef.current];
+        commitClipChange((currentClips) =>
+          duplicateClipGroupByIds(
+            currentClips,
+            copiedIds,
+            `paste-${Date.now()}`,
+          ),
+        );
+        setPreviewMode("timeline");
+        setProjectStatus(
+          `${copiedIds.length} row item${copiedIds.length === 1 ? "" : "s"} pasted`,
+        );
+      }
+    };
+
+    window.addEventListener("keydown", handleRowClipboardShortcut);
+    return () =>
+      window.removeEventListener("keydown", handleRowClipboardShortcut);
+  }, [commitClipChange]);
 
   useEffect(() => {
     const handleDuplicateShortcut = (event: KeyboardEvent) => {
@@ -7501,6 +7708,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setPreviewMode("timeline");
   };
 
+  const toggleSelectedOperationMute = () => {
+    if (selectedOperationClipIds.length === 0) return;
+    commitClipChange((currentClips) =>
+      toggleClipGroupMuteByIds(currentClips, selectedOperationClipIds),
+    );
+    setPreviewMode("timeline");
+    setProjectStatus(
+      isActionSelectionMuted ? "Selected row unmuted" : "Selected row muted",
+    );
+  };
+
   const toggleClipVisibility = (clipId: string) => {
     const targetClip = clips.find((clip) => clip.id === clipId);
     commitClipChange((currentClips) =>
@@ -7515,7 +7733,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   };
 
   const toggleSelectedTrackVisibility = () => {
-    if (!canToggleSelectedTrackVisibility) {
+    if (!canToggleActionVisibility) {
       return;
     }
 
@@ -7523,8 +7741,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       toggleTrackVisibility(
         currentClips,
         selectedTrack,
-        selectedVisibilityVideoLayer,
-        selectedVisibilityClipIds,
+        selectedRowVisibilityLayer,
+        selectedRowVisibilityClipIds,
       ),
     );
     if (
@@ -7550,6 +7768,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   );
 
   const selectTimelineClip = (clip: TimelineClip, pointerFrame?: number) => {
+    setSelectedTimelineRowKey(null);
     setSelectedVideoLayer(null);
     setSelectedClipId(clip.id);
     selectedClipIdsRef.current = [clip.id];
@@ -7581,6 +7800,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   };
 
   const toggleTimelineClipSelection = (clip: TimelineClip) => {
+    setSelectedTimelineRowKey(null);
     const currentIds = selectedClipIdsRef.current;
     const nextIds = currentIds.includes(clip.id)
       ? currentIds.filter((clipId) => clipId !== clip.id)
@@ -8045,7 +8265,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     const id = `text-${Date.now()}`;
     const textClip = createTextClip({ id, content, playheadFrame });
     commitClipChange((currentClips) => [...currentClips, textClip]);
-    setSelectedClipId(id);
+    selectedClipIdsRef.current = [];
+    setSelectedClipIds([]);
+    setSelectedClipId(null);
     setSelectedTrack("text");
     setIsAudioTrackVisible(false);
     setPreviewMode("timeline");
@@ -8070,7 +8292,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     commitClipChange((currentClips) =>
       setTextStyleById([...currentClips, textClip], id, preset.style),
     );
-    setSelectedClipId(id);
+    selectedClipIdsRef.current = [];
+    setSelectedClipIds([]);
+    setSelectedClipId(null);
     setSelectedTrack("text");
     setIsAudioTrackVisible(false);
     setPreviewMode("timeline");
@@ -9791,6 +10015,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       setIsMediaPreviewPlaying(false);
       setPreviewMode("timeline");
       if (!isPreviewPlaying || previewMode !== "timeline") {
+        getPreviewAudioContext();
         const nextStartFrame = requestedStartFrame ?? playheadFrame;
         if (nextStartFrame >= videoPlaybackDuration - 1) {
           setPlayheadFrame(0);
@@ -9803,7 +10028,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
       setIsPreviewPlaying(false);
     },
-    [isPreviewPlaying, playheadFrame, previewMode, videoPlaybackDuration],
+    [
+      getPreviewAudioContext,
+      isPreviewPlaying,
+      playheadFrame,
+      previewMode,
+      videoPlaybackDuration,
+    ],
   );
 
   const toggleTimelinePlayback = useCallback(() => {
@@ -9870,6 +10101,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }
 
     setIsPreviewPlaying(false);
+    getPreviewAudioContext();
     setIsMediaPreviewPlaying(true);
   };
 
@@ -10057,18 +10289,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     videoMode: ImportVideoMode,
   ) => {
     const importTimestamp = Date.now();
-    const firstSourceGroupIndex = nextSourceGroupIndexRef.current;
     const videoFileCount = selectedFiles.filter(
       (file) => getMediaFileType(file) === "video",
     ).length;
-    nextSourceGroupIndexRef.current += videoFileCount;
-    setNextSourceGroupIndex(nextSourceGroupIndexRef.current);
+    const availableSourceGroupIndexes = getAvailableSourceGroupIndexes(
+      mediaItems,
+      videoFileCount,
+    );
     let videoGroupOffset = 0;
     const imports = selectedFiles.map((file, index) => {
       const mediaType = getMediaFileType(file) as "video" | "image";
       const sourceGroupIndex =
         mediaType === "video"
-          ? firstSourceGroupIndex + videoGroupOffset++
+          ? availableSourceGroupIndexes[videoGroupOffset++]
           : undefined;
       return {
         file,
@@ -10078,6 +10311,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         analyzingId: `analyzing-${importTimestamp}-${index}`,
       };
     });
+    const nextAvailableSourceGroupIndex =
+      getAvailableSourceGroupIndexes(
+        [
+          ...mediaItems,
+          ...availableSourceGroupIndexes.map((sourceGroupIndex) => ({
+            mediaType: "video" as const,
+            sourceGroupIndex,
+          })),
+        ],
+        1,
+      )[0] ?? 1;
+    nextSourceGroupIndexRef.current = nextAvailableSourceGroupIndex;
+    setNextSourceGroupIndex(nextAvailableSourceGroupIndex);
     const orderedSourceFileIds = imports.map(
       ({ sourceFileId }) => sourceFileId,
     );
@@ -10510,6 +10756,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       touchedIds[touchedIds.length - 1] ?? nextIds[nextIds.length - 1] ?? null;
 
     selectedClipIdsRef.current = nextIds;
+    setSelectedTimelineRowKey(null);
     setSelectedClipIds(nextIds);
     setSelectedClipId(primaryId);
     setSelectedVideoLayer(null);
@@ -10523,6 +10770,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
   const clearTimelineClipSelection = () => {
     setSelectedVideoLayer(null);
+    setSelectedTimelineRowKey(null);
     selectedClipIdsRef.current = [];
     setSelectedClipIds([]);
     setSelectedClipId(null);
@@ -10560,9 +10808,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     };
     timelineSelectionBoxRef.current = selection;
     setTimelineSelectionBox(selection);
-    if (!additive) {
-      clearEditorSelection();
-    }
   };
 
   const updateTimelineSelection = (event: PointerEvent<HTMLDivElement>) => {
@@ -10595,9 +10840,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     const selection = timelineSelectionBoxRef.current;
     if (!selection || selection.pointerId !== event.pointerId) return;
     if (!selection.activated) {
-      updatePlayheadFromPointer(event.clientX);
-      clearEditorSelection();
-      setProjectStatus("Timeline selection cleared");
+      setProjectStatus("Track selected");
     } else {
       applyTimelineSelectionBox(selection);
       const selectedCount = new Set([
@@ -12576,10 +12819,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         : timelinePreviewFrame < videoClip.start
           ? videoClip.start
           : videoClip.start + videoClip.duration - 1;
-      const videoMuted =
-        !isActive ||
-        (videoClip.volume ?? 1) === 0 ||
-        shouldMuteVideoNativeAudio(clips, timelinePreviewFrame, clipId);
+      const videoMuted = !isActive || (videoClip.volume ?? 1) === 0;
       const desiredTime = Math.max(
         0,
         getClipSourceTime(videoClip, previewFrame, fps),
@@ -13512,11 +13752,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             {formatTimelineClock(clip.start, fps)}
                           </span>
                           <TranscriptSentenceEditor
+                            clipId={clip.id}
                             content={clip.caption?.content ?? ""}
                             timestamp={formatTimelineClock(clip.start, fps)}
-                            onDeleteWords={(wordIndexes) =>
-                              removeTranscriptWords(clip.id, wordIndexes)
-                            }
+                            onDeleteWords={removeTranscriptWords}
                           />
                         </div>
                         <button
@@ -14444,6 +14683,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       setAudioLibraryTab("music");
                       setAudioLibraryCategory(null);
                       setAudioLibraryQuery("");
+                      setShowAudioLibraryFilterMenu(false);
                       setShowAllAudioLibraryItems(false);
                     }}
                   >
@@ -14460,6 +14700,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       setAudioLibraryTab("sound-effects");
                       setAudioLibraryCategory(null);
                       setAudioLibraryQuery("");
+                      setShowAudioLibraryFilterMenu(false);
                       setShowAllAudioLibraryItems(false);
                     }}
                   >
@@ -14467,7 +14708,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   </button>
                 </div>
 
-                <label className="audio-library-search">
+                <div className="audio-library-search">
                   <span aria-hidden="true">⌕</span>
                   <input
                     type="search"
@@ -14486,17 +14727,82 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       updateAudioLibrarySearch(event.currentTarget.value)
                     }
                   />
-                  {!hasAudioLibrarySearch ? (
-                    <span
-                      className="audio-filter-icon"
-                      title="Filter by category"
+                  <div
+                    className="audio-library-filter-wrap"
+                    onBlur={(event) => {
+                      if (
+                        !event.currentTarget.contains(
+                          event.relatedTarget as Node | null,
+                        )
+                      ) {
+                        setShowAudioLibraryFilterMenu(false);
+                      }
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className={`audio-filter-icon${
+                        audioLibraryCategory ? " active" : ""
+                      }`}
+                      aria-label="Filter audio by category"
+                      aria-expanded={showAudioLibraryFilterMenu}
+                      aria-haspopup="menu"
+                      title={
+                        audioLibraryCategory
+                          ? `Category: ${audioLibraryCategory}`
+                          : "Filter by category"
+                      }
+                      onClick={() =>
+                        setShowAudioLibraryFilterMenu((current) => !current)
+                      }
                     >
                       ≡
-                    </span>
-                  ) : null}
-                </label>
+                    </button>
+                    {showAudioLibraryFilterMenu ? (
+                      <div
+                        className="audio-filter-menu"
+                        role="menu"
+                        aria-label="Audio categories"
+                      >
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={audioLibraryCategory === null}
+                          className={
+                            audioLibraryCategory === null ? "active" : ""
+                          }
+                          onClick={() => {
+                            setAudioLibraryCategory(null);
+                            setShowAllAudioLibraryItems(true);
+                            setShowAudioLibraryFilterMenu(false);
+                          }}
+                        >
+                          All categories
+                        </button>
+                        {audioLibraryCategories.map((category) => (
+                          <button
+                            key={category}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={audioLibraryCategory === category}
+                            className={
+                              audioLibraryCategory === category ? "active" : ""
+                            }
+                            onClick={() => {
+                              setAudioLibraryCategory(category);
+                              setShowAllAudioLibraryItems(true);
+                              setShowAudioLibraryFilterMenu(false);
+                            }}
+                          >
+                            {category}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
 
-                {!hasAudioLibrarySearch ? (
+                {!hasAudioLibrarySearch && !audioLibraryCategory ? (
                   <>
                     <div
                       className="audio-search-chips"
@@ -14743,12 +15049,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           isActiveVideoClip || isTransitionPreviewClip;
                         const videoMuted =
                           !isActiveVideoClip ||
-                          (videoClip.volume ?? 1) === 0 ||
-                          shouldMuteVideoNativeAudio(
-                            clips,
-                            timelinePreviewFrame,
-                            videoClip.id,
-                          );
+                          (videoClip.volume ?? 1) === 0;
 
                         return (
                           // eslint-disable-next-line @remotion/warn-native-media-tag
@@ -16343,23 +16644,29 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 </div>
               </div>
             </div>
-          ) : clipControlTarget || selectedVideoLayer !== null ? (
+          ) : clipControlTarget ||
+            selectedVideoLayer !== null ||
+            isWholeTimelineRowSelected ? (
             <div className="clip-controls">
               <span>
                 {clipControlTarget
                   ? `${clipControlHeading}: ${clipControlTarget.label}`
-                  : `Track controls: ${layerControlLabel}`}
+                  : `Track controls: ${
+                      selectedTimelineRow?.label ||
+                      layerControlLabel ||
+                      "Selected row"
+                    }`}
               </span>
               <label>
                 <strong>Speed</strong>
-                <em>{selectedClipSpeed.toFixed(2)}x</em>
+                <em>{effectiveSelectedClipSpeed.toFixed(2)}x</em>
                 <input
                   type="range"
                   min="0.25"
                   max="2"
                   step="0.05"
-                  value={selectedClipSpeed}
-                  disabled={!canEditSelectedSpeed}
+                  value={effectiveSelectedClipSpeed}
+                  disabled={!canEditEffectiveSelectedSpeed}
                   onPointerDown={() => startVideoLayerControlDrag("speed")}
                   onPointerUp={finishVideoLayerControlDrag}
                   onPointerCancel={finishVideoLayerControlDrag}
@@ -16426,13 +16733,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   </label>
                 </>
               ) : null}
-              {canExtractSelectedAudio ? (
+              {canExtractActionAudio ? (
                 <button
                   className="audio-detach-button"
                   type="button"
                   onClick={detachSelectedClipAudio}
                 >
-                  Extract audio from video
+                  {extractableActionVideoClips.length === 1
+                    ? "Extract audio from video"
+                    : `Extract audio from ${extractableActionVideoClips.length} videos`}
                 </button>
               ) : null}
             </div>
@@ -16550,30 +16859,69 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               className="icon-tool-button"
               type="button"
               aria-label="Duplicate selected clip"
-              title="Duplicate selected clip"
+              title="Duplicate selected clip or row"
               onClick={duplicateSelectedClip}
-              disabled={selectedClipIds.length === 0 && !selectedClipId}
+              disabled={selectedOperationClipIds.length === 0}
             >
               ⧉
             </button>
             <button
-              className={`icon-tool-button visibility-icon-tool ${
-                isSelectedTrackHidden ? "hidden-track-tool" : ""
+              className="icon-tool-button"
+              type="button"
+              aria-label="Extract audio from selected videos"
+              title={
+                canExtractActionAudio
+                  ? `Extract audio from ${extractableActionVideoClips.length} selected ${
+                      extractableActionVideoClips.length === 1
+                        ? "video"
+                        : "videos"
+                    }`
+                  : "Select one or more video clips to extract audio"
+              }
+              onClick={detachSelectedClipAudio}
+              disabled={!canExtractActionAudio}
+            >
+              ♫
+            </button>
+            <button
+              className={`icon-tool-button ${
+                isActionSelectionMuted ? "is-active" : ""
               }`}
               type="button"
               aria-label={
-                isSelectedTrackHidden
+                isActionSelectionMuted
+                  ? "Unmute selected clip or row"
+                  : "Mute selected clip or row"
+              }
+              title={
+                isActionSelectionMuted
+                  ? "Unmute selected clip or row"
+                  : "Mute selected clip or row"
+              }
+              aria-pressed={isActionSelectionMuted}
+              onClick={toggleSelectedOperationMute}
+              disabled={selectedOperationClipIds.length === 0}
+            >
+              {isActionSelectionMuted ? "\uD83D\uDD07" : "\uD83D\uDD0A"}
+            </button>
+            <button
+              className={`icon-tool-button visibility-icon-tool ${
+                isActionSelectionHidden ? "hidden-track-tool" : ""
+              }`}
+              type="button"
+              aria-label={
+                isActionSelectionHidden
                   ? `Show ${selectedTrack} track`
                   : `Hide ${selectedTrack} track`
               }
               title={
-                isSelectedTrackHidden
+                isActionSelectionHidden
                   ? `Show ${selectedTrack} track`
                   : `Hide ${selectedTrack} track`
               }
-              aria-pressed={isSelectedTrackHidden}
+              aria-pressed={isActionSelectionHidden}
               onClick={toggleSelectedTrackVisibility}
-              disabled={!canToggleSelectedTrackVisibility}
+              disabled={!canToggleActionVisibility}
             >
               <span className="track-visibility-eye" aria-hidden="true">
                 <span className="track-visibility-pupil" />
@@ -16585,7 +16933,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               aria-label="Delete selected clips"
               title="Delete selected clips (Delete or Backspace)"
               onClick={deleteSelectedClip}
-              disabled={selectedClipIds.length === 0 && !selectedClipId}
+              disabled={selectedOperationClipIds.length === 0}
             >
               🗑
             </button>
@@ -16727,6 +17075,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     shouldShowTimelineWaveform(clip),
                 ) ||
                 (track.audioKind === "voiceover" && isRecording);
+              const rowHasSelectedClip = selectedClipIds.some((clipId) => {
+                const rowClip = clips.find((clip) => clip.id === clipId);
+                return (
+                  rowClip !== undefined &&
+                  timelineRowContainsClip(track, rowClip)
+                );
+              });
+              const isTimelineRowSelected =
+                selectedTimelineRowKey === track.key || rowHasSelectedClip;
+              const isVisualTimelineRow =
+                track.id === "main" ||
+                track.id === "upper" ||
+                track.id === "cutout";
 
               return (
                 <Fragment key={track.key}>
@@ -16747,21 +17108,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   </div>
                   <div
                     className={`timeline-track ${
-                      (track.videoLayer !== undefined &&
-                        selectedVideoLayer === track.videoLayer) ||
-                      selectedClipIds.some((clipId) => {
-                        const rowClip = clips.find(
-                          (clip) => clip.id === clipId,
-                        );
-                        return (
-                          rowClip !== undefined &&
-                          timelineRowContainsClip(track, rowClip)
-                        );
-                      })
-                        ? "selected-timeline-row"
-                        : ""
+                      isTimelineRowSelected ? "selected-timeline-row" : ""
                     } ${track.id === "upper" ? "overlay-timeline-track" : ""} ${
                       track.id === "audio" ? "audio-timeline-track" : ""
+                    } ${
+                      isVisualTimelineRow ? "visual-timeline-track" : ""
                     } ${
                       rowHasTimelineWaveform ? "waveform-timeline-track" : ""
                     }`}
@@ -16790,8 +17141,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           suppressTrackLabelClickRef.current = false;
                           return;
                         }
-                        clearEditorSelection();
                         setSelectedTrack(track.id);
+                        setSelectedTimelineRowKey(track.key);
+                        setSelectedVideoLayer(track.videoLayer ?? null);
                       }}
                     >
                       {track.videoLayer !== undefined && track.videoLayer !== 0
@@ -16809,19 +17161,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           ? "drop-target"
                           : ""
                       } ${
-                        (track.videoLayer !== undefined &&
-                          selectedVideoLayer === track.videoLayer) ||
-                        selectedClipIds.some((clipId) => {
-                          const rowClip = clips.find(
-                            (clip) => clip.id === clipId,
-                          );
-                          return (
-                            rowClip !== undefined &&
-                            timelineRowContainsClip(track, rowClip)
-                          );
-                        })
-                          ? "selected-track-lane"
-                          : ""
+                        isTimelineRowSelected ? "selected-track-lane" : ""
                       } ${track.id === "upper" ? "overlay-track-lane" : ""} ${
                         rowHasTimelineWaveform ? "waveform-track-lane" : ""
                       }`}
@@ -16840,8 +17180,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           return;
                         }
                         if (event.target !== event.currentTarget) return;
-                        clearEditorSelection();
                         setSelectedTrack(track.id);
+                        setSelectedTimelineRowKey(track.key);
+                        setSelectedVideoLayer(track.videoLayer ?? null);
                       }}
                       onDoubleClick={(event) => {
                         if (event.target !== event.currentTarget) {
@@ -17050,7 +17391,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               shouldShowTimelineWaveform(clip)
                                 ? "has-timeline-waveform"
                                 : ""
-                            } ${clip.track === "audio" ? "audio-timeline-clip" : ""} ${isImportedAudioClip(clip) ? "imported-audio-timeline-clip" : ""} ${isVoiceoverClip(clip) ? "voiceover-timeline-clip" : ""} ${
+                            } ${clip.track === "audio" ? "audio-timeline-clip" : ""} ${isImportedAudioClip(clip) ? "imported-audio-timeline-clip" : ""} ${isDetachedAudioClip(clip) ? "detached-audio-timeline-clip" : ""} ${isVoiceoverClip(clip) ? "voiceover-timeline-clip" : ""} ${
                               shouldShowTimelineFilmstrip(clip)
                                 ? "video-timeline-clip"
                                 : ""

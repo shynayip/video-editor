@@ -4,6 +4,7 @@ import {
   addOverlayClip,
   addOverlayMediaClip,
   addTranscriptCaptions,
+  alignDetachedAudioWithSourceVideos,
   applyTimelineHistoryEdit,
   advanceTimelinePlaybackFrame,
   stepTimelinePlayback,
@@ -13,6 +14,7 @@ import {
   clampPlayheadFrame,
   createRecordedAudioClip,
   createSceneMediaItems,
+  getAvailableSourceGroupIndexes,
   getInitialNextSourceGroupIndex,
   normalizeMediaSceneLabels,
   createImageMediaClip,
@@ -27,6 +29,7 @@ import {
   createTimelineHistory,
   deleteClipById,
   duplicateClipById,
+  duplicateClipGroupByIds,
   getClipSourceTime,
   getClipAudioFadeMultiplier,
   getClipFilterCss,
@@ -84,6 +87,7 @@ import {
   replaceGeneratedCaptionBatch,
   replaceFirstClipOnTrack,
   removeBrowserOnlySavedMedia,
+  detachAudioFromVideoClips,
   ensureLinkedAudioForVideo,
   keepDominantVoiceInLinkedVideo,
   restoreDominantVideoSources,
@@ -92,6 +96,7 @@ import {
   removeTranscriptSentenceFromLinkedVideo,
   redoTimelineHistory,
   setClipSpeedById,
+  setClipGroupSpeedByIds,
   setClipVolumeById,
   setClipAudioFadeById,
   setClipTransitionById,
@@ -102,6 +107,7 @@ import {
   finishVideoLayerControlHistoryGesture,
   startVideoLayerControlHistoryGesture,
   toggleClipMuteById,
+  toggleClipGroupMuteByIds,
   toggleClipVisibilityById,
   isTrackHidden,
   toggleTrackVisibility,
@@ -302,7 +308,7 @@ test("creates grouped scene labels and preserves the original source name", () =
   );
 });
 
-test("continues source groups from the persisted counter after deletion", () => {
+test("reuses the lowest available source group after deletion", () => {
   const remainingItems = [
     {
       id: "whole-1",
@@ -314,9 +320,35 @@ test("continues source groups from the persisted counter after deletion", () => 
       mediaType: "video" as const,
       sourceGroupIndex: 1,
     },
+    {
+      id: "whole-3",
+      label: "Third.mp4",
+      src: "/uploads/third.mp4",
+      duration: "00:05",
+      durationInFrames: 150,
+      kind: "public" as const,
+      mediaType: "video" as const,
+      sourceGroupIndex: 3,
+    },
   ];
 
-  assert.equal(getInitialNextSourceGroupIndex(remainingItems, 4), 4);
+  assert.equal(getInitialNextSourceGroupIndex(remainingItems, 19), 2);
+  assert.deepEqual(getAvailableSourceGroupIndexes(remainingItems, 2), [2, 4]);
+});
+
+test("starts source group numbering from one and ignores image metadata", () => {
+  assert.deepEqual(
+    getAvailableSourceGroupIndexes(
+      [
+        {
+          mediaType: "image",
+          sourceGroupIndex: 19,
+        },
+      ],
+      2,
+    ),
+    [1, 2],
+  );
 });
 
 test("normalizes grouped and whole-video scene labels after loading", () => {
@@ -3851,7 +3883,7 @@ test("returns the original array for invalid or no-op silence removal ranges", (
   );
 });
 
-test("returns the original array when the selected video has no linked audio", () => {
+test("removes silence from a video that uses its native audio", () => {
   const video: TimelineClip = {
     id: "video",
     label: "Video",
@@ -3863,18 +3895,21 @@ test("returns the original array when the selected video has no linked audio", (
   };
   const clips = [video];
 
-  assert.strictEqual(
-    removeSilenceFromLinkedVideo(
-      clips,
-      video.id,
-      [{ startSeconds: 1, endSeconds: 2 }],
-      30,
-    ),
+  const result = removeSilenceFromLinkedVideo(
     clips,
+    video.id,
+    [{ startSeconds: 1, endSeconds: 2 }],
+    30,
   );
+  assert.equal(
+    result.reduce((total, clip) => total + clip.duration, 0),
+    60,
+  );
+  assert.ok(result.every((clip) => clip.track === "main"));
+  assert.ok(result.every((clip) => !clip.audioDetached));
 });
 
-test("returns the original array when the selected video has a stale linked audio id", () => {
+test("removes silence from native audio when a saved linked audio id is stale", () => {
   const video: TimelineClip = {
     id: "video",
     label: "Video",
@@ -3887,18 +3922,20 @@ test("returns the original array when the selected video has a stale linked audi
   };
   const clips = [video];
 
-  assert.strictEqual(
-    removeSilenceFromLinkedVideo(
-      clips,
-      video.id,
-      [{ startSeconds: 1, endSeconds: 2 }],
-      30,
-    ),
+  const result = removeSilenceFromLinkedVideo(
     clips,
+    video.id,
+    [{ startSeconds: 1, endSeconds: 2 }],
+    30,
   );
+  assert.equal(
+    result.reduce((total, clip) => total + clip.duration, 0),
+    60,
+  );
+  assert.ok(result.every((clip) => !clip.linkedClipId));
 });
 
-test("returns the original array when linked audio is not reciprocal", () => {
+test("leaves unrelated one-way audio intact while cutting native video audio", () => {
   const video: TimelineClip = {
     id: "video",
     label: "Video",
@@ -3921,14 +3958,21 @@ test("returns the original array when linked audio is not reciprocal", () => {
   };
   const clips = [video, audio];
 
-  assert.strictEqual(
-    removeSilenceFromLinkedVideo(
-      clips,
-      video.id,
-      [{ startSeconds: 1, endSeconds: 2 }],
-      30,
-    ),
+  const result = removeSilenceFromLinkedVideo(
     clips,
+    video.id,
+    [{ startSeconds: 1, endSeconds: 2 }],
+    30,
+  );
+  assert.equal(
+    result
+      .filter((clip) => clip.track === "main")
+      .reduce((total, clip) => total + clip.duration, 0),
+    60,
+  );
+  assert.deepEqual(
+    result.find((clip) => clip.id === audio.id),
+    audio,
   );
 });
 
@@ -4971,6 +5015,144 @@ test("creates linked scene clips with matching source offsets", () => {
   assert.equal(audio.sourceStart, 60);
   assert.equal(video.duration, 90);
   assert.equal(audio.duration, 90);
+});
+
+test("extracts audio from every selected video in one batch", () => {
+  const firstPair = createVideoMediaPair({
+    videoId: "scene-1",
+    audioId: "scene-1-audio",
+    track: "main",
+    label: "Scene 1",
+    src: "uploads/interview.mp4",
+    start: 30,
+    duration: 90,
+    sourceStart: 60,
+  });
+  const secondPair = createVideoMediaPair({
+    videoId: "scene-2",
+    audioId: "scene-2-audio",
+    track: "upper",
+    label: "Scene 2",
+    src: "uploads/cutaway.mp4",
+    start: 150,
+    duration: 75,
+    sourceStart: 15,
+  });
+
+  const result = detachAudioFromVideoClips(
+    [...firstPair, ...secondPair],
+    ["scene-1", "scene-2", "scene-1"],
+  );
+  const firstVideo = result.find((clip) => clip.id === "scene-1");
+  const secondVideo = result.find((clip) => clip.id === "scene-2");
+  const firstAudio = result.find((clip) => clip.id === "scene-1-audio");
+  const secondAudio = result.find((clip) => clip.id === "scene-2-audio");
+
+  assert.equal(firstVideo?.audioDetached, true);
+  assert.equal(firstVideo?.linkedClipId, undefined);
+  assert.equal(secondVideo?.audioDetached, true);
+  assert.equal(secondVideo?.linkedClipId, undefined);
+  assert.deepEqual(
+    [firstAudio, secondAudio].map((clip) => ({
+      track: clip?.track,
+      linkedClipId: clip?.linkedClipId,
+      detachedFromVideo: clip?.detachedFromVideo,
+      detachedSourceClipId: clip?.detachedSourceClipId,
+      start: clip?.start,
+      duration: clip?.duration,
+      sourceStart: clip?.sourceStart,
+    })),
+    [
+      {
+        track: "audio",
+        linkedClipId: undefined,
+        detachedFromVideo: true,
+        detachedSourceClipId: "scene-1",
+        start: 30,
+        duration: 90,
+        sourceStart: 60,
+      },
+      {
+        track: "audio",
+        linkedClipId: undefined,
+        detachedFromVideo: true,
+        detachedSourceClipId: "scene-2",
+        start: 150,
+        duration: 75,
+        sourceStart: 15,
+      },
+    ],
+  );
+});
+
+test("keeps extracted audio aligned below its source video", () => {
+  const sourceVideo: TimelineClip = {
+    id: "scene-video",
+    label: "Scene",
+    track: "main",
+    start: 180,
+    duration: 75,
+    sourceStart: 45,
+    sourceDuration: 600,
+    speed: 1.5,
+    color: "#0891b2",
+    src: "uploads/scene.mp4",
+    audioDetached: true,
+  };
+  const detachedAudio: TimelineClip = {
+    id: "scene-audio",
+    label: "Scene audio",
+    track: "audio",
+    start: 0,
+    duration: 150,
+    sourceStart: 0,
+    sourceDuration: 600,
+    speed: 1,
+    volume: 0.4,
+    color: "#2563eb",
+    src: "uploads/scene.mp4",
+    detachedFromVideo: true,
+    detachedSourceClipId: sourceVideo.id,
+  };
+  const importedAudio: TimelineClip = {
+    id: "music",
+    label: "Music",
+    track: "audio",
+    start: 10,
+    duration: 300,
+    color: "#2563eb",
+    src: "uploads/music.wav",
+  };
+
+  const result = alignDetachedAudioWithSourceVideos([
+    sourceVideo,
+    detachedAudio,
+    importedAudio,
+  ]);
+  const alignedAudio = result.find((clip) => clip.id === detachedAudio.id);
+
+  assert.deepEqual(
+    {
+      start: alignedAudio?.start,
+      duration: alignedAudio?.duration,
+      sourceStart: alignedAudio?.sourceStart,
+      sourceDuration: alignedAudio?.sourceDuration,
+      speed: alignedAudio?.speed,
+      volume: alignedAudio?.volume,
+    },
+    {
+      start: 180,
+      duration: 75,
+      sourceStart: 45,
+      sourceDuration: 600,
+      speed: 1.5,
+      volume: 0.4,
+    },
+  );
+  assert.equal(
+    result.find((clip) => clip.id === importedAudio.id),
+    importedAudio,
+  );
 });
 
 test("defaults ordinary linked media source offsets to zero", () => {
@@ -8585,5 +8767,116 @@ test("removes one transcript sentence with the matching video and audio range", 
       .filter((clip) => clip.track === "audio")
       .reduce((total, clip) => total + clip.duration, 0),
     270,
+  );
+});
+
+test("duplicates a complete row group on the same tracks and preserves spacing", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "text-1",
+      label: "First",
+      track: "text",
+      start: 10,
+      duration: 20,
+      color: "#f97316",
+    },
+    {
+      id: "text-2",
+      label: "Second",
+      track: "text",
+      start: 40,
+      duration: 10,
+      color: "#f97316",
+    },
+  ];
+
+  const result = duplicateClipGroupByIds(
+    clips,
+    clips.map((clip) => clip.id),
+    "row-copy",
+  );
+  const copies = result.filter((clip) => clip.id.startsWith("row-copy"));
+
+  assert.equal(copies.length, 2);
+  assert.deepEqual(
+    copies.map((clip) => [clip.track, clip.start, clip.duration]),
+    [
+      ["text", 50, 20],
+      ["text", 80, 10],
+    ],
+  );
+});
+
+test("mutes and unmutes every clip in a selected row group", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "caption-1",
+      label: "One",
+      track: "caption",
+      start: 0,
+      duration: 30,
+      color: "#ef4444",
+    },
+    {
+      id: "caption-2",
+      label: "Two",
+      track: "caption",
+      start: 30,
+      duration: 30,
+      color: "#ef4444",
+    },
+  ];
+
+  const muted = toggleClipGroupMuteByIds(
+    clips,
+    clips.map((clip) => clip.id),
+  );
+  assert.deepEqual(
+    muted.map((clip) => clip.volume),
+    [0, 0],
+  );
+  const unmuted = toggleClipGroupMuteByIds(
+    muted,
+    muted.map((clip) => clip.id),
+  );
+  assert.deepEqual(
+    unmuted.map((clip) => clip.volume),
+    [1, 1],
+  );
+});
+
+test("sets one speed for every item in a row while preserving source length", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "sticker-1",
+      label: "One",
+      track: "sticker",
+      start: 0,
+      duration: 60,
+      speed: 1,
+      color: "#a855f7",
+    },
+    {
+      id: "sticker-2",
+      label: "Two",
+      track: "sticker",
+      start: 90,
+      duration: 30,
+      speed: 1,
+      color: "#a855f7",
+    },
+  ];
+
+  const result = setClipGroupSpeedByIds(
+    clips,
+    clips.map((clip) => clip.id),
+    2,
+  );
+  assert.deepEqual(
+    result.map((clip) => [clip.start, clip.duration, clip.speed]),
+    [
+      [0, 30, 2],
+      [90, 15, 2],
+    ],
   );
 });

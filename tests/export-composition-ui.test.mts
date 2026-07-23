@@ -45,19 +45,27 @@ test("uses faster MP4 settings and identifies the downloaded file", () => {
     /everyNthFrame:\s*renderScale\s*===\s*1\s*\?\s*1\s*:\s*2/,
   );
   assert.match(serverSource, /hardwareAcceleration:\s*"disable"/);
-  assert.match(serverSource, /argument === "libx264" \? "h264_amf"/);
-  assert.match(serverSource, /"-quality",\s*"speed"/);
+  assert.match(
+    serverSource,
+    /x264Preset:\s*renderScale\s*===\s*1\s*\?\s*"veryfast"\s*:\s*"ultrafast"/,
+  );
   assert.match(serverSource, /const getRenderBrowser/);
   assert.match(serverSource, /puppeteerInstance/);
-  assert.doesNotMatch(serverSource, /x264Preset:/);
-  assert.match(serverSource, /Math\.min\(12, availableParallelism\(\) - 2\)/);
+  assert.doesNotMatch(serverSource, /h264_amf/);
+  assert.match(serverSource, /Math\.min\(6, availableParallelism\(\) - 2\)/);
   assert.match(serverSource, /const getAdaptiveRenderConcurrency/);
   assert.match(serverSource, /const createExportComposition/);
   assert.doesNotMatch(serverSource, /selectCompositionImpl/);
   assert.match(serverSource, /warmRenderResources/);
   assert.match(compositionSource, /Rendering preview video/);
-  assert.match(compositionSource, /Check your Downloads folder/);
+  assert.match(
+    compositionSource,
+    /Preparing fast 640 x 360 export\.\.\. 0% complete/,
+  );
+  assert.match(compositionSource, /Export complete\. Saved in Downloads as/);
   assert.match(compositionSource, /exportFileName/);
+  assert.match(serverSource, /join\(homedir\(\),\s*"Downloads"\)/);
+  assert.match(serverSource, /copyFileImpl\(outputLocation,\s*savedOutputLocation\)/);
 });
 
 test("only mounts visual clips that are active on the rendered frame", () => {
@@ -76,6 +84,15 @@ test("reports real Remotion export progress instead of a simulated 95 percent", 
   assert.match(serverSource, /onProgress:\s*\(\{ progress \}\)/);
   assert.match(serverSource, /\/api\/export\/status\/:jobId/);
   assert.match(compositionSource, /export\/status\/\$\{exportJobId\}/);
+  assert.match(
+    compositionSource,
+    /"X-Video-Editor-Request":\s*"export-status"/,
+  );
+  assert.match(
+    serverSource,
+    /req\.get\("x-video-editor-request"\)\s*===\s*"export-status"/,
+  );
+  assert.match(serverSource, /Cache-Control",\s*"no-store"/);
   assert.match(compositionSource, /jobId: exportJobId/);
   assert.doesNotMatch(compositionSource, /exportProgressTimer/);
   assert.doesNotMatch(compositionSource, /exportProgress\s*=\s*1/);

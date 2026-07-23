@@ -16,7 +16,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { availableParallelism, tmpdir } from "node:os";
+import { availableParallelism, homedir, tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -55,25 +55,8 @@ const defaultMaxBackgroundRemovalFileSizeBytes = 250 * 1024 * 1024;
 const defaultMaxTrimDurationSeconds = 6 * 60 * 60;
 const defaultRenderConcurrency = Math.max(
   2,
-  Math.min(12, availableParallelism() - 2),
+  Math.min(6, availableParallelism() - 2),
 );
-const useAmdHardwareEncoder = ({ args, type }) => {
-  const hardwareArgs = args.map((argument) =>
-    argument === "libx264" ? "h264_amf" : argument,
-  );
-
-  if (type !== "stitcher" || !hardwareArgs.includes("h264_amf")) {
-    return hardwareArgs;
-  }
-
-  const codecIndex = hardwareArgs.indexOf("h264_amf");
-  return [
-    ...hardwareArgs.slice(0, codecIndex + 1),
-    "-quality",
-    "speed",
-    ...hardwareArgs.slice(codecIndex + 1),
-  ];
-};
 const getAdaptiveRenderConcurrency = (composition) =>
   Math.max(
     1,
@@ -181,6 +164,14 @@ const validateLocalRequest = (req, { allowOriginlessRequests }) => {
 
   const origin = req.get("origin");
   if (!origin) {
+    const isAuthenticatedExportStatusRequest =
+      req.method === "GET" &&
+      req.path.startsWith("/export/status/") &&
+      req.get("x-video-editor-request") === "export-status";
+    if (isAuthenticatedExportStatusRequest) {
+      return null;
+    }
+
     return allowOriginlessRequests
       ? null
       : {
@@ -456,6 +447,7 @@ export const createTranscriptionApp = ({
   app.use("/api/export", express.json({ limit: "8mb" }));
 
   app.get("/api/export/status/:jobId", (req, res) => {
+    res.set("Cache-Control", "no-store");
     const job = exportJobs.get(req.params.jobId);
     if (!job) {
       return sendError(res, 404, "export_not_found", "Export job not found.");
@@ -1253,7 +1245,7 @@ export const createTranscriptionApp = ({
         jpegQuality: renderScale === 1 ? 85 : 70,
         everyNthFrame: renderScale === 1 ? 1 : 2,
         hardwareAcceleration: "disable",
-        ffmpegOverride: useAmdHardwareEncoder,
+        x264Preset: renderScale === 1 ? "veryfast" : "ultrafast",
         concurrency: renderConcurrency,
         disallowParallelEncoding: false,
         cancelSignal,
@@ -1266,21 +1258,29 @@ export const createTranscriptionApp = ({
         },
       });
 
+      const exportFileName = `video-editor-export-${Date.now()}.mp4`;
+      const downloadsDirectory = join(homedir(), "Downloads");
+      const savedOutputLocation = join(downloadsDirectory, exportFileName);
+      await makeDirectoryImpl(downloadsDirectory, { recursive: true });
+      await copyFileImpl(outputLocation, savedOutputLocation);
+
       updateExportJob(jobId, {
         state: "complete",
         phase: "download_ready",
         progress: 100,
+        fileName: exportFileName,
+        savedPath: savedOutputLocation,
       });
 
-      return res.download(
-        outputLocation,
-        "video-editor-export.mp4",
-        async () => {
-          if (tempDirectory) {
-            await removeDirectoryImpl(tempDirectory, cleanupOptions);
-          }
-        },
-      );
+      if (tempDirectory) {
+        await removeDirectoryImpl(tempDirectory, cleanupOptions);
+        tempDirectory = undefined;
+      }
+
+      return res.status(200).json({
+        fileName: exportFileName,
+        savedPath: savedOutputLocation,
+      });
     } catch (error) {
       if (tempDirectory) {
         await removeDirectoryImpl(tempDirectory, cleanupOptions);

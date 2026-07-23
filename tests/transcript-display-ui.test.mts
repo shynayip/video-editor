@@ -79,6 +79,21 @@ test("allows the transcript textarea to receive pointer focus", () => {
   );
 });
 
+test("Enter commits transcript word deletions while Shift+Enter adds a line", () => {
+  assert.match(
+    compositionSource,
+    /title="Delete words, then press Enter to cut them from the video and audio\. Use Shift\+Enter for a new line\."/,
+  );
+  assert.match(
+    compositionSource,
+    /onKeyDown=\{\(event\) => \{\s*if \(event\.key === "Enter" && !event\.shiftKey\) \{\s*event\.preventDefault\(\);\s*event\.currentTarget\.blur\(\);/,
+  );
+  assert.match(
+    compositionSource,
+    /onBlur=\{commitDeletedWords\}/,
+  );
+});
+
 test("allows a selected video or cutout row to generate one combined transcript", () => {
   assert.match(compositionSource, /getTranscriptableRowClips\(/);
   assert.match(

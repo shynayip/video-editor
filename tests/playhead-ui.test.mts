@@ -673,6 +673,10 @@ test("renders every video cutout as a thumbnail filmstrip with its waveform", ()
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     source,
@@ -681,6 +685,10 @@ test("renders every video cutout as a thumbnail filmstrip with its waveform", ()
   assert.match(
     source,
     /shouldShowTimelineFilmstrip\(clip\) \? \([\s\S]*?timeline-video-thumbnail-strip[\s\S]*?getTimelineThumbnailCount\(clip\)/,
+  );
+  assert.match(
+    css,
+    /\.timeline-video-thumbnail\s*\{[\s\S]*?flex:\s*1 1 84px;[\s\S]*?width:\s*auto;[\s\S]*?min-width:\s*0;/,
   );
   assert.match(
     source,
@@ -2336,6 +2344,27 @@ test("shows compact audio waveforms inside video timeline clips", () => {
     /\.timeline-clip\.has-timeline-waveform:not\(\.audio-timeline-clip\)[\s\S]*?\.timeline-clip-video,[\s\S]*?bottom:\s*20px/s,
   );
   assert.match(css, /\.audio-waveform-line\s*\{[^}]*fill:\s*none[^}]*stroke:/s);
+});
+
+test("shows a top-right mute control on every extracted audio clip", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /isDetachedAudioClip\(clip\) \? "detached-audio-timeline-clip" : ""/,
+  );
+  assert.match(
+    css,
+    /\.timeline-clip\.audio-timeline-clip\.detached-audio-timeline-clip[\s\S]*?> \.clip-mute-button\s*\{[\s\S]*?top:\s*4px;[\s\S]*?right:\s*4px;[\s\S]*?display:\s*grid;/,
+  );
+  assert.match(source, /toggleClipMute\(clip\.id\)/);
 });
 
 test("analyzes imported videos concurrently and creates only scene cards", async () => {

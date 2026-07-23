@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  getDirectionalPreviewAlignmentGuides,
   movePreviewTransform,
   snapPreviewOffsetToCenter,
   snapPreviewPositionToCenter,
@@ -61,7 +62,55 @@ test("moving an object preserves all size and rotation properties", () => {
   });
 });
 
-test("renders non-interactive center alignment guides during preview moves", () => {
+test("shows only one alignment axis for the current drag direction", () => {
+  const bothGuides = {
+    horizontal: true,
+    vertical: true,
+    horizontalPositions: [50],
+    verticalPositions: [33.333],
+  };
+
+  assert.deepEqual(getDirectionalPreviewAlignmentGuides(bothGuides, 20, 2), {
+    ...bothGuides,
+    horizontal: false,
+    horizontalPositions: [],
+  });
+  assert.deepEqual(getDirectionalPreviewAlignmentGuides(bothGuides, 2, 20), {
+    ...bothGuides,
+    vertical: false,
+    verticalPositions: [],
+  });
+});
+
+test("shows the alignment cross only at the exact canvas center", () => {
+  const centerGuides = {
+    horizontal: true,
+    vertical: true,
+    horizontalPositions: [50],
+    verticalPositions: [50],
+  };
+  const partlyCenteredGuides = {
+    horizontal: true,
+    vertical: true,
+    horizontalPositions: [50],
+    verticalPositions: [66.667],
+  };
+
+  assert.deepEqual(
+    getDirectionalPreviewAlignmentGuides(centerGuides, 20, 2),
+    centerGuides,
+  );
+  assert.deepEqual(
+    getDirectionalPreviewAlignmentGuides(partlyCenteredGuides, 20, 2),
+    {
+      ...partlyCenteredGuides,
+      horizontal: false,
+      horizontalPositions: [],
+    },
+  );
+});
+
+test("renders one directional alignment guide during preview moves", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
@@ -71,7 +120,16 @@ test("renders non-interactive center alignment guides during preview moves", () 
     "utf8",
   );
 
+<<<<<<< Updated upstream
   assert.match(source, /renderPreviewAlignmentGuides\(previewAlignmentGuides\)/);
+=======
+  assert.match(source, /getDirectionalPreviewAlignmentGuides/);
+  assert.match(
+    source,
+    /renderPreviewAlignmentGuides\(previewAlignmentGuides\)/,
+  );
+  assert.doesNotMatch(source, /keepCenterGuidesVisible/);
+>>>>>>> Stashed changes
   assert.match(source, /preview-alignment-guide-horizontal/);
   assert.match(source, /preview-alignment-guide-vertical/);
   assert.match(

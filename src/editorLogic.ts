@@ -776,6 +776,7 @@ export type TimelineClip = {
   audioFadeInFrames?: number;
   audioFadeOutFrames?: number;
   detachedFromVideo?: boolean;
+  detachedSourceClipId?: string;
   audioDetached?: boolean;
   sourceStart?: number;
   sourceDuration?: number;
@@ -4127,6 +4128,15 @@ export const moveVideoClipToLayer = (
   );
   if (start === null) return clips;
   const linkedAudio = getReciprocalLinkedAudio(clips, target);
+  const ownedAudioIds = new Set([
+    linkedAudio?.id,
+    ...clips
+      .filter(
+        (clip) =>
+          clip.track === "audio" && clip.detachedSourceClipId === target.id,
+      )
+      .map((clip) => clip.id),
+  ]);
 
   if (start === target.start && videoLayer === currentLayer) {
     return clips;
@@ -4144,7 +4154,7 @@ export const moveVideoClipToLayer = (
             videoLayer: videoLayer === 0 ? undefined : videoLayer,
             overlayLane: undefined,
           }
-        : clip.id === linkedAudio?.id
+        : ownedAudioIds.has(clip.id)
           ? { ...clip, start }
           : clip,
     ),
@@ -4167,6 +4177,7 @@ const isAudioOwnedByVideo = (
   const isReciprocalPair =
     videoClip.linkedClipId === audioClip.id &&
     audioClip.linkedClipId === videoClip.id;
+  const isDetachedFromVideo = audioClip.detachedSourceClipId === videoClip.id;
   const isLegacyOriginalAudio =
     !audioClip.linkedClipId &&
     !audioClip.detachedFromVideo &&
@@ -4176,7 +4187,7 @@ const isAudioOwnedByVideo = (
     audioClip.duration === videoClip.duration &&
     (audioClip.sourceStart ?? 0) === (videoClip.sourceStart ?? 0);
 
-  return isReciprocalPair || isLegacyOriginalAudio;
+  return isReciprocalPair || isDetachedFromVideo || isLegacyOriginalAudio;
 };
 
 export const getOwnedAudioClip = (
@@ -4533,9 +4544,18 @@ export const trimClipById = (
       ? target.duration - appliedDelta
       : Math.max(minimumDuration, target.duration + appliedDelta);
   const linkedAudio = getReciprocalLinkedAudio(clips, target);
+  const ownedAudioIds = new Set([
+    linkedAudio?.id,
+    ...clips
+      .filter(
+        (clip) =>
+          clip.track === "audio" && clip.detachedSourceClipId === target.id,
+      )
+      .map((clip) => clip.id),
+  ]);
 
   const trimmedClips = clips.map((clip) => {
-    if (clip.id !== clipId && clip.id !== linkedAudio?.id) {
+    if (clip.id !== clipId && !ownedAudioIds.has(clip.id)) {
       return clip;
     }
 
@@ -5604,9 +5624,13 @@ export const detachAudioFromVideoClip = (
     (clip) =>
       clip.track === "audio" &&
       !clip.linkedClipId &&
-      clip.src === videoClip.src &&
-      clip.start === videoClip.start &&
-      (clip.sourceStart ?? 0) === (videoClip.sourceStart ?? 0),
+      clip.detachedFromVideo &&
+      (clip.detachedSourceClipId === videoClip.id ||
+        (!clip.detachedSourceClipId &&
+          clip.src === videoClip.src &&
+          clip.start === videoClip.start &&
+          clip.duration === videoClip.duration &&
+          (clip.sourceStart ?? 0) === (videoClip.sourceStart ?? 0))),
   );
 
   if (!linkedAudio && existingDetachedAudio) {
@@ -5622,6 +5646,7 @@ export const detachAudioFromVideoClip = (
         return {
           ...clip,
           detachedFromVideo: true,
+          detachedSourceClipId: videoClip.id,
           hidden: false,
           volume: clip.volume === 0 ? 1 : (clip.volume ?? 1),
         };
@@ -5650,6 +5675,7 @@ export const detachAudioFromVideoClip = (
       speed: videoClip.speed ?? 1,
       volume: videoClip.volume === 0 ? 1 : (videoClip.volume ?? 1),
       detachedFromVideo: true,
+      detachedSourceClipId: videoClip.id,
       sourceStart: videoClip.sourceStart ?? 0,
       ...(Number.isFinite(videoClip.sourceDuration)
         ? { sourceDuration: videoClip.sourceDuration }
@@ -5680,9 +5706,10 @@ export const detachAudioFromVideoClip = (
         audioKind: undefined,
         linkedClipId: undefined,
         detachedFromVideo: true,
+        detachedSourceClipId: videoClip.id,
         hidden: false,
         volume: clip.volume === 0 ? 1 : (clip.volume ?? 1),
-        label: clip.label.replace(/\s+audio$/i, ""),
+        label: `${videoClip.label} audio`,
       };
     }
     return clip;

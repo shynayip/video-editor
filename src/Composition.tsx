@@ -3363,7 +3363,8 @@ type TimelineRow = {
   label: string;
   order: number;
   videoLayer?: number;
-  audioKind?: "voiceover" | "imported";
+  audioKind?: "voiceover" | "imported" | "detached";
+  audioClipIds?: string[];
 };
 
 type TranscriptSentenceEditorProps = {
@@ -3416,8 +3417,53 @@ const isVoiceoverClip = (clip: TimelineClip) =>
   clip.track === "audio" &&
   (clip.audioKind === "voiceover" || clip.id.startsWith("voice-"));
 
+const isDetachedAudioClip = (clip: TimelineClip) =>
+  clip.track === "audio" && Boolean(clip.detachedFromVideo);
+
 const isImportedAudioClip = (clip: TimelineClip) =>
-  clip.track === "audio" && !clip.linkedClipId && !isVoiceoverClip(clip);
+  clip.track === "audio" &&
+  !clip.linkedClipId &&
+  !isVoiceoverClip(clip) &&
+  !isDetachedAudioClip(clip);
+
+const isDetachedAudioForVideoClip = (
+  audioClip: TimelineClip,
+  videoClip: TimelineClip,
+) =>
+  audioClip.track === "audio" &&
+  audioClip.detachedFromVideo &&
+  (audioClip.detachedSourceClipId === videoClip.id ||
+    (!audioClip.detachedSourceClipId &&
+      audioClip.src === videoClip.src &&
+      audioClip.start === videoClip.start &&
+      audioClip.duration === videoClip.duration &&
+      (audioClip.sourceStart ?? 0) === (videoClip.sourceStart ?? 0)));
+
+const packDetachedAudioIntoNonOverlappingLanes = (audioClips: TimelineClip[]) => {
+  const lanes: TimelineClip[][] = [];
+  const laneEndFrames: number[] = [];
+
+  audioClips
+    .slice()
+    .sort(
+      (left, right) =>
+        left.start - right.start ||
+        left.duration - right.duration ||
+        left.id.localeCompare(right.id),
+    )
+    .forEach((clip) => {
+      const laneIndex = laneEndFrames.findIndex(
+        (endFrame) => clip.start >= endFrame,
+      );
+      const targetLaneIndex =
+        laneIndex === -1 ? laneEndFrames.length : laneIndex;
+
+      lanes[targetLaneIndex] = [...(lanes[targetLaneIndex] ?? []), clip];
+      laneEndFrames[targetLaneIndex] = clip.start + clip.duration;
+    });
+
+  return lanes;
+};
 
 const isTranscriptSettingClip = (clip: TimelineClip) =>
   clip.track === "caption" &&
@@ -3426,6 +3472,9 @@ const isTranscriptSettingClip = (clip: TimelineClip) =>
 const timelineRowContainsClip = (row: TimelineRow, clip: TimelineClip) => {
   if (row.audioKind === "voiceover") {
     return isVoiceoverClip(clip);
+  }
+  if (row.audioKind === "detached") {
+    return isDetachedAudioClip(clip) && row.audioClipIds?.includes(clip.id);
   }
   if (row.audioKind === "imported") {
     return isImportedAudioClip(clip);
@@ -4361,44 +4410,50 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const projectDuration = useMemo(() => getTimelineDuration(clips), [clips]);
 
   useEffect(() => {
-    const detachedVideoIds = clips
-      .filter(
-        (clip) =>
-          (clip.track === "main" ||
-            clip.track === "upper" ||
-            clip.track === "cutout") &&
-          !clip.audioDetached &&
-          clips.some(
-            (audioClip) =>
-              audioClip.track === "audio" &&
-            audioClip.detachedFromVideo &&
-              audioClip.src === clip.src,
-          ),
-      )
-      .map((clip) => clip.id);
-    const detachedAudioIds = clips
-      .filter(
-        (clip) =>
-          clip.track === "audio" &&
-          clip.detachedFromVideo &&
-          clips.some(
-            (videoClip) =>
-              (videoClip.track === "main" ||
-                videoClip.track === "upper" ||
-                videoClip.track === "cutout") &&
-              videoClip.src === clip.src,
-          ),
-      )
-      .map((clip) => clip.id);
+    const detachedVideoIds = new Set<string>();
+    const attachedVideoIds = new Set<string>();
+    const detachedAudioIds = new Set<string>();
 
-    if (detachedVideoIds.length === 0 && detachedAudioIds.length === 0) return;
+    clips.forEach((clip) => {
+      if (
+        clip.track !== "main" &&
+        clip.track !== "upper" &&
+        clip.track !== "cutout"
+      ) {
+        return;
+      }
+
+      const matchingAudio = clips.find((audioClip) =>
+        isDetachedAudioForVideoClip(audioClip, clip),
+      );
+
+      if (matchingAudio) {
+        if (!clip.audioDetached || clip.linkedClipId) {
+          detachedVideoIds.add(clip.id);
+        }
+        if (matchingAudio.linkedClipId || matchingAudio.hidden) {
+          detachedAudioIds.add(matchingAudio.id);
+        }
+      } else if (clip.audioDetached) {
+        attachedVideoIds.add(clip.id);
+      }
+    });
+
+    if (
+      detachedVideoIds.size === 0 &&
+      attachedVideoIds.size === 0 &&
+      detachedAudioIds.size === 0
+    )
+      return;
 
     setTimelineHistory((currentHistory) => ({
       ...currentHistory,
       present: currentHistory.present.map((clip) =>
-        detachedVideoIds.includes(clip.id)
+        detachedVideoIds.has(clip.id)
           ? { ...clip, linkedClipId: undefined, audioDetached: true }
-          : detachedAudioIds.includes(clip.id)
+          : attachedVideoIds.has(clip.id)
+            ? { ...clip, audioDetached: false }
+          : detachedAudioIds.has(clip.id)
             ? { ...clip, linkedClipId: undefined, hidden: false }
           : clip,
       ),
@@ -4912,6 +4967,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     clipControlTarget.mediaType !== "image" &&
     clipControlTarget.cutout?.mediaKind !== "image",
   );
+  const clipControlTargetHasExtractedAudio = Boolean(
+    clipControlTarget &&
+      (clipControlTarget.track === "main" ||
+        clipControlTarget.track === "upper" ||
+        clipControlTarget.track === "cutout") &&
+      clips.some((audioClip) =>
+        isDetachedAudioForVideoClip(audioClip, clipControlTarget),
+      ),
+  );
   const canExtractSelectedAudio = Boolean(
     clipControlTarget &&
     (clipControlTarget.track === "main" ||
@@ -4920,7 +4984,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     Boolean(clipControlTarget.src) &&
     !isImageClip(clipControlTarget) &&
     clipControlTarget.cutout?.mediaKind !== "image" &&
-    !clipControlTarget.audioDetached,
+    !clipControlTargetHasExtractedAudio,
   );
   const selectedClipDurationSeconds = Math.max(
     0,
@@ -5177,6 +5241,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     const lowerLayers = secondaryVideoLayers
       .filter((layer) => layer < 0)
       .sort((a, b) => b - a);
+    const detachedAudioLanes = packDetachedAudioIntoNonOverlappingLanes(
+      clips.filter(isDetachedAudioClip),
+    );
 
     const rows: TimelineRow[] = [
       ...upperLayers.map((videoLayer) => ({
@@ -5245,6 +5312,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         order:
           clips.find((clip) => getVideoLayer(clip) === videoLayer)
             ?.timelineRowOrder ?? -10 + videoLayer,
+      })),
+      ...detachedAudioLanes.map((laneClips, index) => ({
+        key: `detached-audio-lane-${index}`,
+        id: "audio" as TrackName,
+        label: index === 0 ? "Extracted audio" : `Extracted audio ${index + 1}`,
+        audioKind: "detached" as const,
+        audioClipIds: laneClips.map((clip) => clip.id),
+        order: -20 - index,
       })),
       ...(clips.some(isImportedAudioClip)
         ? [
@@ -16950,6 +17025,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               activeTool === "audio" ||
                               track.audioKind === "voiceover" ||
                               track.audioKind === "imported" ||
+                              track.audioKind === "detached" ||
                               contextualAudioClipIds.has(clip.id)),
                         )
                         .map((clip) => (

@@ -57,17 +57,30 @@ const defaultRenderConcurrency = Math.max(
   2,
   Math.min(12, availableParallelism() - 2),
 );
-const useAmdHardwareEncoder = ({ args }) =>
-  args.map((argument) =>
+const useAmdHardwareEncoder = ({ args, type }) => {
+  const hardwareArgs = args.map((argument) =>
     argument === "libx264" ? "h264_amf" : argument,
   );
+
+  if (type !== "stitcher" || !hardwareArgs.includes("h264_amf")) {
+    return hardwareArgs;
+  }
+
+  const codecIndex = hardwareArgs.indexOf("h264_amf");
+  return [
+    ...hardwareArgs.slice(0, codecIndex + 1),
+    "-quality",
+    "speed",
+    ...hardwareArgs.slice(codecIndex + 1),
+  ];
+};
 const getAdaptiveRenderConcurrency = (composition) =>
   Math.max(
     1,
     Math.min(
       defaultRenderConcurrency,
       Math.ceil(
-        composition.durationInFrames / Math.max(1, composition.fps * 6),
+        composition.durationInFrames / Math.max(1, composition.fps * 3),
       ),
     ),
   );
@@ -1161,7 +1174,7 @@ export const createTranscriptionApp = ({
       /^[a-zA-Z0-9-]{8,80}$/.test(req.body.jobId)
         ? req.body.jobId
         : null;
-    const renderScale = Number(req.body?.renderScale) === 1 ? 1 : 0.75;
+    const renderScale = Number(req.body?.renderScale) === 1 ? 1 : 0.5;
     if (!project || !Array.isArray(project.clips)) {
       return sendError(
         res,
@@ -1235,7 +1248,10 @@ export const createTranscriptionApp = ({
         // unavailable in its Windows build. MP4 supports MP3 audio here.
         audioCodec: "mp3",
         scale: renderScale,
-        videoBitrate: renderScale === 1 ? "8M" : "5M",
+        videoBitrate: renderScale === 1 ? "8M" : "3M",
+        imageFormat: "jpeg",
+        jpegQuality: renderScale === 1 ? 85 : 70,
+        everyNthFrame: renderScale === 1 ? 1 : 2,
         hardwareAcceleration: "disable",
         ffmpegOverride: useAmdHardwareEncoder,
         concurrency: renderConcurrency,

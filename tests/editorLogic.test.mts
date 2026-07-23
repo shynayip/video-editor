@@ -5207,7 +5207,7 @@ test("returns the complete reciprocal audio speech sequence in timeline order", 
   );
 });
 
-test("prioritizes the active topmost overlay audio during playback", () => {
+test("keeps lower video-layer audio audible during overlay playback", () => {
   const [main, mainAudio] = createVideoMediaPair({
     videoId: "main-playback",
     audioId: "main-playback-audio",
@@ -5262,11 +5262,11 @@ test("prioritizes the active topmost overlay audio during playback", () => {
   );
   assert.deepEqual(
     getPlaybackAudioClips(clips, 75).map((clip) => clip.id),
-    [firstOverlayAudio.id],
+    [mainAudio.id, firstOverlayAudio.id],
   );
   assert.deepEqual(
     getPlaybackAudioClips(clips, 120).map((clip) => clip.id),
-    [topOverlayAudio.id],
+    [mainAudio.id, firstOverlayAudio.id, topOverlayAudio.id],
   );
 });
 
@@ -6517,6 +6517,65 @@ test("creates a linked video cutout and audio pair at the playhead", () => {
     audio,
   ]);
   assert.deepEqual(getPlaybackAudioClips([cutout, audio], 150), [audio]);
+});
+
+test("keeps main-track audio audible underneath overlay video", () => {
+  const [mainVideo, mainAudio] = createVideoMediaPair({
+    videoId: "main-video",
+    audioId: "main-audio",
+    track: "main",
+    label: "Main scene",
+    src: "main.mp4",
+    start: 0,
+    duration: 180,
+  });
+  const [overlayVideo, overlayAudio] = createVideoMediaPair({
+    videoId: "overlay-video",
+    audioId: "overlay-audio",
+    track: "upper",
+    label: "Overlay scene",
+    src: "overlay.mp4",
+    start: 60,
+    duration: 90,
+    overlayLane: 0,
+  });
+
+  assert.deepEqual(
+    getPlaybackAudioClips(
+      [mainVideo, mainAudio, overlayVideo, overlayAudio],
+      90,
+    ).map((clip) => clip.id),
+    ["main-audio", "overlay-audio"],
+  );
+});
+
+test("keeps a later merged main clip audible when playback reaches it", () => {
+  const [firstVideo, firstAudio] = createVideoMediaPair({
+    videoId: "first-video",
+    audioId: "first-audio",
+    track: "main",
+    label: "First scene",
+    src: "first.mp4",
+    start: 0,
+    duration: 120,
+  });
+  const [secondVideo, secondAudio] = createVideoMediaPair({
+    videoId: "second-video",
+    audioId: "second-audio",
+    track: "main",
+    label: "Second scene",
+    src: "second.mp4",
+    start: 120,
+    duration: 90,
+  });
+
+  assert.deepEqual(
+    getPlaybackAudioClips(
+      [firstVideo, firstAudio, secondVideo, secondAudio],
+      150,
+    ).map((clip) => clip.id),
+    ["second-audio"],
+  );
 });
 
 test("keeps a video cutout and its audio synchronized through edits", () => {

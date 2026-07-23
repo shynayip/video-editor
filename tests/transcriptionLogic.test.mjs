@@ -439,15 +439,18 @@ test("uses repaired Windows render binaries and fast preview encoding", async (t
   assert.equal(renderCalls[0].concurrency, 1);
   assert.equal(renderCalls[0].disallowParallelEncoding, false);
   assert.equal(renderCalls[0].audioCodec, "mp3");
-  assert.equal(renderCalls[0].scale, 0.75);
-  assert.equal(renderCalls[0].videoBitrate, "5M");
+  assert.equal(renderCalls[0].scale, 0.5);
+  assert.equal(renderCalls[0].videoBitrate, "3M");
+  assert.equal(renderCalls[0].imageFormat, "jpeg");
+  assert.equal(renderCalls[0].jpegQuality, 70);
+  assert.equal(renderCalls[0].everyNthFrame, 2);
   assert.equal(renderCalls[0].hardwareAcceleration, "disable");
   assert.deepEqual(
     renderCalls[0].ffmpegOverride({
       type: "stitcher",
       args: ["-c:v", "libx264"],
     }),
-    ["-c:v", "h264_amf"],
+    ["-c:v", "h264_amf", "-quality", "speed"],
   );
   assert.equal(renderCalls[0].x264Preset, undefined);
   assert.deepEqual(cleanupCalls, [
@@ -482,6 +485,8 @@ test("keeps full HD export available when explicitly requested", async (t) => {
   assert.equal(response.status, 500);
   assert.equal(renderCalls[0].scale, 1);
   assert.equal(renderCalls[0].videoBitrate, "8M");
+  assert.equal(renderCalls[0].jpegQuality, 85);
+  assert.equal(renderCalls[0].everyNthFrame, 1);
 });
 
 const postRawTranscriptionRequest = async (url, { headers = {} } = {}) =>

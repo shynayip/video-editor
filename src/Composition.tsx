@@ -6710,10 +6710,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         : `export-${Date.now()}`;
     let exportStatusTimer: number | null = null;
     let exportStatusRequestActive = false;
-    const renderScale = exportMode === "fast" ? 0.75 : 1;
+    let missingExportStatusCount = 0;
+    let exportStopReason: string | null = null;
+    const renderScale = exportMode === "fast" ? 0.5 : 1;
     setProjectStatus(
       exportMode === "fast"
-        ? "Preparing fast 960 x 540 export..."
+        ? "Preparing fast 640 x 360 export..."
         : "Preparing HD 1280 x 720 export...",
     );
 
@@ -6728,7 +6730,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           `/api/export/status/${exportJobId}`,
           { signal: exportAbortController.signal },
         );
-        if (!statusResponse.ok) return;
+        if (!statusResponse.ok) {
+          if (statusResponse.status === 404) {
+            missingExportStatusCount += 1;
+            if (missingExportStatusCount >= 4) {
+              exportStopReason =
+                "The previous render stopped. Press Export to start a fresh fast render.";
+              setProjectStatus(exportStopReason);
+              exportAbortController.abort();
+            }
+          }
+          return;
+        }
+        missingExportStatusCount = 0;
 
         const status = (await statusResponse.json()) as {
           progress?: number;
@@ -6807,7 +6821,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       }, 900);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        setProjectStatus("Export cancelled");
+        setProjectStatus(exportStopReason ?? "Export cancelled");
       } else {
         setProjectStatus(
           error instanceof Error
@@ -12808,7 +12822,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 setExportMode(event.target.value === "hd" ? "hd" : "fast")
               }
             >
-              <option value="fast">Fast 540p</option>
+              <option value="fast">Fast 360p · 15fps</option>
               <option value="hd">HD 720p</option>
             </select>
           </label>
@@ -15893,7 +15907,30 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           </div>
         </section>
 
-        <aside className="details-panel">
+        <aside
+          className={`details-panel ${
+            activeTool === "media" && mediaSelectionBox?.activated
+              ? "is-selecting-media"
+              : ""
+          }`}
+          onPointerDown={
+            activeTool === "media" ? startMediaSelection : undefined
+          }
+          onPointerMove={
+            activeTool === "media" ? moveMediaSelection : undefined
+          }
+          onPointerUp={
+            activeTool === "media" ? finishMediaSelection : undefined
+          }
+          onPointerCancel={
+            activeTool === "media" ? finishMediaSelection : undefined
+          }
+          onLostPointerCapture={() => {
+            if (activeTool !== "media") return;
+            mediaSelectionBoxRef.current = null;
+            setMediaSelectionBox(null);
+          }}
+        >
           {selectedCaptionClip ? (
             <div className="clip-controls caption-selected-controls">
               <div className="caption-inspector-header">

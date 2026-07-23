@@ -555,6 +555,7 @@ button {
   scrollbar-width: thin;
 }
 
+.details-panel.is-selecting-media,
 .media-panel.is-selecting-media,
 .media-library.is-selecting-media {
   cursor: crosshair;

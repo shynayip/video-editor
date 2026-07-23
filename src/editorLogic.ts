@@ -3307,17 +3307,16 @@ export const getPlaybackAudioClips = (
   clips: TimelineClip[],
   frame: number,
 ): TimelineClip[] => {
-  const linkedAudio = [...getActiveVideoLayersAtFrame(clips, frame)]
-    .reverse()
+  const linkedVideoAudio = getActiveVideoLayersAtFrame(clips, frame)
     .map((videoClip) => getAudibleLinkedAudioAtFrame(clips, videoClip, frame))
-    .find((audioClip): audioClip is TimelineClip => Boolean(audioClip));
+    .filter((audioClip): audioClip is TimelineClip => Boolean(audioClip));
 
   const cutoutAudio = getActiveClipsAtFrame(clips, "cutout", frame)
     .filter((clip) => clip.cutout?.mediaKind === "video")
     .map((clip) => getAudibleLinkedAudioAtFrame(clips, clip, frame))
     .filter((clip): clip is TimelineClip => Boolean(clip));
 
-  return [...(linkedAudio ? [linkedAudio] : []), ...cutoutAudio];
+  return [...linkedVideoAudio, ...cutoutAudio];
 };
 
 export const getIndependentPlaybackAudioClips = (

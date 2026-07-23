@@ -116,6 +116,13 @@ test("imported media selection can start from the whole media panel", () => {
   );
   assert.match(
     styles,
-    /\.media-panel\.is-selecting-media,\s*\.media-library\.is-selecting-media\s*\{[^}]*cursor:\s*crosshair;/s,
+    /\.details-panel\.is-selecting-media,\s*\.media-panel\.is-selecting-media,\s*\.media-library\.is-selecting-media\s*\{[^}]*cursor:\s*crosshair;/s,
+  );
+});
+
+test("blank media details panel can clear and start imported-media selection", () => {
+  assert.match(
+    source,
+    /<aside[\s\S]*className=\{`details-panel \$\{[\s\S]*activeTool === "media" && mediaSelectionBox\?\.activated[\s\S]*\}`\}[\s\S]*onPointerDown=\{[\s\S]*activeTool === "media" \? startMediaSelection : undefined[\s\S]*onPointerMove=\{[\s\S]*activeTool === "media" \? moveMediaSelection : undefined[\s\S]*onPointerUp=\{[\s\S]*activeTool === "media" \? finishMediaSelection : undefined/s,
   );
 });

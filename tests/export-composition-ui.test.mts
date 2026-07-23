@@ -33,10 +33,20 @@ test("uses faster MP4 settings and identifies the downloaded file", () => {
   assert.match(serverSource, /scale:\s*renderScale/);
   assert.match(
     serverSource,
-    /videoBitrate:\s*renderScale\s*===\s*1\s*\?\s*"8M"\s*:\s*"5M"/,
+    /videoBitrate:\s*renderScale\s*===\s*1\s*\?\s*"8M"\s*:\s*"3M"/,
+  );
+  assert.match(serverSource, /imageFormat:\s*"jpeg"/);
+  assert.match(
+    serverSource,
+    /jpegQuality:\s*renderScale\s*===\s*1\s*\?\s*85\s*:\s*70/,
+  );
+  assert.match(
+    serverSource,
+    /everyNthFrame:\s*renderScale\s*===\s*1\s*\?\s*1\s*:\s*2/,
   );
   assert.match(serverSource, /hardwareAcceleration:\s*"disable"/);
   assert.match(serverSource, /argument === "libx264" \? "h264_amf"/);
+  assert.match(serverSource, /"-quality",\s*"speed"/);
   assert.match(serverSource, /const getRenderBrowser/);
   assert.match(serverSource, /puppeteerInstance/);
   assert.doesNotMatch(serverSource, /x264Preset:/);

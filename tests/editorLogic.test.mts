@@ -38,6 +38,7 @@ import {
   getStableTimelineFrameDelta,
   getDragEdgeAutoScrollDelta,
   getPlaybackFollowScrollLeft,
+  getTimelineScrollFollowPlayheadFrame,
   getMediaTrimFrameFromPointer,
   getTimelineFrameFromPointer,
   getManualRotationAngle,
@@ -1372,6 +1373,45 @@ test("follows the playhead in both directions after it reaches a visible edge", 
       playheadX: 2900,
     }),
     2000,
+  );
+});
+
+test("moves the playhead to the visible timeline center after manual scrolling", () => {
+  assert.equal(
+    getTimelineScrollFollowPlayheadFrame({
+      scrollLeft: 0,
+      viewportWidth: 1000,
+      contentWidth: 3000,
+      playheadX: 500,
+      timelineOrigin: 100,
+      timelineScale: 2,
+      projectDuration: 1200,
+    }),
+    null,
+  );
+  assert.equal(
+    getTimelineScrollFollowPlayheadFrame({
+      scrollLeft: 1200,
+      viewportWidth: 1000,
+      contentWidth: 3000,
+      playheadX: 100,
+      timelineOrigin: 100,
+      timelineScale: 2,
+      projectDuration: 1200,
+    }),
+    800,
+  );
+  assert.equal(
+    getTimelineScrollFollowPlayheadFrame({
+      scrollLeft: 2600,
+      viewportWidth: 1000,
+      contentWidth: 4000,
+      playheadX: 100,
+      timelineOrigin: 100,
+      timelineScale: 2,
+      projectDuration: 1200,
+    }),
+    1199,
   );
 });
 

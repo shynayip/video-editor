@@ -11,3 +11,6 @@ server-temp/
 
 # Ignore the output video from Git but not videos you import into src/.
 out
+
+# Ignore locally uploaded video files.
+public/uploads/*.mp4

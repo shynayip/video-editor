@@ -45,6 +45,7 @@ import {
   defaultCaptionStyle,
   defaultClipAdjustment,
   duplicateClipById,
+  detachAudioFromVideoClip,
   ensureLinkedAudioForVideo,
   keepDominantVoiceInLinkedVideo,
   getActiveClipsAtFrame,
@@ -57,7 +58,6 @@ import {
   isStoredUploadSource,
   getDraggedClipStart,
   getDragEdgeAutoScrollDelta,
-  getPlaybackFollowScrollLeft,
   getMediaTrimFrameFromPointer,
   getVideoClipDragPreviewStart,
   getContextualAudioClips,
@@ -1144,6 +1144,7 @@ const shouldShowTimelineFilmstrip = (clip: TimelineClip) =>
 const shouldShowTimelineWaveform = (clip: TimelineClip) =>
   clip.track === "audio" ||
   (Boolean(clip.src) &&
+    !clip.audioDetached &&
     (clip.track === "main" || clip.track === "upper"
       ? !isImageClip(clip)
       : clip.track === "cutout" && clip.cutout?.mediaKind === "video"));
@@ -1265,12 +1266,18 @@ const TimelineWaveform = ({
   src,
   sourceStart = 0,
   speed = 1,
+  fadeInFrames = 0,
+  fadeOutFrames = 0,
+  volume = 1,
 }: {
   clipId: string;
   duration: number;
   src?: string;
   sourceStart?: number;
   speed?: number;
+  fadeInFrames?: number;
+  fadeOutFrames?: number;
+  volume?: number;
 }) => {
   const lineCount = Math.max(120, Math.min(900, Math.round(duration)));
   const fallbackAmplitudes = useMemo(
@@ -1301,7 +1308,12 @@ const TimelineWaveform = ({
   }, [duration, fallbackAmplitudes, lineCount, sourceStart, speed, src]);
 
   const step = 100 / amplitudes.length;
-  const centerY = 10;
+  const baselineY = 19;
+  const volumeDecibels = gainToDecibels(volume);
+  const volumeVisualMultiplier =
+    volume <= 0
+      ? 0.12
+      : Math.max(0.18, Math.min(1.8, 1 + volumeDecibels / 24));
 
   return (
     <svg
@@ -1310,7 +1322,23 @@ const TimelineWaveform = ({
       preserveAspectRatio="none"
     >
       {amplitudes.map((amplitude, index) => {
-        const height = Math.max(1.65, amplitude * 7.4);
+        const localFrame =
+          ((index + 0.5) / Math.max(1, amplitudes.length)) * duration;
+        const fadeInMultiplier =
+          fadeInFrames > 0 ? Math.min(1, localFrame / fadeInFrames) : 1;
+        const framesBeforeEnd = duration - localFrame;
+        const fadeOutMultiplier =
+          fadeOutFrames > 0
+            ? Math.min(1, framesBeforeEnd / fadeOutFrames)
+            : 1;
+        const fadeMultiplier = Math.max(
+          0.08,
+          Math.min(fadeInMultiplier, fadeOutMultiplier),
+        );
+        const height = Math.max(
+          volume <= 0 ? 0.25 : 0.8,
+          Math.min(18, amplitude * 17 * fadeMultiplier * volumeVisualMultiplier),
+        );
         const x = index * step + step / 2;
         return (
           <line
@@ -1318,8 +1346,9 @@ const TimelineWaveform = ({
             key={`${clipId}-wave-${index}`}
             x1={x}
             x2={x}
-            y1={centerY - height}
-            y2={centerY + height}
+            y1={baselineY - height}
+            y2={baselineY}
+            opacity={fadeMultiplier}
           />
         );
       })}
@@ -1356,6 +1385,36 @@ const formatMediaTrimTime = (frame: number) => {
   return `${String(minutes).padStart(2, "0")}:${seconds
     .toFixed(2)
     .padStart(5, "0")}`;
+};
+
+const MIN_AUDIO_DB = -60;
+const MAX_AUDIO_DB = 20;
+const MAX_AUDIO_GAIN = 10;
+
+const clampAudioGain = (volume: number) =>
+  Math.max(0, Math.min(MAX_AUDIO_GAIN, Number.isFinite(volume) ? volume : 1));
+
+const gainToDecibels = (volume: number) =>
+  volume <= 0 ? MIN_AUDIO_DB : 20 * Math.log10(clampAudioGain(volume));
+
+const decibelsToGain = (decibels: number) =>
+  decibels <= MIN_AUDIO_DB
+    ? 0
+    : clampAudioGain(10 ** (Math.min(MAX_AUDIO_DB, decibels) / 20));
+
+const formatVolumeDecibels = (volume: number) => {
+  if (volume <= 0) return "-inf dB";
+  const decibels = gainToDecibels(volume);
+  return `${decibels >= 0 ? "+" : ""}${decibels.toFixed(1)} dB`;
+};
+
+const getAudioVolumeLineY = (volume: number) => {
+  const decibels = Math.max(
+    MIN_AUDIO_DB,
+    Math.min(MAX_AUDIO_DB, gainToDecibels(volume)),
+  );
+  const position = (MAX_AUDIO_DB - decibels) / (MAX_AUDIO_DB - MIN_AUDIO_DB);
+  return 15 + position * 70;
 };
 
 const defaultClipAnimation = {
@@ -3423,6 +3482,22 @@ type TrimDrag = {
   originalClips: TimelineClip[];
 };
 
+type AudioFadeDrag = {
+  clipId: string;
+  edge: "in" | "out";
+  startX: number;
+  startFadeFrames: number;
+  originalClips: TimelineClip[];
+};
+
+type AudioVolumeDrag = {
+  clipId: string;
+  startY: number;
+  startVolume: number;
+  boundsHeight: number;
+  originalClips: TimelineClip[];
+};
+
 type MediaTrimCanvasDrag = {
   mode: "pan" | "crop" | "rotate";
   handle?: CaptionResizeHandle;
@@ -3723,6 +3798,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const previewLayerVideoRefs = useRef(new Map<string, HTMLVideoElement>());
   const previewAudioRefs = useRef(new Map<string, HTMLAudioElement>());
+  const previewAudioContextRef = useRef<AudioContext | null>(null);
+  const previewMediaGainRefs = useRef(
+    new Map<
+      HTMLMediaElement,
+      { source: MediaElementAudioSourceNode; gain: GainNode }
+    >(),
+  );
   const previewWindowRef = useRef<HTMLDivElement>(null);
   const editorShellRef = useRef<HTMLElement>(null);
   const videoLayerControlDragRef =
@@ -3731,6 +3813,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const previewSourceRef = useRef<string | null>(null);
   const timelineContentRef = useRef<HTMLDivElement>(null);
   const timelineScrollRef = useRef<HTMLDivElement>(null);
+  const lastTimelineScrollLeftRef = useRef(0);
+  const suppressTimelineScrollPlayheadFollowRef = useRef(false);
   const mediaLibraryRef = useRef<HTMLDivElement>(null);
   const mediaGridRef = useRef<HTMLDivElement>(null);
   const mediaSelectionBoxRef = useRef<MediaSelectionBox | null>(null);
@@ -3831,6 +3915,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [timelineScale, setTimelineScale] = useState(defaultTimelineScale);
   const timelineScaleRef = useRef(timelineScale);
   const [playheadFrame, setPlayheadFrame] = useState(0);
+  const playheadFrameRef = useRef(0);
   const [timelineHoverFrame, setTimelineHoverFrame] = useState<number | null>(
     null,
   );
@@ -3858,6 +3943,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const pointerDragRef = useRef<PointerDrag | null>(null);
   const pointerDragPositionRef = useRef<{ x: number; y: number } | null>(null);
   const [trimDrag, setTrimDrag] = useState<TrimDrag | null>(null);
+  const [audioFadeDrag, setAudioFadeDrag] =
+    useState<AudioFadeDrag | null>(null);
+  const [audioVolumeDrag, setAudioVolumeDrag] =
+    useState<AudioVolumeDrag | null>(null);
   const [videoDropTarget, setVideoDropTarget] =
     useState<VideoDropTarget | null>(null);
   const [previewMode, setPreviewMode] = useState<"media" | "timeline">(
@@ -4272,6 +4361,54 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   selectedClipIdsRef.current = selectedClipIds;
   activeToolRef.current = activeTool;
   timelineScaleRef.current = timelineScale;
+  playheadFrameRef.current = playheadFrame;
+
+  const projectDuration = useMemo(() => getTimelineDuration(clips), [clips]);
+
+  useEffect(() => {
+    const detachedVideoIds = clips
+      .filter(
+        (clip) =>
+          (clip.track === "main" ||
+            clip.track === "upper" ||
+            clip.track === "cutout") &&
+          !clip.audioDetached &&
+          clips.some(
+            (audioClip) =>
+              audioClip.track === "audio" &&
+            audioClip.detachedFromVideo &&
+              audioClip.src === clip.src,
+          ),
+      )
+      .map((clip) => clip.id);
+    const detachedAudioIds = clips
+      .filter(
+        (clip) =>
+          clip.track === "audio" &&
+          clip.detachedFromVideo &&
+          clips.some(
+            (videoClip) =>
+              (videoClip.track === "main" ||
+                videoClip.track === "upper" ||
+                videoClip.track === "cutout") &&
+              videoClip.src === clip.src,
+          ),
+      )
+      .map((clip) => clip.id);
+
+    if (detachedVideoIds.length === 0 && detachedAudioIds.length === 0) return;
+
+    setTimelineHistory((currentHistory) => ({
+      ...currentHistory,
+      present: currentHistory.present.map((clip) =>
+        detachedVideoIds.includes(clip.id)
+          ? { ...clip, linkedClipId: undefined, audioDetached: true }
+          : detachedAudioIds.includes(clip.id)
+            ? { ...clip, linkedClipId: undefined, hidden: false }
+          : clip,
+      ),
+    }));
+  }, [clips]);
 
   useEffect(() => {
     setSelectedClipIds((currentIds) => {
@@ -4284,7 +4421,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     });
   }, [selectedClipId]);
 
-  const projectDuration = useMemo(() => getTimelineDuration(clips), [clips]);
   const fitTimelineToViewport = useCallback(() => {
     const viewportWidth = timelineScrollRef.current?.clientWidth ?? 0;
     const availableWidth = Math.max(240, viewportWidth - timelineOrigin - 24);
@@ -4297,6 +4433,64 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setTimelineScale(fittedScale);
     setProjectStatus("Timeline fitted to viewport");
   }, [projectDuration]);
+
+  const suppressNextTimelineScrollPlayheadFollow = useCallback(() => {
+    suppressTimelineScrollPlayheadFollowRef.current = true;
+    window.requestAnimationFrame(() => {
+      const scrollArea = timelineScrollRef.current;
+      if (scrollArea) {
+        lastTimelineScrollLeftRef.current = scrollArea.scrollLeft;
+      }
+      suppressTimelineScrollPlayheadFollowRef.current = false;
+    });
+  }, []);
+
+  const updatePlayheadFromTimelineScroll = useCallback(() => {
+    const scrollArea = timelineScrollRef.current;
+    if (!scrollArea) return;
+
+    const currentScrollLeft = scrollArea.scrollLeft;
+    if (
+      Math.abs(currentScrollLeft - lastTimelineScrollLeftRef.current) < 1
+    ) {
+      return;
+    }
+    lastTimelineScrollLeftRef.current = currentScrollLeft;
+
+    if (
+      suppressTimelineScrollPlayheadFollowRef.current ||
+      previewMode !== "timeline" ||
+      isPreviewPlaying ||
+      isScrubbing ||
+      pointerDrag ||
+      trimDrag
+    ) {
+      return;
+    }
+
+    const nextFrame = Math.max(
+      0,
+      Math.min(
+        Math.max(0, projectDuration - 1),
+        Math.round(currentScrollLeft / Math.max(0.001, timelineScale)),
+      ),
+    );
+
+    if (nextFrame === playheadFrame) return;
+    playheadFrameRef.current = nextFrame;
+    setPlayheadFrame(nextFrame);
+    setPreviewMode("timeline");
+  }, [
+    isPreviewPlaying,
+    isScrubbing,
+    playheadFrame,
+    pointerDrag,
+    previewMode,
+    projectDuration,
+    timelineScale,
+    trimDrag,
+  ]);
+
   const zoomTimelineBy = useCallback(
     (amount: number, anchorClientX?: number) => {
       const scrollArea = timelineScrollRef.current;
@@ -4337,11 +4531,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       setTimelineScale(nextScale);
       if (scrollArea && nextScrollLeft !== null) {
         requestAnimationFrame(() => {
+          suppressNextTimelineScrollPlayheadFollow();
           scrollArea.scrollLeft = nextScrollLeft;
         });
       }
     },
-    [],
+    [suppressNextTimelineScrollPlayheadFollow],
   );
   const videoPlaybackDuration = useMemo(
     () => getVideoPlaybackDuration(clips),
@@ -4654,8 +4849,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   };
   const selectedClipSpeed =
     clipControlTarget?.speed ?? selectedVideoLayerControlState.speed;
-  const selectedClipVolume =
-    clipControlTarget?.volume ?? selectedVideoLayerControlState.volume;
+  const selectedClipVolume = clampAudioGain(
+    clipControlTarget?.volume ?? selectedVideoLayerControlState.volume,
+  );
   const selectedClipFadeInFrames = clipControlTarget?.audioFadeInFrames ?? 0;
   const selectedClipFadeOutFrames = clipControlTarget?.audioFadeOutFrames ?? 0;
   const selectedClipEffect = clipControlTarget?.visual?.effect ?? "none";
@@ -4722,7 +4918,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       clipControlTarget.track === "cutout" ||
       clipControlTarget.track === "audio") &&
     clipControlTarget.mediaType !== "image" &&
-    clipControlTarget.cutout?.mediaKind !== "image",
+    clipControlTarget.cutout?.mediaKind !== "image" &&
+    (clipControlTarget.track === "audio" || !clipControlTarget.audioDetached),
   );
   const selectedClipDurationSeconds = Math.max(
     0,
@@ -6031,13 +6228,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   };
 
   const updateSelectedClipVolume = (volume: number) => {
-    if (previewVideoLayerControlDrag(volume)) return;
+    const nextVolume = clampAudioGain(volume);
+    if (previewVideoLayerControlDrag(nextVolume)) return;
 
     commitClipChange((currentClips) =>
       clipControlTarget
-        ? setClipVolumeById(currentClips, clipControlTarget.id, volume)
+        ? setClipVolumeById(currentClips, clipControlTarget.id, nextVolume)
         : selectedVideoLayer !== null
-          ? setVideoLayerVolume(currentClips, selectedVideoLayer, volume)
+          ? setVideoLayerVolume(currentClips, selectedVideoLayer, nextVolume)
           : currentClips,
     );
   };
@@ -6053,6 +6251,85 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         [property]: Math.round(seconds * fps),
       }),
     );
+  };
+
+  const getPreviewAudioContext = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    if (!previewAudioContextRef.current) {
+      const AudioContextConstructor =
+        window.AudioContext ??
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!AudioContextConstructor) return null;
+      previewAudioContextRef.current = new AudioContextConstructor();
+    }
+    if (previewAudioContextRef.current.state === "suspended") {
+      void previewAudioContextRef.current.resume().catch(() => undefined);
+    }
+    return previewAudioContextRef.current;
+  }, []);
+
+  const setPreviewMediaGain = useCallback(
+    (media: HTMLMediaElement, gainValue: number) => {
+      const audioContext = getPreviewAudioContext();
+      if (!audioContext) {
+        media.volume = Math.min(gainValue, 1);
+        return;
+      }
+
+      let node = previewMediaGainRefs.current.get(media);
+      if (!node) {
+        try {
+          node = {
+            source: audioContext.createMediaElementSource(media),
+            gain: audioContext.createGain(),
+          };
+          node.source.connect(node.gain).connect(audioContext.destination);
+        } catch {
+          media.volume = Math.min(gainValue, 1);
+          return;
+        }
+        previewMediaGainRefs.current.set(media, node);
+      }
+
+      media.volume = 1;
+      node.gain.gain.value = clampAudioGain(gainValue);
+    },
+    [getPreviewAudioContext],
+  );
+
+  const releasePreviewMediaGain = useCallback(
+    (media: HTMLMediaElement | undefined) => {
+      if (!media) return;
+      const node = previewMediaGainRefs.current.get(media);
+      if (!node) return;
+      try {
+        node.source.disconnect();
+        node.gain.disconnect();
+      } catch {
+        // The browser may already detach media nodes while React unmounts.
+      }
+      previewMediaGainRefs.current.delete(media);
+    },
+    [],
+  );
+
+  const detachSelectedClipAudio = () => {
+    if (
+      !clipControlTarget ||
+      (clipControlTarget.track !== "main" &&
+        clipControlTarget.track !== "upper" &&
+        clipControlTarget.track !== "cutout")
+    ) {
+      return;
+    }
+
+    commitClipChange((currentClips) =>
+      detachAudioFromVideoClip(currentClips, clipControlTarget.id),
+    );
+    setIsAudioTrackVisible(true);
+    setPreviewMode("timeline");
+    setProjectStatus("Audio detached from video");
   };
 
   const updateSelectedTextStyle = (
@@ -9079,6 +9356,50 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     });
   };
 
+  const startAudioFadeDrag = (
+    event: PointerEvent<HTMLButtonElement>,
+    clip: TimelineClip,
+    edge: "in" | "out",
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    selectTimelineClip(clip);
+    setSaveState("unsaved");
+    setAudioFadeDrag({
+      clipId: clip.id,
+      edge,
+      startX: event.clientX,
+      startFadeFrames:
+        edge === "in"
+          ? (clip.audioFadeInFrames ?? 0)
+          : (clip.audioFadeOutFrames ?? 0),
+      originalClips: clips,
+    });
+  };
+
+  const startAudioVolumeDrag = (
+    event: PointerEvent<SVGLineElement>,
+    clip: TimelineClip,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = event.currentTarget
+      .closest<HTMLElement>(".timeline-clip")
+      ?.getBoundingClientRect();
+    if (!bounds) return;
+
+    selectTimelineClip(clip);
+    setSaveState("unsaved");
+    setAudioVolumeDrag({
+      clipId: clip.id,
+      startY: event.clientY,
+      startVolume: clampAudioGain(clip.volume ?? 1),
+      boundsHeight: bounds.height,
+      originalClips: clips,
+    });
+  };
+
   const createMediaTimelineClips = useCallback(
     (mediaItem: MediaItem, videoLayer: number, startFrame: number) => {
       const timestamp = Date.now();
@@ -10531,6 +10852,31 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       const element = document.elementFromPoint(event.clientX, event.clientY);
       const target = getVideoDropTargetFromElement(element);
       const pointerFrame = getPointerTimelineFrame(event.clientX) ?? 0;
+      const draggedClipAtDrop =
+        pointerDrag.type === "timeline"
+          ? clips.find((clip) => clip.id === pointerDrag.id) ?? null
+          : null;
+      const targetTimelineClipId =
+        element instanceof HTMLElement
+          ? element.closest<HTMLElement>("[data-timeline-clip-id]")?.dataset
+              .timelineClipId ?? null
+          : null;
+      const elementTimelineClip = targetTimelineClipId
+        ? clips.find((clip) => clip.id === targetTimelineClipId) ?? null
+        : null;
+      const frameTimelineClip = draggedClipAtDrop
+        ? clips.find(
+            (clip) =>
+              clip.id !== draggedClipAtDrop.id &&
+              getVideoLayer(clip) === getVideoLayer(draggedClipAtDrop) &&
+              pointerFrame >= clip.start &&
+              pointerFrame < clip.start + clip.duration,
+          ) ?? null
+        : null;
+      const targetTimelineClip =
+        elementTimelineClip?.id !== draggedClipAtDrop?.id
+          ? elementTimelineClip
+          : frameTimelineClip;
       const targetVideoLayer = target
         ? target.kind === "row-gap"
           ? target.direction === "above"
@@ -10542,6 +10888,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               ? target.videoLayer
               : null
         : null;
+      const effectiveTargetVideoLayer =
+        targetVideoLayer ??
+        (pointerDrag.type === "timeline" && draggedClipAtDrop
+          ? getVideoLayer(draggedClipAtDrop)
+          : null);
 
       if (
         pointerDrag.type === "timeline" &&
@@ -10633,7 +10984,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             "Drop selected scenes on the Main track or an Overlay track",
           );
         }
-      } else if (targetVideoLayer !== null) {
+      } else if (effectiveTargetVideoLayer !== null) {
         if (pointerDrag.type === "media") {
           const draggedItems = mediaItems.filter((item) =>
             (pointerDrag.mediaIds ?? [pointerDrag.id]).includes(item.id),
@@ -10650,7 +11001,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             } else if (target?.kind === "row-gap") {
               placeMediaBatchOnVideoLayer(
                 draggedItems,
-                targetVideoLayer,
+                effectiveTargetVideoLayer,
                 pointerFrame,
                 "place",
                 target.rowOrder,
@@ -10658,9 +11009,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             } else {
               placeMediaBatchOnVideoLayer(
                 draggedItems,
-                targetVideoLayer,
+                effectiveTargetVideoLayer,
                 pointerFrame,
-                targetVideoLayer === 0 ? "insert" : "place",
+                effectiveTargetVideoLayer === 0 ? "insert" : "place",
               );
             }
           }
@@ -10668,6 +11019,16 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           const targetStart =
             pointerFrame - (pointerDrag.grabOffsetFrames ?? 0);
           const draggedClip = clips.find((clip) => clip.id === pointerDrag.id);
+          const draggedVideoLayer = draggedClip
+            ? getVideoLayer(draggedClip)
+            : null;
+          const canSwapTimelineClips = Boolean(
+            draggedClip &&
+              targetTimelineClip &&
+              targetTimelineClip.id !== draggedClip.id &&
+              draggedVideoLayer !== null &&
+              draggedVideoLayer === getVideoLayer(targetTimelineClip),
+          );
           const linkedClipIds = draggedClip?.linkedClipId
             ? [pointerDrag.id, draggedClip.linkedClipId]
             : [pointerDrag.id];
@@ -10684,13 +11045,97 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 projectDuration,
                 snappedTargetStart,
                 draggedClip.duration,
-              )
+            )
             : projectDuration;
           commitClipChange((currentClips) => {
+            if (canSwapTimelineClips && draggedClip && targetTimelineClip) {
+              const laneClips = currentClips
+                .filter((clip) => getVideoLayer(clip) === draggedVideoLayer)
+                .sort((left, right) => left.start - right.start);
+              const draggedIndex = laneClips.findIndex(
+                (clip) => clip.id === draggedClip.id,
+              );
+              const targetIndex = laneClips.findIndex(
+                (clip) => clip.id === targetTimelineClip.id,
+              );
+
+              if (draggedIndex >= 0 && targetIndex >= 0) {
+                const reorderedLane = [...laneClips];
+                const [removedClip] = reorderedLane.splice(draggedIndex, 1);
+                const remainingTargetIndex = reorderedLane.findIndex(
+                  (clip) => clip.id === targetTimelineClip.id,
+                );
+                const insertBefore =
+                  pointerFrame <
+                  targetTimelineClip.start + targetTimelineClip.duration / 2;
+                reorderedLane.splice(
+                  Math.max(
+                    0,
+                    remainingTargetIndex + (insertBefore ? 0 : 1),
+                  ),
+                  0,
+                  removedClip,
+                );
+
+                const nextStartById = new Map<string, number>();
+                reorderedLane.forEach((clip, index) => {
+                  if (index === 0) {
+                    nextStartById.set(clip.id, laneClips[0].start);
+                    return;
+                  }
+                  const previousClip = reorderedLane[index - 1];
+                  const originalPreviousClip = laneClips[index - 1];
+                  const originalNextClip = laneClips[index];
+                  const gap = Math.max(
+                    0,
+                    originalNextClip.start -
+                      (originalPreviousClip.start +
+                        originalPreviousClip.duration),
+                  );
+                  const previousStart =
+                    nextStartById.get(previousClip.id) ?? previousClip.start;
+                  nextStartById.set(
+                    clip.id,
+                    previousStart + previousClip.duration + gap,
+                  );
+                });
+
+                const originalStartById = new Map(
+                  laneClips.map((clip) => [clip.id, clip.start]),
+                );
+                return currentClips.map((clip) => {
+                  const nextStart = nextStartById.get(clip.id);
+                  if (nextStart !== undefined) {
+                    return { ...clip, start: nextStart };
+                  }
+
+                  const linkedVideoId = clip.linkedClipId;
+                  const linkedVideoNextStart = linkedVideoId
+                    ? nextStartById.get(linkedVideoId)
+                    : undefined;
+                  const linkedVideoOriginalStart = linkedVideoId
+                    ? originalStartById.get(linkedVideoId)
+                    : undefined;
+                  if (
+                    linkedVideoNextStart !== undefined &&
+                    linkedVideoOriginalStart !== undefined
+                  ) {
+                    return {
+                      ...clip,
+                      start:
+                        clip.start +
+                        (linkedVideoNextStart - linkedVideoOriginalStart),
+                    };
+                  }
+                  return clip;
+                });
+              }
+            }
+
             const movedClips = moveVideoClipToLayer(
               currentClips,
               pointerDrag.id,
-              targetVideoLayer,
+              effectiveTargetVideoLayer,
               snappedTargetStart,
               timelineBoundary,
             );
@@ -10702,7 +11147,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 : clip,
             );
           });
-          setSelectedTrack(targetVideoLayer === 0 ? "main" : "upper");
+          if (canSwapTimelineClips && draggedClip && targetTimelineClip) {
+            setProjectStatus(
+              `Reordered ${draggedClip.label} with ${targetTimelineClip.label}`,
+            );
+          }
+          setSelectedTrack(
+            effectiveTargetVideoLayer === 0 ? "main" : "upper",
+          );
         }
       }
 
@@ -10869,6 +11321,99 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       window.removeEventListener("pointerup", handlePointerUp);
     };
   }, [trimDrag]);
+
+  useEffect(() => {
+    if (!audioFadeDrag) {
+      return;
+    }
+
+    const handlePointerMove = (event: globalThis.PointerEvent) => {
+      const frameDelta = Math.round(
+        (event.clientX - audioFadeDrag.startX) / timelineScale,
+      );
+      const targetClip = audioFadeDrag.originalClips.find(
+        (clip) => clip.id === audioFadeDrag.clipId,
+      );
+      if (!targetClip) return;
+
+      const nextFadeFrames = Math.max(
+        0,
+        Math.min(
+          Math.max(0, targetClip.duration - 1),
+          audioFadeDrag.startFadeFrames +
+            (audioFadeDrag.edge === "in" ? frameDelta : -frameDelta),
+        ),
+      );
+      setTimelineHistory((currentHistory) => ({
+        ...currentHistory,
+        present: setClipAudioFadeById(
+          audioFadeDrag.originalClips,
+          audioFadeDrag.clipId,
+          audioFadeDrag.edge === "in"
+            ? { fadeInFrames: nextFadeFrames }
+            : { fadeOutFrames: nextFadeFrames },
+        ),
+      }));
+    };
+
+    const handlePointerUp = () => {
+      setTimelineHistory((currentHistory) => ({
+        past: [...currentHistory.past, audioFadeDrag.originalClips],
+        present: currentHistory.present,
+        future: [],
+      }));
+      setAudioFadeDrag(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [audioFadeDrag, timelineScale]);
+
+  useEffect(() => {
+    if (!audioVolumeDrag) {
+      return;
+    }
+
+    const handlePointerMove = (event: globalThis.PointerEvent) => {
+      const decibelDelta =
+        ((audioVolumeDrag.startY - event.clientY) /
+          Math.max(1, audioVolumeDrag.boundsHeight)) *
+        (MAX_AUDIO_DB - MIN_AUDIO_DB);
+      const nextVolume = decibelsToGain(
+        gainToDecibels(audioVolumeDrag.startVolume) + decibelDelta,
+      );
+      setTimelineHistory((currentHistory) => ({
+        ...currentHistory,
+        present: setClipVolumeById(
+          audioVolumeDrag.originalClips,
+          audioVolumeDrag.clipId,
+          nextVolume,
+        ),
+      }));
+    };
+
+    const handlePointerUp = () => {
+      setTimelineHistory((currentHistory) => ({
+        past: [...currentHistory.past, audioVolumeDrag.originalClips],
+        present: currentHistory.present,
+        future: [],
+      }));
+      setAudioVolumeDrag(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [audioVolumeDrag]);
 
   useEffect(() => {
     if (!cropDrag) return;
@@ -11860,8 +12405,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }
 
     video.playbackRate = previewMode === "media" ? 1 : previewSpeed;
-    video.volume =
-      previewMode === "media" ? mediaPreviewVolume : Math.min(previewVolume, 1);
+    setPreviewMediaGain(
+      video,
+      previewMode === "media"
+        ? mediaPreviewVolume
+        : previewVideoMuted
+          ? 0
+          : previewVolume,
+    );
     video.muted = previewMode === "media" ? false : previewVideoMuted;
 
     if (previewSource?.src !== previewSourceRef.current) {
@@ -11900,6 +12451,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     previewVolume,
     previewVideoMuted,
     previewMode,
+    setPreviewMediaGain,
     topVisibleVideoClip,
   ]);
 
@@ -11914,6 +12466,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       const videoClip = renderedClips.get(clipId);
       if (!videoClip || !video.isConnected) {
         video.pause();
+        releasePreviewMediaGain(video);
         previewLayerVideoRefs.current.delete(clipId);
         continue;
       }
@@ -11944,10 +12497,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       const seekTolerance = isPreviewPlaying && isActive ? 0.45 : 0.04;
 
       video.playbackRate = videoClip.speed ?? 1;
-      video.volume = Math.min(
-        (videoClip.volume ?? 1) *
-          getClipAudioFadeMultiplier(videoClip, timelinePreviewFrame),
-        1,
+      setPreviewMediaGain(
+        video,
+        videoMuted
+          ? 0
+          : (videoClip.volume ?? 1) *
+              getClipAudioFadeMultiplier(videoClip, timelinePreviewFrame),
       );
       video.muted = videoMuted;
       if (Math.abs(video.currentTime - desiredTime) > seekTolerance) {
@@ -11966,6 +12521,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     activeVideoLayers,
     clips,
     isPreviewPlaying,
+    releasePreviewMediaGain,
+    setPreviewMediaGain,
     timelinePreviewFrame,
     timelinePreviewVideoClips,
   ]);
@@ -11979,6 +12536,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       const audioClip = activeAudio.get(clipId);
       if (!audioClip || !audio.isConnected) {
         audio.pause();
+        releasePreviewMediaGain(audio);
         previewAudioRefs.current.delete(clipId);
         continue;
       }
@@ -11989,11 +12547,18 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       );
       const seekTolerance = isPreviewPlaying ? 0.45 : 0.04;
       audio.playbackRate = audioClip.speed ?? 1;
-      audio.volume = Math.min(
+      setPreviewMediaGain(
+        audio,
         (audioClip.volume ?? 1) *
           getClipAudioFadeMultiplier(audioClip, playheadFrame),
-        1,
       );
+      if (audio.readyState === 0) {
+        if (audio.dataset.timelineLoadRequested !== "true") {
+          audio.dataset.timelineLoadRequested = "true";
+          audio.load();
+        }
+        continue;
+      }
       if (Math.abs(audio.currentTime - desiredTime) > seekTolerance) {
         audio.currentTime = desiredTime;
       }
@@ -12006,7 +12571,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         audio.pause();
       }
     }
-  }, [isPreviewPlaying, playbackAudioClips, playheadFrame]);
+  }, [
+    isPreviewPlaying,
+    playbackAudioClips,
+    playheadFrame,
+    releasePreviewMediaGain,
+    setPreviewMediaGain,
+  ]);
 
   useEffect(() => {
     if (previewMode === "timeline") {
@@ -12052,18 +12623,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }
 
     const scrollArea = timelineScrollRef.current;
-    const timelineContent = timelineContentRef.current;
-    if (!scrollArea || !timelineContent) return;
+    if (!scrollArea) return;
 
-    const nextScrollLeft = getPlaybackFollowScrollLeft({
-      scrollLeft: scrollArea.scrollLeft,
-      viewportWidth: scrollArea.clientWidth,
-      contentWidth: timelineContent.scrollWidth,
-      playheadX: timelineOrigin + playheadFrame * timelineScale,
-    });
+    const nextScrollLeft = Math.max(0, playheadFrame * timelineScale);
     if (Math.abs(nextScrollLeft - scrollArea.scrollLeft) < 1) return;
 
     const animationFrame = window.requestAnimationFrame(() => {
+      suppressNextTimelineScrollPlayheadFollow();
       scrollArea.scrollLeft = nextScrollLeft;
     });
     return () => window.cancelAnimationFrame(animationFrame);
@@ -12071,7 +12637,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     playheadFrame,
     pointerDrag,
     previewMode,
-    timelineOrigin,
+    suppressNextTimelineScrollPlayheadFollow,
     timelineScale,
     trimDrag,
   ]);
@@ -14179,6 +14745,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                   video,
                                 );
                               } else {
+                                releasePreviewMediaGain(
+                                  previewLayerVideoRefs.current.get(
+                                    videoClip.id,
+                                  ),
+                                );
                                 previewLayerVideoRefs.current.delete(
                                   videoClip.id,
                                 );
@@ -14312,10 +14883,27 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                         <audio
                           key={audioClip.id}
                           src={resolveMediaSource(audioClip.src ?? "")}
+                          preload="auto"
+                          muted={false}
+                          onLoadedMetadata={(event) => {
+                            if (isPreviewPlaying) {
+                              const audio = event.currentTarget;
+                              void audio.play().catch(() => undefined);
+                            }
+                          }}
+                          onCanPlay={(event) => {
+                            if (isPreviewPlaying) {
+                              const audio = event.currentTarget;
+                              void audio.play().catch(() => undefined);
+                            }
+                          }}
                           ref={(audio) => {
                             if (audio) {
                               previewAudioRefs.current.set(audioClip.id, audio);
                             } else {
+                              releasePreviewMediaGain(
+                                previewAudioRefs.current.get(audioClip.id),
+                              );
                               previewAudioRefs.current.delete(audioClip.id);
                             }
                           }}
@@ -15669,12 +16257,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               </label>
               <label>
                 <strong>Volume</strong>
-                <em>{Math.round(selectedClipVolume * 100)}%</em>
+                <em>{formatVolumeDecibels(selectedClipVolume)}</em>
                 <input
                   type="range"
                   min="0"
-                  max="1"
-                  step="0.05"
+                  max={MAX_AUDIO_GAIN}
+                  step="0.1"
                   value={selectedClipVolume}
                   disabled={!canEditSelectedVolume}
                   onPointerDown={() => startVideoLayerControlDrag("volume")}
@@ -15723,6 +16311,22 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       }
                     />
                   </label>
+                  {clipControlTarget &&
+                  (clipControlTarget.track === "main" ||
+                    clipControlTarget.track === "upper" ||
+                    clipControlTarget.track === "cutout") &&
+                  Boolean(clipControlTarget.src) &&
+                  !isImageClip(clipControlTarget) &&
+                  clipControlTarget.cutout?.mediaKind !== "image" &&
+                  !clipControlTarget.audioDetached ? (
+                    <button
+                      className="audio-detach-button"
+                      type="button"
+                      onClick={detachSelectedClipAudio}
+                    >
+                      Extract audio from video
+                    </button>
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -15936,6 +16540,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         <div
           className="timeline-scroll"
           ref={timelineScrollRef}
+          onScroll={updatePlayheadFromTimelineScroll}
           onPointerDown={(event) => {
             const target = event.target;
             if (
@@ -16605,8 +17210,153 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                   src={clip.src}
                                   sourceStart={clip.sourceStart}
                                   speed={clip.speed}
+                                  fadeInFrames={clip.audioFadeInFrames}
+                                  fadeOutFrames={clip.audioFadeOutFrames}
+                                  volume={clip.volume}
                                 />
                               </div>
+                            ) : null}
+                            {shouldShowTimelineWaveform(clip) &&
+                            (clip.track === "audio" ||
+                              clip.track === "main" ||
+                              clip.track === "upper" ||
+                              clip.track === "cutout") ? (
+                              <>
+                                <div
+                                  className="audio-fade-zone audio-fade-zone-in"
+                                  aria-hidden="true"
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      ((clip.audioFadeInFrames ?? 0) /
+                                        Math.max(1, clip.duration)) *
+                                        100,
+                                    )}%`,
+                                  }}
+                                />
+                                <div
+                                  className="audio-fade-zone audio-fade-zone-out"
+                                  aria-hidden="true"
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      ((clip.audioFadeOutFrames ?? 0) /
+                                        Math.max(1, clip.duration)) *
+                                        100,
+                                    )}%`,
+                                  }}
+                                />
+                                <button
+                                  className="audio-fade-handle audio-fade-handle-in"
+                                  type="button"
+                                  aria-label={`Adjust fade in for ${clip.label}`}
+                                  title={`Fade in ${(clip.audioFadeInFrames ?? 0) / fps}s`}
+                                  style={{
+                                    left: `calc(max(2%, ${Math.min(
+                                      100,
+                                      ((clip.audioFadeInFrames ?? 0) /
+                                        Math.max(1, clip.duration)) *
+                                        100,
+                                    )}%) - 6px)`,
+                                  }}
+                                  onPointerDown={(event) =>
+                                    startAudioFadeDrag(event, clip, "in")
+                                  }
+                                />
+                                <button
+                                  className="audio-fade-handle audio-fade-handle-out"
+                                  type="button"
+                                  aria-label={`Adjust fade out for ${clip.label}`}
+                                  title={`Fade out ${(clip.audioFadeOutFrames ?? 0) / fps}s`}
+                                  style={{
+                                    right: `calc(max(2%, ${Math.min(
+                                      100,
+                                      ((clip.audioFadeOutFrames ?? 0) /
+                                        Math.max(1, clip.duration)) *
+                                        100,
+                                    )}%) - 6px)`,
+                                  }}
+                                  onPointerDown={(event) =>
+                                    startAudioFadeDrag(event, clip, "out")
+                                  }
+                                />
+                              </>
+                            ) : null}
+                            {shouldShowTimelineWaveform(clip) &&
+                            ((clip.audioFadeInFrames ?? 0) > 0 ||
+                              (clip.audioFadeOutFrames ?? 0) > 0) ? (
+                              <svg
+                                className="audio-fade-overlay"
+                                viewBox="0 0 100 100"
+                                preserveAspectRatio="none"
+                                aria-hidden="true"
+                              >
+                                {(clip.audioFadeInFrames ?? 0) > 0 ? (
+                                  <line
+                                    className="audio-fade-ramp"
+                                    x1="0"
+                                    y1="100"
+                                    x2={Math.min(
+                                      100,
+                                      ((clip.audioFadeInFrames ?? 0) /
+                                        Math.max(1, clip.duration)) *
+                                        100,
+                                    )}
+                                    y2="0"
+                                  />
+                                ) : null}
+                                {(clip.audioFadeOutFrames ?? 0) > 0 ? (
+                                  <line
+                                    className="audio-fade-ramp"
+                                    x1={100 -
+                                      Math.min(
+                                        100,
+                                        ((clip.audioFadeOutFrames ?? 0) /
+                                          Math.max(1, clip.duration)) *
+                                          100,
+                                      )}
+                                    y1="0"
+                                    x2="100"
+                                    y2="100"
+                                  />
+                                ) : null}
+                              </svg>
+                            ) : null}
+                            {shouldShowTimelineWaveform(clip) &&
+                            (clip.track === "audio" ||
+                              clip.track === "main" ||
+                              clip.track === "upper" ||
+                              clip.track === "cutout") ? (
+                              <svg
+                                className="audio-volume-overlay"
+                                viewBox="0 0 100 100"
+                                preserveAspectRatio="none"
+                                aria-hidden="true"
+                              >
+                                <line
+                                  className="audio-volume-hit-line"
+                                  x1="0"
+                                  x2="100"
+                                  y1={getAudioVolumeLineY(clip.volume ?? 1)}
+                                  y2={getAudioVolumeLineY(clip.volume ?? 1)}
+                                  onPointerDown={(event) =>
+                                    startAudioVolumeDrag(event, clip)
+                                  }
+                                />
+                                <line
+                                  className="audio-volume-line"
+                                  x1="0"
+                                  x2="100"
+                                  y1={getAudioVolumeLineY(clip.volume ?? 1)}
+                                  y2={getAudioVolumeLineY(clip.volume ?? 1)}
+                                />
+                                <circle
+                                  className="audio-volume-knob"
+                                  cx="50"
+                                  cy={getAudioVolumeLineY(clip.volume ?? 1)}
+                                  r="2.2"
+                                />
+                              </svg>
                             ) : null}
                             {shouldShowTimelineWaveform(clip) ? (
                               <button

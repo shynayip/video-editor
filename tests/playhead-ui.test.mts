@@ -1040,7 +1040,7 @@ test("routes speed and volume to a selected video layer or one selected clip", (
   );
   assert.match(
     source,
-    /setVideoLayerVolume\(currentClips, selectedVideoLayer, volume\)/,
+    /setVideoLayerVolume\(currentClips, selectedVideoLayer, nextVolume\)/,
   );
   assert.match(
     source,

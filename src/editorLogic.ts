@@ -775,6 +775,8 @@ export type TimelineClip = {
   volume?: number;
   audioFadeInFrames?: number;
   audioFadeOutFrames?: number;
+  detachedFromVideo?: boolean;
+  audioDetached?: boolean;
   sourceStart?: number;
   sourceDuration?: number;
   linkedClipId?: string;
@@ -986,6 +988,56 @@ export const getPlaybackFollowScrollLeft = ({
   }
 
   return currentScrollLeft;
+};
+
+export const getTimelineScrollFollowPlayheadFrame = ({
+  scrollLeft,
+  viewportWidth,
+  contentWidth,
+  playheadX,
+  timelineOrigin,
+  timelineScale,
+  projectDuration,
+}: {
+  scrollLeft: number;
+  viewportWidth: number;
+  contentWidth: number;
+  playheadX: number;
+  timelineOrigin: number;
+  timelineScale: number;
+  projectDuration: number;
+}): number | null => {
+  if (
+    !Number.isFinite(scrollLeft) ||
+    !Number.isFinite(viewportWidth) ||
+    !Number.isFinite(contentWidth) ||
+    !Number.isFinite(playheadX) ||
+    !Number.isFinite(timelineOrigin) ||
+    !Number.isFinite(timelineScale) ||
+    !Number.isFinite(projectDuration) ||
+    viewportWidth <= 0 ||
+    timelineScale <= 0 ||
+    projectDuration <= 0 ||
+    contentWidth <= viewportWidth
+  ) {
+    return null;
+  }
+
+  const edgePadding = Math.min(
+    viewportWidth * 0.3,
+    Math.max(72, viewportWidth * 0.18),
+  );
+  const visibleLeft = scrollLeft + edgePadding;
+  const visibleRight = scrollLeft + viewportWidth - edgePadding;
+
+  if (playheadX >= visibleLeft && playheadX <= visibleRight) {
+    return null;
+  }
+
+  const centerFrame = Math.round(
+    (scrollLeft + viewportWidth / 2 - timelineOrigin) / timelineScale,
+  );
+  return Math.max(0, Math.min(Math.max(0, projectDuration - 1), centerFrame));
 };
 
 export const getMediaTrimFrameFromPointer = ({
@@ -4118,6 +4170,7 @@ const isAudioOwnedByVideo = (
     audioClip.linkedClipId === videoClip.id;
   const isLegacyOriginalAudio =
     !audioClip.linkedClipId &&
+    !audioClip.detachedFromVideo &&
     Boolean(videoClip.src) &&
     audioClip.src === videoClip.src &&
     audioClip.start === videoClip.start &&
@@ -4147,6 +4200,7 @@ export const shouldMuteVideoNativeAudio = (
   return (
     !winningVideo ||
     winningVideo.id !== videoClipId ||
+    Boolean(winningVideo.audioDetached) ||
     Boolean(getOwnedAudioClip(clips, winningVideo))
   );
 };
@@ -5531,6 +5585,109 @@ export const ensureLinkedAudioForVideo = (
     ),
     linkedAudio,
   ];
+};
+
+export const detachAudioFromVideoClip = (
+  clips: TimelineClip[],
+  videoClipId: string,
+): TimelineClip[] => {
+  const videoClip = clips.find(
+    (clip) =>
+      clip.id === videoClipId &&
+      (clip.track === "main" || clip.track === "upper" || clip.track === "cutout"),
+  );
+  if (!videoClip?.src) return clips;
+
+  const linkedAudio = videoClip.linkedClipId
+    ? clips.find((clip) => clip.id === videoClip.linkedClipId)
+    : undefined;
+  const existingDetachedAudio = clips.find(
+    (clip) =>
+      clip.track === "audio" &&
+      !clip.linkedClipId &&
+      clip.src === videoClip.src &&
+      clip.start === videoClip.start &&
+      (clip.sourceStart ?? 0) === (videoClip.sourceStart ?? 0),
+  );
+
+  if (!linkedAudio && existingDetachedAudio) {
+    return clips.map((clip) => {
+      if (clip.id === videoClip.id) {
+        return {
+          ...clip,
+          linkedClipId: undefined,
+          audioDetached: true,
+        };
+      }
+      if (clip.id === existingDetachedAudio.id) {
+        return {
+          ...clip,
+          detachedFromVideo: true,
+          hidden: false,
+          volume: clip.volume === 0 ? 1 : (clip.volume ?? 1),
+        };
+      }
+      return clip;
+    });
+  }
+
+  if (!linkedAudio) {
+    const baseAudioId = `${videoClip.id}-detached-audio`;
+    let audioId = baseAudioId;
+    let suffix = 2;
+    while (clips.some((clip) => clip.id === audioId)) {
+      audioId = `${baseAudioId}-${suffix}`;
+      suffix += 1;
+    }
+
+    const detachedAudio: TimelineClip = {
+      id: audioId,
+      label: `${videoClip.label} audio`,
+      track: "audio",
+      start: videoClip.start,
+      duration: videoClip.duration,
+      color: "#2563eb",
+      src: videoClip.src,
+      speed: videoClip.speed ?? 1,
+      volume: videoClip.volume === 0 ? 1 : (videoClip.volume ?? 1),
+      detachedFromVideo: true,
+      sourceStart: videoClip.sourceStart ?? 0,
+      ...(Number.isFinite(videoClip.sourceDuration)
+        ? { sourceDuration: videoClip.sourceDuration }
+        : {}),
+    };
+
+    return [
+      ...clips.map((clip) =>
+        clip.id === videoClip.id
+          ? { ...clip, linkedClipId: undefined, audioDetached: true }
+          : clip,
+      ),
+      detachedAudio,
+    ];
+  }
+
+  return clips.map((clip) => {
+    if (clip.id === videoClip.id) {
+      return {
+        ...clip,
+        linkedClipId: undefined,
+        audioDetached: true,
+      };
+    }
+    if (clip.id === linkedAudio.id) {
+      return {
+        ...clip,
+        audioKind: undefined,
+        linkedClipId: undefined,
+        detachedFromVideo: true,
+        hidden: false,
+        volume: clip.volume === 0 ? 1 : (clip.volume ?? 1),
+        label: clip.label.replace(/\s+audio$/i, ""),
+      };
+    }
+    return clip;
+  });
 };
 
 export const moveClipToMainTrack = (

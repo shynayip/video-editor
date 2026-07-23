@@ -1142,12 +1142,7 @@ const shouldShowTimelineFilmstrip = (clip: TimelineClip) =>
     (clip.track === "cutout" && clip.cutout?.mediaKind === "video"));
 
 const shouldShowTimelineWaveform = (clip: TimelineClip) =>
-  clip.track === "audio" ||
-  (Boolean(clip.src) &&
-    !clip.audioDetached &&
-    (clip.track === "main" || clip.track === "upper"
-      ? !isImageClip(clip)
-      : clip.track === "cutout" && clip.cutout?.mediaKind === "video"));
+  clip.track === "audio";
 
 const getTimelineThumbnailCount = (clip: TimelineClip) =>
   Math.max(
@@ -4913,13 +4908,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     );
   const canEditSelectedAudioFade = Boolean(
     clipControlTarget &&
+    clipControlTarget.track === "audio" &&
+    clipControlTarget.mediaType !== "image" &&
+    clipControlTarget.cutout?.mediaKind !== "image",
+  );
+  const canExtractSelectedAudio = Boolean(
+    clipControlTarget &&
     (clipControlTarget.track === "main" ||
       clipControlTarget.track === "upper" ||
-      clipControlTarget.track === "cutout" ||
-      clipControlTarget.track === "audio") &&
-    clipControlTarget.mediaType !== "image" &&
+      clipControlTarget.track === "cutout") &&
+    Boolean(clipControlTarget.src) &&
+    !isImageClip(clipControlTarget) &&
     clipControlTarget.cutout?.mediaKind !== "image" &&
-    (clipControlTarget.track === "audio" || !clipControlTarget.audioDetached),
+    !clipControlTarget.audioDetached,
   );
   const selectedClipDurationSeconds = Math.max(
     0,
@@ -16311,23 +16312,16 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       }
                     />
                   </label>
-                  {clipControlTarget &&
-                  (clipControlTarget.track === "main" ||
-                    clipControlTarget.track === "upper" ||
-                    clipControlTarget.track === "cutout") &&
-                  Boolean(clipControlTarget.src) &&
-                  !isImageClip(clipControlTarget) &&
-                  clipControlTarget.cutout?.mediaKind !== "image" &&
-                  !clipControlTarget.audioDetached ? (
-                    <button
-                      className="audio-detach-button"
-                      type="button"
-                      onClick={detachSelectedClipAudio}
-                    >
-                      Extract audio from video
-                    </button>
-                  ) : null}
                 </>
+              ) : null}
+              {canExtractSelectedAudio ? (
+                <button
+                  className="audio-detach-button"
+                  type="button"
+                  onClick={detachSelectedClipAudio}
+                >
+                  Extract audio from video
+                </button>
               ) : null}
             </div>
           ) : null}
@@ -17106,7 +17100,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 : {
                                     background: isVoiceoverClip(clip)
                                       ? "#05070b"
-                                      : clip.color,
+                                      : shouldShowTimelineFilmstrip(clip)
+                                        ? "#05070b"
+                                        : clip.color,
                                   }),
                             }}
                           >

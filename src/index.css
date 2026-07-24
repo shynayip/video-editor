@@ -8224,3 +8224,350 @@ input[type="range"],
 .timeline-clip.audio-timeline-clip:hover {
   border-color: var(--theme-yellow);
 }
+
+/* CapCut-inspired clean workspace polish */
+:root {
+  --capcut-bg: #111111;
+  --capcut-panel: #242424;
+  --capcut-panel-soft: #2b2b2b;
+  --capcut-panel-dark: #191919;
+  --capcut-line: #343434;
+  --capcut-line-soft: rgba(255, 255, 255, 0.08);
+  --capcut-cyan: #16d5d8;
+  --capcut-cyan-soft: rgba(22, 213, 216, 0.16);
+}
+
+.editor-shell {
+  grid-template-rows:
+    44px
+    minmax(260px, 1fr)
+    var(--timeline-panel-height, clamp(240px, 34vh, 360px));
+  gap: 6px 8px;
+  padding: 0 8px 8px;
+  background: var(--capcut-bg);
+}
+
+.topbar {
+  margin: 0 -8px;
+  padding: 0 14px;
+  background: #151515;
+  border-bottom-color: #2b2b2b;
+}
+
+.brand {
+  color: #ffffff;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+}
+
+.tool-tabs {
+  gap: 18px;
+  color: #c2c2c2;
+  font-size: 12px;
+}
+
+.tool-tabs button {
+  height: 34px;
+  gap: 5px;
+  transition:
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.tool-tabs button:hover,
+.tool-tabs button:focus-visible {
+  color: #ffffff;
+  outline: none;
+}
+
+.tool-tabs .active-tool {
+  color: var(--capcut-cyan);
+}
+
+.tool-tabs .active-tool > .lucide {
+  filter: drop-shadow(0 0 8px rgba(22, 213, 216, 0.28));
+}
+
+.project-actions {
+  gap: 7px;
+}
+
+.project-actions > button,
+.project-actions > .shortcut-help-button,
+.project-actions > .reset-layout-button,
+.export-mode-control select {
+  min-height: 32px;
+  border-radius: 7px;
+}
+
+.save-state-saved {
+  color: #62e3a8;
+}
+
+.export-button {
+  min-width: 116px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--capcut-cyan);
+  color: #031516;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+}
+
+.details-panel,
+.media-panel,
+.preview-panel,
+.timeline-panel {
+  border: 1px solid var(--capcut-line);
+  border-radius: 8px;
+  background: var(--capcut-panel);
+  overflow: hidden;
+}
+
+.details-panel,
+.media-panel {
+  padding: 0;
+}
+
+.details-panel {
+  background: var(--capcut-panel);
+}
+
+.media-panel {
+  border-right: 1px solid var(--capcut-line);
+  background: var(--capcut-panel-dark);
+}
+
+.media-library {
+  padding: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(22, 213, 216, 0.035), transparent 36%),
+    var(--capcut-panel-dark);
+}
+
+.library-actions {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  gap: 8px;
+  margin: -14px -14px 14px;
+  padding: 14px;
+  background: linear-gradient(180deg, #191919 70%, rgba(25, 25, 25, 0));
+}
+
+.import-button,
+.record-button,
+.secondary-action-button,
+.timeline-tools button,
+.timeline-zoom-controls button {
+  border: 0;
+  border-radius: 8px;
+  background: #303030;
+  color: #f3f3f3;
+}
+
+.import-button,
+.timeline-tools .primary-icon-tool {
+  background: #f7c600;
+  color: #171200;
+}
+
+.record-button:hover,
+.secondary-action-button:hover,
+.timeline-tools button:hover,
+.timeline-zoom-controls button:hover {
+  background: #3b3b3b;
+  color: #ffffff;
+}
+
+.media-grid {
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 14px;
+}
+
+.media-thumb {
+  height: 132px;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  outline: 0;
+  background: #303030;
+  box-shadow: none;
+}
+
+.media-thumb-video,
+.media-thumb-image {
+  height: 86px;
+}
+
+.media-thumb strong {
+  padding: 9px;
+  color: #eeeeee;
+  font-size: 11px;
+}
+
+.added-chip,
+.media-duration {
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.72);
+  font-size: 10px;
+}
+
+.media-thumb:hover,
+.media-thumb:focus-within {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: #353535;
+}
+
+.media-thumb.selected-media,
+.media-thumb.active-media {
+  border-color: var(--capcut-cyan);
+  outline: 2px solid var(--capcut-cyan);
+  outline-offset: 2px;
+  background: #2f3327;
+  box-shadow: 0 0 0 5px rgba(22, 213, 216, 0.11);
+}
+
+.preview-panel {
+  display: grid;
+  padding: 12px;
+  background: #05070d;
+}
+
+.preview-shell {
+  gap: 10px;
+  background: transparent;
+}
+
+.preview-window {
+  border: 0;
+  border-radius: 6px;
+  background: #030303;
+  box-shadow: none;
+}
+
+.timeline-panel {
+  grid-template-rows: 36px minmax(0, 1fr);
+  padding: 0 0 10px;
+  background: #202020;
+  border-top-color: var(--capcut-line);
+}
+
+.timeline-toolbar {
+  height: 36px;
+  padding: 0 12px;
+  gap: 12px;
+  background: #252525;
+  border-bottom: 1px solid var(--capcut-line);
+}
+
+.timeline-tools {
+  gap: 6px;
+}
+
+.timeline-tools .icon-tool-button {
+  width: 30px;
+  height: 28px;
+}
+
+.timeline-zoom-controls {
+  gap: 7px;
+}
+
+.timeline-zoom-controls input[type="range"] {
+  accent-color: var(--capcut-cyan);
+}
+
+.timeline-scroll {
+  background: #222222;
+  scrollbar-color: #5b5b5b #1c1c1c;
+}
+
+.timeline-ruler {
+  height: 28px;
+  color: #8b8b8b;
+  background: #222222;
+}
+
+.timeline-track {
+  grid-template-columns: calc(var(--timeline-origin) - 12px) 1fr;
+}
+
+.track-label {
+  background: #1a1a1a;
+  color: #d6d6d6;
+  border-right: 1px solid var(--capcut-line);
+}
+
+.track-lane {
+  min-height: 58px;
+  border-color: #313131;
+  background: #242424;
+}
+
+.track-lane.selected-track-lane {
+  border-color: rgba(22, 213, 216, 0.52);
+  background: rgba(22, 213, 216, 0.035);
+  box-shadow:
+    inset 0 1px 0 rgba(22, 213, 216, 0.32),
+    inset 0 -1px 0 rgba(22, 213, 216, 0.32);
+}
+
+.timeline-clip.video-timeline-clip,
+.timeline-clip.audio-timeline-clip {
+  border-color: rgba(22, 213, 216, 0.42);
+  border-radius: 6px;
+  background-color: #07545b !important;
+}
+
+.timeline-clip.video-timeline-clip:hover,
+.timeline-clip.audio-timeline-clip:hover {
+  border-color: var(--capcut-cyan);
+}
+
+.timeline-clip.selected-timeline-clip,
+.timeline-clip.multi-selected-timeline-clip {
+  border-color: #f7c600;
+  box-shadow:
+    inset 0 0 0 2px rgba(247, 198, 0, 0.9),
+    0 0 0 1px rgba(247, 198, 0, 0.35);
+}
+
+.audio-waveform-bar,
+.audio-waveform-line {
+  fill: var(--capcut-cyan);
+  stroke: var(--capcut-cyan);
+}
+
+.timeline-clip.has-timeline-waveform:not(.audio-timeline-clip) .audio-waveform {
+  background: linear-gradient(
+    to top,
+    rgba(4, 52, 58, 0.92),
+    rgba(4, 52, 58, 0.38)
+  );
+  border-top-color: rgba(22, 213, 216, 0.34);
+}
+
+.timeline-playhead::before,
+.timeline-playhead::after {
+  background: #ffffff;
+}
+
+.timeline-playhead::after {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+@media (max-width: 1280px) {
+  .editor-shell {
+    grid-template-columns: 280px minmax(0, 1fr) 340px;
+    gap: 5px;
+    padding-inline: 6px;
+  }
+
+  .tool-tabs {
+    gap: 12px;
+  }
+
+  .media-grid {
+    grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  }
+}

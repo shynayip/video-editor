@@ -13581,19 +13581,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 className="rough-edit-tool-panel"
                 onPointerDown={(event) => event.stopPropagation()}
               >
-                <header className="rough-edit-header">
-                  <strong>AI Edit</strong>
-                  <span>
-                    Pick one main A-roll, then optional B-roll cutaways. The
-                    result becomes real editable timeline clips.
-                  </span>
-                  <div className="rough-edit-flow" aria-label="A-roll B-roll flow">
-                    <span>A-roll base</span>
-                    <b>B-roll stack</b>
-                    <em>Template 2 head</em>
-                  </div>
-                </header>
-
                 <section className="rough-edit-section">
                   <div className="rough-edit-section-heading">
                     <strong>1. Choose A-roll</strong>

@@ -808,7 +808,6 @@ button {
   opacity: 0.45;
 }
 
-.rough-edit-header,
 .rough-edit-section {
   display: grid;
   gap: 8px;
@@ -818,44 +817,6 @@ button {
   background: #0d131b;
 }
 
-.rough-edit-header {
-  background: linear-gradient(135deg, #101923, #17140a);
-}
-
-.rough-edit-flow {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.rough-edit-flow span,
-.rough-edit-flow b,
-.rough-edit-flow em {
-  min-width: 0;
-  padding: 6px 7px;
-  border-radius: 999px;
-  background: #101923;
-  color: #dbeafe;
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 900;
-  text-align: center;
-}
-
-.rough-edit-flow span {
-  background: rgba(8, 145, 178, 0.22);
-}
-
-.rough-edit-flow b {
-  background: rgba(20, 184, 166, 0.22);
-}
-
-.rough-edit-flow em {
-  background: rgba(245, 184, 0, 0.22);
-  color: #facc15;
-}
-
-.rough-edit-header span,
 .rough-edit-section-heading span,
 .rough-edit-choice span,
 .rough-edit-empty {

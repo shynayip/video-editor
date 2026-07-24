@@ -4,7 +4,6 @@ import {
   addOverlayClip,
   addOverlayMediaClip,
   addTranscriptCaptions,
-  alignDetachedAudioWithSourceVideos,
   applyTimelineHistoryEdit,
   advanceTimelinePlaybackFrame,
   stepTimelinePlayback,
@@ -30,6 +29,7 @@ import {
   deleteClipById,
   duplicateClipById,
   duplicateClipGroupByIds,
+  duplicateMediaItems,
   getClipSourceTime,
   getClipAudioFadeMultiplier,
   getClipFilterCss,
@@ -38,6 +38,7 @@ import {
   getClipAnimationPreviewFrame,
   getContextualAudioClips,
   getExpandedTimelineBoundary,
+  getDirectionalPreviewAlignmentGuides,
   getStableTimelineFrameDelta,
   getDragEdgeAutoScrollDelta,
   getPlaybackFollowScrollLeft,
@@ -52,7 +53,10 @@ import {
   getActiveVideoLayersAtFrame,
   getTopVisibleVideoClipAtFrame,
   getClipTranscriptionSource,
+  getCompactedTimelineGroupStarts,
   getTranscriptableRowClips,
+  getTranscriptEditGroupClipIds,
+  getTranscriptEditGroupId,
   getVisualToolTargetClipId,
   getVideoLayer,
   getVideoLayerEnd,
@@ -89,20 +93,16 @@ import {
   replaceGeneratedCaptionBatch,
   replaceFirstClipOnTrack,
   removeBrowserOnlySavedMedia,
-<<<<<<< Updated upstream
   detachAudioFromVideoClips,
-=======
-  removeTranscriptGapsFromLinkedVideo,
-  removeTranscriptSegmentFromLinkedVideo,
-  removeTranscriptWordFromLinkedVideo,
-  removeTranscriptWordsFromLinkedVideo,
->>>>>>> Stashed changes
   ensureLinkedAudioForVideo,
   keepDominantVoiceInLinkedVideo,
+  removeTranscriptGapsFromLinkedVideo,
   restoreDominantVideoSources,
   resetMediaItemEdits,
   removeSilenceFromLinkedVideo,
   removeTranscriptSentenceFromLinkedVideo,
+  removeTranscriptWordFromLinkedVideo,
+  removeTranscriptWordsFromLinkedVideo,
   redoTimelineHistory,
   setClipSpeedById,
   setClipGroupSpeedByIds,
@@ -177,6 +177,176 @@ const historyClip = (id: string): TimelineClip => ({
   start: 0,
   duration: 30,
   color: "#0891b2",
+});
+
+test("compacts grouped timeline clips per row and keeps linked audio attached", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "main-a",
+      label: "Main A",
+      track: "main",
+      start: 0,
+      duration: 20,
+      color: "#0891b2",
+      linkedClipId: "main-a-audio",
+    },
+    {
+      id: "main-a-audio",
+      label: "Main A audio",
+      track: "audio",
+      audioKind: "linked",
+      start: 0,
+      duration: 20,
+      color: "#2563eb",
+      linkedClipId: "main-a",
+    },
+    {
+      id: "main-b",
+      label: "Main B",
+      track: "main",
+      start: 15,
+      duration: 12,
+      color: "#0891b2",
+      linkedClipId: "main-b-audio",
+    },
+    {
+      id: "main-b-audio",
+      label: "Main B audio",
+      track: "audio",
+      audioKind: "linked",
+      start: 15,
+      duration: 12,
+      color: "#2563eb",
+      linkedClipId: "main-b",
+    },
+    {
+      id: "overlay-a",
+      label: "Overlay A",
+      track: "upper",
+      videoLayer: 1,
+      start: 4,
+      duration: 8,
+      color: "#7c3aed",
+    },
+    {
+      id: "overlay-b",
+      label: "Overlay B",
+      track: "upper",
+      videoLayer: 1,
+      start: 10,
+      duration: 6,
+      color: "#7c3aed",
+    },
+    {
+      id: "sticker-a",
+      label: "Sticker A",
+      track: "sticker",
+      start: 2,
+      duration: 5,
+      color: "#ec4899",
+    },
+    {
+      id: "sticker-b",
+      label: "Sticker B",
+      track: "sticker",
+      start: 5,
+      duration: 4,
+      color: "#ec4899",
+    },
+    {
+      id: "cutout-a",
+      label: "Cutout A",
+      track: "cutout",
+      start: 3,
+      duration: 7,
+      color: "#14b8a6",
+    },
+    {
+      id: "cutout-b",
+      label: "Cutout B",
+      track: "cutout",
+      start: 8,
+      duration: 5,
+      color: "#14b8a6",
+    },
+    {
+      id: "audio-a",
+      label: "Audio A",
+      track: "audio",
+      audioKind: "music",
+      start: 1,
+      duration: 9,
+      color: "#2563eb",
+    },
+    {
+      id: "audio-b",
+      label: "Audio B",
+      track: "audio",
+      audioKind: "music",
+      start: 8,
+      duration: 4,
+      color: "#2563eb",
+    },
+  ];
+  const starts = getCompactedTimelineGroupStarts({
+    clips,
+    clipIds: clips.map((clip) => clip.id),
+    frameDelta: 10,
+  });
+
+  assert.equal(starts.get("main-a"), 10);
+  assert.equal(starts.get("main-b"), 30);
+  assert.equal(starts.get("main-a-audio"), 10);
+  assert.equal(starts.get("main-b-audio"), 30);
+  assert.equal(starts.get("overlay-a"), 14);
+  assert.equal(starts.get("overlay-b"), 22);
+  assert.equal(starts.get("sticker-a"), 12);
+  assert.equal(starts.get("sticker-b"), 17);
+  assert.equal(starts.get("cutout-a"), 13);
+  assert.equal(starts.get("cutout-b"), 20);
+  assert.equal(starts.get("audio-a"), 11);
+  assert.equal(starts.get("audio-b"), 20);
+});
+
+test("keeps the center guide that matches the stable drag axis", () => {
+  const horizontalGuide = getDirectionalPreviewAlignmentGuides(
+    {
+      horizontal: true,
+      vertical: false,
+      horizontalPositions: [50],
+      verticalPositions: [],
+    },
+    20,
+    2,
+  );
+  assert.equal(horizontalGuide.horizontal, true);
+  assert.equal(horizontalGuide.vertical, false);
+
+  const verticalGuide = getDirectionalPreviewAlignmentGuides(
+    {
+      horizontal: false,
+      vertical: true,
+      horizontalPositions: [],
+      verticalPositions: [50],
+    },
+    2,
+    20,
+  );
+  assert.equal(verticalGuide.horizontal, false);
+  assert.equal(verticalGuide.vertical, true);
+
+  const centeredCross = getDirectionalPreviewAlignmentGuides(
+    {
+      horizontal: true,
+      vertical: true,
+      horizontalPositions: [50],
+      verticalPositions: [50],
+    },
+    20,
+    2,
+  );
+  assert.equal(centeredCross.horizontal, true);
+  assert.equal(centeredCross.vertical, true);
 });
 
 test("uses black and white system colors for text and transparent captions", () => {
@@ -393,6 +563,115 @@ test("normalizes grouped and whole-video scene labels after loading", () => {
       { label: "Scene 4", sourceLabel: "Whole video.mp4" },
     ],
   );
+});
+
+test("duplicates multiple imported scenes with stable copy numbering", () => {
+  const scenes = createSceneMediaItems({
+    sourceFileId: "source-2",
+    sourceGroupIndex: 2,
+    label: "Product demo.mp4",
+    src: "uploads/product-demo.mp4",
+    ranges: [
+      { startSeconds: 0, endSeconds: 2 },
+      { startSeconds: 2, endSeconds: 3 },
+    ],
+    fps: 30,
+  });
+
+  const firstPaste = duplicateMediaItems({
+    mediaItems: scenes,
+    sourceItems: scenes,
+    idPrefix: "paste-1",
+  });
+
+  assert.deepEqual(
+    firstPaste.copiedItems.map((item) => item.label),
+    ["Scene 2.1 (copy 1)", "Scene 2.2 (copy 1)"],
+  );
+  assert.deepEqual(
+    firstPaste.copiedItems.map((item) => ({
+      sourceStart: item.sourceStart,
+      durationInFrames: item.durationInFrames,
+      copyIndex: item.copyIndex,
+    })),
+    [
+      { sourceStart: 0, durationInFrames: 60, copyIndex: 1 },
+      { sourceStart: 60, durationInFrames: 30, copyIndex: 1 },
+    ],
+  );
+  assert.deepEqual(
+    firstPaste.mediaItems.slice(0, 2).map((item) => item.label),
+    ["Scene 2.1", "Scene 2.2"],
+  );
+
+  const secondPaste = duplicateMediaItems({
+    mediaItems: firstPaste.mediaItems,
+    sourceItems: [scenes[0]],
+    idPrefix: "paste-2",
+  });
+
+  assert.equal(secondPaste.copiedItems[0]?.label, "Scene 2.1 (copy 2)");
+  assert.equal(secondPaste.copiedItems[0]?.copyIndex, 2);
+  assert.equal(
+    new Set(secondPaste.mediaItems.map((item) => item.id)).size,
+    secondPaste.mediaItems.length,
+  );
+});
+
+test("uses the selected imported copy as the source for nested copy names", () => {
+  const [scene] = createSceneMediaItems({
+    sourceFileId: "source-5",
+    sourceGroupIndex: 5,
+    label: "Scene five.mp4",
+    src: "uploads/scene-five.mp4",
+    ranges: [{ startSeconds: 0, endSeconds: 2 }],
+    fps: 30,
+  });
+  assert.ok(scene);
+
+  const firstCopy = duplicateMediaItems({
+    mediaItems: [scene],
+    sourceItems: [scene],
+    idPrefix: "first-copy",
+  });
+  const nestedCopy = duplicateMediaItems({
+    mediaItems: firstCopy.mediaItems,
+    sourceItems: firstCopy.copiedItems,
+    idPrefix: "nested-copy",
+  });
+
+  assert.equal(firstCopy.copiedItems[0]?.label, "Scene 5.1 (copy 1)");
+  assert.equal(
+    nestedCopy.copiedItems[0]?.label,
+    "Scene 5.1 (copy 1) (copy 1)",
+  );
+  assert.equal(
+    normalizeMediaSceneLabels(nestedCopy.mediaItems).at(-1)?.label,
+    "Scene 5.1 (copy 1) (copy 1)",
+  );
+});
+
+test("preserves copied scene suffixes when labels are normalized", () => {
+  const [copy] = normalizeMediaSceneLabels([
+    {
+      id: "copied-scene",
+      label: "Temporary label",
+      src: "/uploads/grouped.mp4",
+      duration: "00:02",
+      durationInFrames: 60,
+      kind: "public",
+      mediaType: "video",
+      sourceFileId: "source-1",
+      sourceGroupIndex: 2,
+      sceneIndex: 1,
+      sourceLabel: "Product demo.mp4",
+      copyIndex: 3,
+    },
+  ]);
+
+  assert.equal(copy.label, "Scene 2.1 (copy 3)");
+  assert.equal(copy.sourceLabel, "Product demo.mp4");
+  assert.equal(copy.copySourceLabel, "Scene 2.1");
 });
 
 test("splits one scene and renumbers only its source cards", () => {
@@ -1406,12 +1685,19 @@ test("calculates drag deltas from a captured timeline content origin", () => {
   );
 });
 
-test("auto-scrolls toward timeline edges only while the pointer is nearby", () => {
-  assert.ok(getDragEdgeAutoScrollDelta(102, 100, 900) < 0);
+test("smoothly auto-scrolls toward and beyond every timeline edge", () => {
+  const leftRamp = getDragEdgeAutoScrollDelta(150, 100, 900);
+  const rightRamp = getDragEdgeAutoScrollDelta(850, 100, 900);
+
+  assert.ok(leftRamp < 0);
+  assert.ok(leftRamp > -22);
+  assert.equal(getDragEdgeAutoScrollDelta(100, 100, 900), -22);
+  assert.equal(getDragEdgeAutoScrollDelta(0, 100, 900), -22);
   assert.equal(getDragEdgeAutoScrollDelta(500, 100, 900), 0);
-  assert.ok(getDragEdgeAutoScrollDelta(898, 100, 900) > 0);
-  assert.equal(getDragEdgeAutoScrollDelta(0, 100, 900), 0);
-  assert.equal(getDragEdgeAutoScrollDelta(1000, 100, 900), 0);
+  assert.ok(rightRamp > 0);
+  assert.ok(rightRamp < 22);
+  assert.equal(getDragEdgeAutoScrollDelta(900, 100, 900), 22);
+  assert.equal(getDragEdgeAutoScrollDelta(1000, 100, 900), 22);
 });
 
 test("follows the playhead in both directions after it reaches a visible edge", () => {
@@ -3176,7 +3462,7 @@ test("duplicates a selected main video onto a new upper video layer", () => {
     [
       {
         id: "copy-video",
-        label: "Clip copy",
+        label: "Clip (copy 1)",
         track: "upper",
         start: 0,
         duration: 90,
@@ -3185,7 +3471,7 @@ test("duplicates a selected main video onto a new upper video layer", () => {
       },
       {
         id: "copy-audio",
-        label: "Clip audio copy",
+        label: "Clip audio (copy 1)",
         track: "audio",
         start: 0,
         duration: 90,
@@ -3193,6 +3479,47 @@ test("duplicates a selected main video onto a new upper video layer", () => {
         videoLayer: undefined,
       },
     ],
+  );
+});
+
+test("uses the selected timeline copy as the source for nested copy names", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "scene-5",
+      label: "Scene 5",
+      track: "main",
+      start: 0,
+      duration: 90,
+      color: "#0891b2",
+      src: "scene-5.mp4",
+      linkedClipId: "scene-5-audio",
+    },
+    {
+      id: "scene-5-audio",
+      label: "Scene 5 audio",
+      track: "audio",
+      start: 0,
+      duration: 90,
+      color: "#2563eb",
+      src: "scene-5.mp4",
+      linkedClipId: "scene-5",
+    },
+  ];
+
+  const firstCopy = duplicateClipById(clips, "scene-5", "first");
+  const nestedCopy = duplicateClipById(firstCopy, "first-video", "nested");
+
+  assert.equal(
+    nestedCopy.find((clip) => clip.id === "first-video")?.label,
+    "Scene 5 (copy 1)",
+  );
+  assert.equal(
+    nestedCopy.find((clip) => clip.id === "nested-video")?.label,
+    "Scene 5 (copy 1) (copy 1)",
+  );
+  assert.equal(
+    nestedCopy.find((clip) => clip.id === "nested-audio")?.label,
+    "Scene 5 audio (copy 1) (copy 1)",
   );
 });
 
@@ -5138,7 +5465,7 @@ test("extracts audio from every selected video in one batch", () => {
   );
 });
 
-test("keeps extracted audio aligned below its source video", () => {
+test("keeps extracted audio independent from later source video edits", () => {
   const sourceVideo: TimelineClip = {
     id: "scene-video",
     label: "Scene",
@@ -5177,28 +5504,29 @@ test("keeps extracted audio aligned below its source video", () => {
     src: "uploads/music.wav",
   };
 
-  const result = alignDetachedAudioWithSourceVideos([
-    sourceVideo,
-    detachedAudio,
-    importedAudio,
-  ]);
-  const alignedAudio = result.find((clip) => clip.id === detachedAudio.id);
+  const result = moveVideoClipToLayer(
+    [sourceVideo, detachedAudio, importedAudio],
+    sourceVideo.id,
+    0,
+    240,
+  );
+  const independentAudio = result.find((clip) => clip.id === detachedAudio.id);
 
   assert.deepEqual(
     {
-      start: alignedAudio?.start,
-      duration: alignedAudio?.duration,
-      sourceStart: alignedAudio?.sourceStart,
-      sourceDuration: alignedAudio?.sourceDuration,
-      speed: alignedAudio?.speed,
-      volume: alignedAudio?.volume,
+      start: independentAudio?.start,
+      duration: independentAudio?.duration,
+      sourceStart: independentAudio?.sourceStart,
+      sourceDuration: independentAudio?.sourceDuration,
+      speed: independentAudio?.speed,
+      volume: independentAudio?.volume,
     },
     {
-      start: 180,
-      duration: 75,
-      sourceStart: 45,
+      start: 0,
+      duration: 150,
+      sourceStart: 0,
       sourceDuration: 600,
-      speed: 1.5,
+      speed: 1,
       volume: 0.4,
     },
   );
@@ -7888,6 +8216,52 @@ test("drops malformed transcript segments before generating captions", () => {
   assert.deepEqual(result, []);
 });
 
+test("groups adjacent transcript-edited video segments as one timeline item", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "video-speech-0",
+      label: "Video",
+      track: "main",
+      start: 0,
+      duration: 30,
+      color: "#292929",
+      src: "video.mp4",
+    },
+    {
+      id: "video-speech-1",
+      label: "Video",
+      track: "main",
+      start: 30,
+      duration: 45,
+      color: "#292929",
+      src: "video.mp4",
+    },
+    {
+      id: "other-video",
+      label: "Other",
+      track: "main",
+      start: 75,
+      duration: 30,
+      color: "#292929",
+      src: "other.mp4",
+    },
+  ];
+
+  assert.equal(getTranscriptEditGroupId("video-speech-1"), "video");
+  assert.equal(
+    getTranscriptEditGroupId("video-speech-0-speech-1"),
+    "video",
+  );
+  assert.deepEqual(
+    getTranscriptEditGroupClipIds(clips, "video-speech-1"),
+    ["video-speech-0", "video-speech-1"],
+  );
+  assert.deepEqual(
+    getTranscriptEditGroupClipIds(clips, "other-video"),
+    ["other-video"],
+  );
+});
+
 test("deleting a transcript word removes the matching linked video and audio range", () => {
   const clips: TimelineClip[] = [
     {
@@ -8043,7 +8417,7 @@ test("bulk transcript cleanup and sentence removal keep linked media synchronize
       .reduce((total, clip) => total + clip.duration, 0),
   );
 
-  const withoutSentence = removeTranscriptSegmentFromLinkedVideo(
+  const withoutSentence = removeTranscriptSentenceFromLinkedVideo(
     withoutFillers,
     "transcript-bulk-1",
     30,
@@ -8136,7 +8510,7 @@ test("moves only the selected text clip to the requested frame", () => {
   const other = createTextClip({
     id: "text-2",
     content: "Other",
-    playheadFrame: 200,
+    playheadFrame: 300,
   });
 
   const result = moveTextClip([text, other], "text-1", 120, 480);
@@ -8145,6 +8519,62 @@ test("moves only the selected text clip to the requested frame", () => {
   assert.equal(result[0].duration, 90);
   assert.deepEqual(result[0].text, text.text);
   assert.strictEqual(result[1], other);
+});
+
+test("snaps a dragged text clip after the text clip it overlaps", () => {
+  const first = createTextClip({
+    id: "text-1",
+    content: "First",
+    playheadFrame: 0,
+  });
+  const second = createTextClip({
+    id: "text-2",
+    content: "Second",
+    playheadFrame: 180,
+  });
+
+  const result = moveTextClip([first, second], "text-2", 45, 480);
+
+  assert.equal(result.find((clip) => clip.id === "text-2")?.start, 90);
+});
+
+test("snaps a dragged text clip after adjacent text clips", () => {
+  const first = createTextClip({
+    id: "text-1",
+    content: "First",
+    playheadFrame: 0,
+  });
+  const second = createTextClip({
+    id: "text-2",
+    content: "Second",
+    playheadFrame: 90,
+  });
+  const moving = createTextClip({
+    id: "text-3",
+    content: "Moving",
+    playheadFrame: 270,
+  });
+
+  const result = moveTextClip([first, second, moving], "text-3", 45, 480);
+
+  assert.equal(result.find((clip) => clip.id === "text-3")?.start, 180);
+});
+
+test("places a dragged text clip in the nearest available gap", () => {
+  const occupied = createTextClip({
+    id: "text-occupied",
+    content: "Occupied",
+    playheadFrame: 150,
+  });
+  const moving = createTextClip({
+    id: "text-moving",
+    content: "Moving",
+    playheadFrame: 300,
+  });
+
+  const result = moveTextClip([occupied, moving], moving.id, 140, 480);
+
+  assert.equal(result.find((clip) => clip.id === moving.id)?.start, 60);
 });
 
 test("clamps text at zero and allows an expanded project boundary", () => {
@@ -8233,6 +8663,59 @@ test("moves captions stickers and independent audio to a requested frame", () =>
   assert.equal(musicMoved.find((clip) => clip.id === "caption-1")?.start, 120);
   assert.equal(musicMoved.find((clip) => clip.id === "sticker-1")?.start, 180);
   assert.equal(musicMoved.find((clip) => clip.id === "music-1")?.start, 240);
+});
+
+test("snaps a moved caption after another caption instead of overlapping it", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "caption-1",
+      label: "First caption",
+      track: "caption",
+      start: 0,
+      duration: 90,
+      color: "#111111",
+      caption: { ...defaultCaptionStyle, content: "First caption" },
+    },
+    {
+      id: "caption-2",
+      label: "Second caption",
+      track: "caption",
+      start: 180,
+      duration: 90,
+      color: "#111111",
+      caption: { ...defaultCaptionStyle, content: "Second caption" },
+    },
+  ];
+
+  const moved = moveIndependentTimelineClip(clips, "caption-2", 45, 480);
+
+  assert.equal(moved.find((clip) => clip.id === "caption-2")?.start, 90);
+});
+
+test("caption collisions ignore clips on other timeline rows", () => {
+  const caption: TimelineClip = {
+    id: "caption-1",
+    label: "Caption",
+    track: "caption",
+    start: 180,
+    duration: 90,
+    color: "#111111",
+    caption: { ...defaultCaptionStyle, content: "Caption" },
+  };
+  const text = createTextClip({
+    id: "text-1",
+    content: "Text",
+    playheadFrame: 0,
+  });
+
+  const moved = moveIndependentTimelineClip(
+    [caption, text],
+    caption.id,
+    45,
+    480,
+  );
+
+  assert.equal(moved.find((clip) => clip.id === caption.id)?.start, 45);
 });
 
 test("keeps linked audio locked to its video during independent moves", () => {
@@ -9190,9 +9673,32 @@ test("removes one transcript sentence with the matching video and audio range", 
     start: 90,
     caption: { ...firstSentence.caption!, content: "Keep this" },
   };
+  const followingVideo: TimelineClip = {
+    ...video,
+    id: "following-video",
+    label: "Following video",
+    start: 300,
+    duration: 60,
+    linkedClipId: "following-audio",
+  };
+  const followingAudio: TimelineClip = {
+    ...audio,
+    id: "following-audio",
+    label: "Following audio",
+    start: 300,
+    duration: 60,
+    linkedClipId: "following-video",
+  };
 
   const result = removeTranscriptSentenceFromLinkedVideo(
-    [video, audio, firstSentence, secondSentence],
+    [
+      video,
+      audio,
+      firstSentence,
+      secondSentence,
+      followingVideo,
+      followingAudio,
+    ],
     firstSentence.id,
     30,
   );
@@ -9203,13 +9709,107 @@ test("removes one transcript sentence with the matching video and audio range", 
     result
       .filter((clip) => clip.track === "main")
       .reduce((total, clip) => total + clip.duration, 0),
-    270,
+    330,
   );
   assert.equal(
     result
       .filter((clip) => clip.track === "audio")
       .reduce((total, clip) => total + clip.duration, 0),
-    270,
+    330,
+  );
+  assert.equal(result.find((clip) => clip.id === followingVideo.id)?.start, 270);
+  assert.equal(result.find((clip) => clip.id === followingAudio.id)?.start, 270);
+});
+
+test("removes transcript words from linked video and audio and closes the gap", () => {
+  const video: TimelineClip = {
+    id: "word-video",
+    label: "Word video",
+    track: "main",
+    start: 0,
+    duration: 120,
+    color: "#0891b2",
+    src: "/media/words.mp4",
+    linkedClipId: "word-audio",
+  };
+  const audio: TimelineClip = {
+    id: "word-audio",
+    label: "Word audio",
+    track: "audio",
+    start: 0,
+    duration: 120,
+    color: "#2563eb",
+    src: "/media/words.mp4",
+    linkedClipId: "word-video",
+  };
+  const transcript: TimelineClip = {
+    id: "word-transcript",
+    label: "one two three four",
+    track: "caption",
+    start: 0,
+    duration: 120,
+    color: "#ef4444",
+    caption: {
+      ...defaultCaptionStyle,
+      content: "one two three four",
+      sourceClipId: video.id,
+      generationId: "transcript-word-batch",
+    },
+  };
+  const followingVideo: TimelineClip = {
+    ...video,
+    id: "word-following-video",
+    label: "Following video",
+    start: 120,
+    duration: 60,
+    linkedClipId: "word-following-audio",
+  };
+  const followingAudio: TimelineClip = {
+    ...audio,
+    id: "word-following-audio",
+    label: "Following audio",
+    start: 120,
+    duration: 60,
+    linkedClipId: "word-following-video",
+  };
+
+  const result = removeTranscriptWordsFromLinkedVideo(
+    [video, audio, transcript, followingVideo, followingAudio],
+    [{ clipId: transcript.id, wordIndex: 1 }],
+    30,
+  );
+
+  assert.equal(
+    result
+      .filter(
+        (clip) =>
+          clip.track === "main" &&
+          clip.id.startsWith(`${video.id}-speech-`),
+      )
+      .reduce((total, clip) => total + clip.duration, 0),
+    90,
+  );
+  assert.equal(
+    result
+      .filter(
+        (clip) =>
+          clip.track === "audio" &&
+          clip.id.startsWith(`${audio.id}-speech-`),
+      )
+      .reduce((total, clip) => total + clip.duration, 0),
+    90,
+  );
+  assert.equal(
+    result.find((clip) => clip.id === followingVideo.id)?.start,
+    90,
+  );
+  assert.equal(
+    result.find((clip) => clip.id === followingAudio.id)?.start,
+    90,
+  );
+  assert.equal(
+    result.find((clip) => clip.id === transcript.id)?.caption?.content,
+    "one three four",
   );
 });
 

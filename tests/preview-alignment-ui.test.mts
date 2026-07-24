@@ -120,16 +120,7 @@ test("renders one directional alignment guide during preview moves", () => {
     "utf8",
   );
 
-<<<<<<< Updated upstream
   assert.match(source, /renderPreviewAlignmentGuides\(previewAlignmentGuides\)/);
-=======
-  assert.match(source, /getDirectionalPreviewAlignmentGuides/);
-  assert.match(
-    source,
-    /renderPreviewAlignmentGuides\(previewAlignmentGuides\)/,
-  );
-  assert.doesNotMatch(source, /keepCenterGuidesVisible/);
->>>>>>> Stashed changes
   assert.match(source, /preview-alignment-guide-horizontal/);
   assert.match(source, /preview-alignment-guide-vertical/);
   assert.match(

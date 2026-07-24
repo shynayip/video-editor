@@ -165,6 +165,8 @@ export type SavedMediaItem = {
   sceneIndex?: number;
   sourceGroupIndex?: number;
   sourceLabel?: string;
+  copyIndex?: number;
+  copySourceLabel?: string;
   adjustment?: ClipAdjustment;
 };
 
@@ -416,14 +418,83 @@ export const normalizeMediaSceneLabels = (
     }
 
     const sourceLabel = item.sourceLabel ?? item.label;
-    const label = item.sourceFileId
+    const baseLabel = item.sourceFileId
       ? `Scene ${item.sourceGroupIndex}.${item.sceneIndex ?? 1}`
       : `Scene ${item.sourceGroupIndex}`;
+    const copySourceLabel =
+      item.copyIndex && item.copyIndex > 0
+        ? (item.copySourceLabel ?? baseLabel)
+        : undefined;
+    const label =
+      item.copyIndex && item.copyIndex > 0
+        ? `${copySourceLabel} (copy ${item.copyIndex})`
+        : baseLabel;
 
-    return item.label === label && item.sourceLabel === sourceLabel
+    return item.label === label &&
+      item.sourceLabel === sourceLabel &&
+      item.copySourceLabel === copySourceLabel
       ? item
-      : { ...item, label, sourceLabel };
+      : { ...item, label, sourceLabel, copySourceLabel };
   });
+
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const getNextCopyLabel = (
+  sourceLabel: string,
+  existingLabels: readonly string[],
+): { label: string; copyIndex: number } => {
+  const directCopyPattern = new RegExp(
+    `^${escapeRegExp(sourceLabel)} \\(copy (\\d+)\\)$`,
+    "i",
+  );
+  const copyIndex =
+    existingLabels.reduce((highestCopyIndex, label) => {
+      const match = label.match(directCopyPattern);
+      return Math.max(highestCopyIndex, Number(match?.[1] ?? 0));
+    }, 0) + 1;
+
+  return {
+    label: `${sourceLabel} (copy ${copyIndex})`,
+    copyIndex,
+  };
+};
+
+export const duplicateMediaItems = ({
+  mediaItems,
+  sourceItems,
+  idPrefix,
+}: {
+  mediaItems: SavedMediaItem[];
+  sourceItems: SavedMediaItem[];
+  idPrefix: string;
+}): { mediaItems: SavedMediaItem[]; copiedItems: SavedMediaItem[] } => {
+  if (!idPrefix || sourceItems.length === 0) {
+    return { mediaItems, copiedItems: [] };
+  }
+
+  const nextItems = [...mediaItems];
+  const copiedItems: SavedMediaItem[] = [];
+
+  sourceItems.forEach((sourceItem, sourceIndex) => {
+    const { label, copyIndex } = getNextCopyLabel(
+      sourceItem.label,
+      nextItems.map((item) => item.label),
+    );
+    const copy: SavedMediaItem = {
+      ...sourceItem,
+      id: `${idPrefix}-${sourceIndex}-${sourceItem.id}`,
+      label,
+      copyIndex,
+      copySourceLabel: sourceItem.label,
+    };
+
+    nextItems.push(copy);
+    copiedItems.push(copy);
+  });
+
+  return { mediaItems: nextItems, copiedItems };
+};
 
 export type ClipEffect =
   | "none"
@@ -624,7 +695,7 @@ export type ClipVisualStyle = {
 export type CutoutLineStyle = "solid" | "glow" | "double" | "sketch";
 
 export const defaultCutoutLineStyle = {
-  color: "#22d3ee",
+  color: "#facc15",
   opacity: 90,
   width: 4,
   style: "solid" as CutoutLineStyle,
@@ -725,7 +796,11 @@ export type ClipAnimationPresentation = {
 
 export type ClipAdjustment = {
   scale: number;
+  scaleX?: number;
+  scaleY?: number;
   rotation: number;
+  flipHorizontal: boolean;
+  flipVertical: boolean;
   positionX: number;
   positionY: number;
   cropTop: number;
@@ -736,7 +811,11 @@ export type ClipAdjustment = {
 
 export const defaultClipAdjustment: ClipAdjustment = {
   scale: 1,
+  scaleX: 1,
+  scaleY: 1,
   rotation: 0,
+  flipHorizontal: false,
+  flipVertical: false,
   positionX: 0,
   positionY: 0,
   cropTop: 0,
@@ -942,26 +1021,22 @@ export const getDragEdgeAutoScrollDelta = (
     return 0;
   }
 
-  if (
-    pointerPosition >= viewportStart - edgeSize &&
-    pointerPosition < viewportStart + edgeSize
-  ) {
-    const intensity = Math.min(
-      1,
-      (viewportStart + edgeSize - pointerPosition) / (edgeSize * 2),
+  if (pointerPosition < viewportStart + edgeSize) {
+    const intensity = Math.max(
+      0,
+      Math.min(1, (viewportStart + edgeSize - pointerPosition) / edgeSize),
     );
-    return -Math.max(1, Math.round(maximumSpeed * intensity));
+    const easedIntensity = intensity * intensity * (3 - 2 * intensity);
+    return -maximumSpeed * easedIntensity;
   }
 
-  if (
-    pointerPosition > viewportEnd - edgeSize &&
-    pointerPosition <= viewportEnd + edgeSize
-  ) {
-    const intensity = Math.min(
-      1,
-      (pointerPosition - (viewportEnd - edgeSize)) / (edgeSize * 2),
+  if (pointerPosition > viewportEnd - edgeSize) {
+    const intensity = Math.max(
+      0,
+      Math.min(1, (pointerPosition - (viewportEnd - edgeSize)) / edgeSize),
     );
-    return Math.max(1, Math.round(maximumSpeed * intensity));
+    const easedIntensity = intensity * intensity * (3 - 2 * intensity);
+    return maximumSpeed * easedIntensity;
   }
 
   return 0;
@@ -1446,7 +1521,7 @@ export const createRecordedAudioClip = (
     track: "audio",
     start: options.start,
     duration,
-    color: "#2563eb",
+    color: "#4a4a4a",
     src: options.src,
     audioKind: "voiceover",
     volume: 1,
@@ -1471,7 +1546,7 @@ export const createBackgroundMusicClip = ({
   track: "audio",
   start: Math.max(0, playheadFrame),
   duration: Math.max(1, durationInFrames),
-  color: "#2563eb",
+  color: "#4a4a4a",
   src,
   audioKind: "music",
   volume: 0.7,
@@ -1504,7 +1579,7 @@ export const createVideoMediaPair = (
     ...(Number.isFinite(options.sourceDuration)
       ? { sourceDuration: Math.max(1, Math.round(options.sourceDuration ?? 1)) }
       : {}),
-    color: options.track === "main" ? "#0891b2" : "#7c3aed",
+    color: options.track === "main" ? "#3a3a3a" : "#292929",
     src: options.src,
     speed: 1,
     volume: 1,
@@ -1524,7 +1599,7 @@ export const createVideoMediaPair = (
     ...(Number.isFinite(options.sourceDuration)
       ? { sourceDuration: Math.max(1, Math.round(options.sourceDuration ?? 1)) }
       : {}),
-    color: "#2563eb",
+    color: "#4a4a4a",
     src: options.src,
     audioKind: "linked",
     speed: 1,
@@ -1550,7 +1625,7 @@ export const createImageMediaClip = (options: {
   track: options.track,
   start: options.start,
   duration: options.duration,
-  color: options.track === "main" ? "#0891b2" : "#7c3aed",
+  color: options.track === "main" ? "#3a3a3a" : "#292929",
   src: options.src,
   speed: 1,
   volume: 1,
@@ -1670,7 +1745,7 @@ export const createCutoutVideoPair = ({
     track: "audio",
     start: cutout.start,
     duration: cutout.duration,
-    color: "#2563eb",
+    color: "#4a4a4a",
     src,
     speed: 1,
     volume: 1,
@@ -2213,10 +2288,10 @@ export const setTextContentById = (
   clipId: string | null,
   content: string,
 ): TimelineClip[] => {
-  const nextContent = content.trim();
-  if (!clipId || !nextContent) {
+  if (!clipId || content.trim().length === 0) {
     return clips;
   }
+  const nextContent = content;
 
   let changed = false;
   const nextClips = clips.map((clip) => {
@@ -2619,6 +2694,51 @@ export const createWaveformBars = (
   });
 };
 
+const findNearestTrackGap = (
+  clips: TimelineClip[],
+  clipId: string,
+  track: TimelineClip["track"],
+  targetStart: number,
+  duration: number,
+  timelineDuration: number,
+): number => {
+  const occupied = clips
+    .filter((candidate) => candidate.id !== clipId && candidate.track === track)
+    .sort((first, second) => first.start - second.start);
+  const requestedStart = clampTimelineStart(
+    targetStart,
+    duration,
+    timelineDuration,
+  );
+  const maximumStart = Math.max(0, timelineDuration - duration);
+  const availableStarts: number[] = [];
+  let cursor = 0;
+
+  occupied.forEach((candidate) => {
+    const gapEnd = Math.max(cursor, candidate.start);
+    if (gapEnd - cursor >= duration) {
+      availableStarts.push(
+        Math.max(cursor, Math.min(requestedStart, gapEnd - duration)),
+      );
+    }
+    cursor = Math.max(cursor, candidate.start + candidate.duration);
+  });
+
+  if (cursor <= maximumStart) {
+    availableStarts.push(Math.max(cursor, Math.min(requestedStart, maximumStart)));
+  }
+
+  if (availableStarts.length === 0) {
+    return Math.max(0, cursor);
+  }
+
+  return availableStarts.reduce((nearest, candidate) =>
+    Math.abs(candidate - requestedStart) < Math.abs(nearest - requestedStart)
+      ? candidate
+      : nearest,
+  );
+};
+
 export const moveTextClip = (
   clips: TimelineClip[],
   clipId: string,
@@ -2631,7 +2751,10 @@ export const moveTextClip = (
   );
   if (!clip) return clips;
 
-  const start = clampTimelineStart(
+  const start = findNearestTrackGap(
+    clips,
+    clip.id,
+    clip.track,
     targetStart,
     clip.duration,
     timelineDuration,
@@ -2658,11 +2781,17 @@ export const moveIndependentTimelineClip = (
     return clips;
   }
 
-  const start = clampTimelineStart(
-    targetStart,
-    clip.duration,
-    timelineDuration,
-  );
+  const start =
+    clip.track === "caption"
+      ? findNearestTrackGap(
+          clips,
+          clip.id,
+          clip.track,
+          targetStart,
+          clip.duration,
+          timelineDuration,
+        )
+      : clampTimelineStart(targetStart, clip.duration, timelineDuration);
   if (start === clip.start) return clips;
 
   return clips.map((candidate) =>
@@ -2681,6 +2810,35 @@ export type PreviewAlignmentGuides = {
   vertical: boolean;
   horizontalPositions?: number[];
   verticalPositions?: number[];
+};
+
+export const getDirectionalPreviewAlignmentGuides = (
+  guides: PreviewAlignmentGuides,
+  deltaX: number,
+  deltaY: number,
+): PreviewAlignmentGuides => {
+  const isExactlyCentered =
+    guides.horizontal &&
+    guides.vertical &&
+    (guides.horizontalPositions ?? []).includes(50) &&
+    (guides.verticalPositions ?? []).includes(50);
+  if (isExactlyCentered) {
+    return guides;
+  }
+
+  if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+    return {
+      ...guides,
+      vertical: false,
+      verticalPositions: [],
+    };
+  }
+
+  return {
+    ...guides,
+    horizontal: false,
+    horizontalPositions: [],
+  };
 };
 
 const previewSnapPoints = [0, 33.333, 50, 66.667, 100];
@@ -3423,6 +3581,122 @@ export const getVideoLayer = (clip: TimelineClip): number | null => {
   return clip.videoLayer ?? (clip.overlayLane ?? 0) + 1;
 };
 
+const getTimelineCompactionRowKey = (clip: TimelineClip): string => {
+  const videoLayer = getVideoLayer(clip);
+  if (videoLayer !== null) return `video-${videoLayer}`;
+  if (clip.track === "audio") {
+    return `audio-${clip.audioKind ?? "standalone"}-${clip.timelineRowOrder ?? 0}`;
+  }
+  return `track-${clip.track}-${clip.timelineRowOrder ?? 0}`;
+};
+
+export const getCompactedTimelineGroupStarts = ({
+  clips,
+  clipIds,
+  frameDelta,
+}: {
+  clips: TimelineClip[];
+  clipIds: Iterable<string>;
+  frameDelta: number;
+}): Map<string, number> => {
+  const movingIds = new Set(clipIds);
+  const movingClips = clips.filter((clip) => movingIds.has(clip.id));
+  const linkedAudioIds = new Set(
+    movingClips.flatMap((clip) =>
+      clip.track === "audio" &&
+      clip.linkedClipId &&
+      movingIds.has(clip.linkedClipId)
+        ? [clip.id]
+        : [],
+    ),
+  );
+  const rowGroups = new Map<string, TimelineClip[]>();
+
+  movingClips.forEach((clip) => {
+    if (linkedAudioIds.has(clip.id)) return;
+    const rowKey = getTimelineCompactionRowKey(clip);
+    rowGroups.set(rowKey, [...(rowGroups.get(rowKey) ?? []), clip]);
+  });
+
+  const starts = new Map<string, number>();
+  rowGroups.forEach((rowClips) => {
+    const orderedClips = [...rowClips].sort(
+      (left, right) =>
+        left.start - right.start || left.id.localeCompare(right.id),
+    );
+    let cursor =
+      Math.min(...orderedClips.map((clip) => clip.start)) + frameDelta;
+    orderedClips.forEach((clip) => {
+      starts.set(clip.id, cursor);
+      cursor += clip.duration;
+    });
+  });
+
+  movingClips.forEach((clip) => {
+    if (
+      clip.track !== "audio" ||
+      !clip.linkedClipId ||
+      !movingIds.has(clip.linkedClipId)
+    ) {
+      return;
+    }
+    const linkedVideo = clips.find(
+      (candidate) => candidate.id === clip.linkedClipId,
+    );
+    starts.set(
+      clip.id,
+      starts.get(clip.linkedClipId) ??
+        (linkedVideo?.start ?? clip.start) + frameDelta,
+    );
+  });
+
+  return starts;
+};
+
+export const getTranscriptableRowClips = (
+  clips: TimelineClip[],
+  videoLayer: number | null,
+  selectedTrack: TrackName,
+): TimelineClip[] =>
+  clips
+    .filter((clip) => {
+      if (!clip.src || clip.mediaType === "image") {
+        return false;
+      }
+
+      if (videoLayer !== null) {
+        return getVideoLayer(clip) === videoLayer;
+      }
+
+      return (
+        selectedTrack === "cutout" &&
+        clip.track === "cutout" &&
+        clip.cutout?.mediaKind === "video"
+      );
+    })
+    .sort(
+      (first, second) =>
+        first.start - second.start || first.id.localeCompare(second.id),
+    );
+
+export const getClipTranscriptionSource = (
+  clip: TimelineClip,
+): TimelineClip => {
+  if (
+    clip.track !== "cutout" ||
+    clip.cutout?.mediaKind !== "video" ||
+    !clip.cutout.originalSrc
+  ) {
+    return clip;
+  }
+
+  return {
+    ...clip,
+    src: clip.cutout.originalSrc,
+    sourceStart: getEffectiveCutoutOriginalSourceStart(clip),
+  };
+};
+
 export type TimelineKeyboardDirection = "left" | "right" | "up" | "down";
 
 const getTimelineKeyboardRow = (clip: TimelineClip) => {
@@ -4151,15 +4425,7 @@ export const moveVideoClipToLayer = (
   );
   if (start === null) return clips;
   const linkedAudio = getReciprocalLinkedAudio(clips, target);
-  const ownedAudioIds = new Set([
-    linkedAudio?.id,
-    ...clips
-      .filter(
-        (clip) =>
-          clip.track === "audio" && clip.detachedSourceClipId === target.id,
-      )
-      .map((clip) => clip.id),
-  ]);
+  const linkedAudioIds = new Set([linkedAudio?.id]);
 
   if (start === target.start && videoLayer === currentLayer) {
     return clips;
@@ -4177,7 +4443,7 @@ export const moveVideoClipToLayer = (
             videoLayer: videoLayer === 0 ? undefined : videoLayer,
             overlayLane: undefined,
           }
-        : ownedAudioIds.has(clip.id)
+        : linkedAudioIds.has(clip.id)
           ? { ...clip, start }
           : clip,
     ),
@@ -4278,9 +4544,6 @@ export const deleteClipById = (
   );
 };
 
-const duplicateLabel = (label: string): string =>
-  `${label.replace(/ copy$/, "")} copy`;
-
 export const duplicateClipById = (
   clips: TimelineClip[],
   clipId: string | null,
@@ -4299,11 +4562,15 @@ export const duplicateClipById = (
   const linkedAudio = getReciprocalLinkedAudio(clips, target);
   const copyLayer = getNextVideoLayer(clips, "above");
   const copyStart = target.start;
+  const duplicatedVideoLabel = getNextCopyLabel(
+    target.label,
+    clips.map((clip) => clip.label),
+  ).label;
 
   const duplicatedVideo: TimelineClip = {
     ...withoutClipTransition(target),
     id: `${idPrefix}-video`,
-    label: duplicateLabel(target.label),
+    label: duplicatedVideoLabel,
     track: "upper",
     start: copyStart,
     overlayLane: undefined,
@@ -4318,7 +4585,10 @@ export const duplicateClipById = (
   const duplicatedAudio: TimelineClip = {
     ...withoutClipTransition(linkedAudio),
     id: `${idPrefix}-audio`,
-    label: duplicateLabel(linkedAudio.label),
+    label: getNextCopyLabel(
+      linkedAudio.label,
+      clips.map((clip) => clip.label),
+    ).label,
     start: copyStart,
     linkedClipId: duplicatedVideo.id,
   };
@@ -4348,6 +4618,7 @@ export const duplicateClipGroupByIds = (
   });
 
   const duplicates: TimelineClip[] = [];
+  const duplicateLabels = clips.map((clip) => clip.label);
   selectedClips.forEach((clip, index) => {
     if (
       clip.track === "audio" &&
@@ -4362,27 +4633,42 @@ export const duplicateClipGroupByIds = (
     if (linkedAudio) {
       const duplicatedVideoId = `${duplicateId}-video`;
       const duplicatedAudioId = `${duplicateId}-audio`;
+      const duplicatedVideoLabel = getNextCopyLabel(
+        clip.label,
+        duplicateLabels,
+      ).label;
+      duplicateLabels.push(duplicatedVideoLabel);
+      const duplicatedAudioLabel = getNextCopyLabel(
+        linkedAudio.label,
+        duplicateLabels,
+      ).label;
+      duplicateLabels.push(duplicatedAudioLabel);
       duplicates.push({
         ...withoutClipTransition(clip),
         id: duplicatedVideoId,
-        label: duplicateLabel(clip.label),
+        label: duplicatedVideoLabel,
         start: clip.start + startOffset,
         linkedClipId: duplicatedAudioId,
       });
       duplicates.push({
         ...withoutClipTransition(linkedAudio),
         id: duplicatedAudioId,
-        label: duplicateLabel(linkedAudio.label),
+        label: duplicatedAudioLabel,
         start: linkedAudio.start + startOffset,
         linkedClipId: duplicatedVideoId,
       });
       return;
     }
 
+    const duplicatedLabel = getNextCopyLabel(
+      clip.label,
+      duplicateLabels,
+    ).label;
+    duplicateLabels.push(duplicatedLabel);
     duplicates.push({
       ...withoutClipTransition(clip),
       id: duplicateId,
-      label: duplicateLabel(clip.label),
+      label: duplicatedLabel,
       start: clip.start + startOffset,
       linkedClipId: clip.linkedClipId
         ? duplicatedIds.get(clip.linkedClipId)
@@ -4697,18 +4983,10 @@ export const trimClipById = (
       ? target.duration - appliedDelta
       : Math.max(minimumDuration, target.duration + appliedDelta);
   const linkedAudio = getReciprocalLinkedAudio(clips, target);
-  const ownedAudioIds = new Set([
-    linkedAudio?.id,
-    ...clips
-      .filter(
-        (clip) =>
-          clip.track === "audio" && clip.detachedSourceClipId === target.id,
-      )
-      .map((clip) => clip.id),
-  ]);
+  const linkedAudioIds = new Set([linkedAudio?.id]);
 
   const trimmedClips = clips.map((clip) => {
-    if (clip.id !== clipId && !ownedAudioIds.has(clip.id)) {
+    if (clip.id !== clipId && !linkedAudioIds.has(clip.id)) {
       return clip;
     }
 
@@ -4822,7 +5100,7 @@ export const addOverlayMediaClip = (
       track: "upper",
       start: media.start,
       duration: media.duration,
-      color: "#7c3aed",
+      color: "#292929",
       src: media.src,
       speed: 1,
       volume: 1,
@@ -5204,6 +5482,7 @@ export const removeSilenceFromLinkedVideo = (
   videoClipId: string,
   ranges: SilenceRange[],
   fps: number,
+  options: { removeTranscriptCaptions?: boolean } = {},
 ): TimelineClip[] => {
   const videoClip = clips.find(
     (clip) =>
@@ -5306,6 +5585,7 @@ export const removeSilenceFromLinkedVideo = (
 
   const nextClips = clips.flatMap((clip) => {
     if (
+      options.removeTranscriptCaptions !== false &&
       clip.track === "caption" &&
       clip.caption?.generationId?.startsWith("transcript-") &&
       clip.caption.sourceClipId === videoClip.id
@@ -5332,6 +5612,33 @@ const isTranscriptSourceDescendant = (
   sourceClipId: string,
 ): boolean =>
   clipId === sourceClipId || clipId.startsWith(`${sourceClipId}-speech-`);
+
+export const getTranscriptEditGroupId = (clipId: string): string | null => {
+  const groupId = clipId.replace(/(?:-speech-\d+)+$/, "");
+  return groupId === clipId ? null : groupId;
+};
+
+export const getTranscriptEditGroupClipIds = (
+  clips: TimelineClip[],
+  clipId: string,
+): string[] => {
+  const target = clips.find((clip) => clip.id === clipId);
+  const groupId = getTranscriptEditGroupId(clipId);
+  if (!target || !groupId) return target ? [target.id] : [];
+
+  return clips
+    .filter(
+      (clip) =>
+        clip.track === target.track &&
+        getVideoLayer(clip) === getVideoLayer(target) &&
+        getTranscriptEditGroupId(clip.id) === groupId,
+    )
+    .sort(
+      (first, second) =>
+        first.start - second.start || first.id.localeCompare(second.id),
+    )
+    .map((clip) => clip.id);
+};
 
 export const removeTranscriptSentenceFromLinkedVideo = (
   clips: TimelineClip[],
@@ -5404,7 +5711,7 @@ export const removeTranscriptSentenceFromLinkedVideo = (
   ];
 };
 
-const getTranscriptWords = (content: string): string[] =>
+export const getTranscriptWords = (content: string): string[] =>
   content.trim().split(/\s+/).filter(Boolean);
 
 const normalizeTranscriptWord = (word: string): string =>
@@ -5614,6 +5921,75 @@ export const removeTranscriptWordsFromLinkedVideo = (
   ];
 };
 
+export const removeTranscriptWordFromLinkedVideo = (
+  clips: TimelineClip[],
+  transcriptClipId: string,
+  wordIndex: number,
+  fps: number,
+): TimelineClip[] =>
+  removeTranscriptWordsFromLinkedVideo(
+    clips,
+    [{ clipId: transcriptClipId, wordIndex }],
+    fps,
+  );
+
+export type TranscriptGapEditTarget = {
+  generationId: string;
+  start: number;
+  end: number;
+};
+
+export const removeTranscriptGapsFromLinkedVideo = (
+  clips: TimelineClip[],
+  gaps: TranscriptGapEditTarget[],
+  fps: number,
+): TimelineClip[] =>
+  [...gaps]
+    .sort((left, right) => right.start - left.start)
+    .reduce((currentClips, gap) => {
+      const start = Math.max(0, Math.round(gap.start));
+      const end = Math.max(start + 1, Math.round(gap.end));
+      const sourceVideo = currentClips
+        .filter(
+          (clip) =>
+            (clip.track === "main" ||
+              clip.track === "upper" ||
+              clip.track === "cutout") &&
+            Boolean(clip.src) &&
+            start >= clip.start &&
+            end <= clip.start + clip.duration,
+        )
+        .sort(
+          (left, right) =>
+            (getVideoLayer(right) ?? 0) - (getVideoLayer(left) ?? 0),
+        )[0];
+      if (!sourceVideo || fps <= 0) return currentClips;
+
+      const speed = sourceVideo.speed ?? 1;
+      const editedMedia = removeSilenceFromLinkedVideo(
+        currentClips,
+        sourceVideo.id,
+        [
+          {
+            startSeconds: ((start - sourceVideo.start) * speed) / fps,
+            endSeconds: ((end - sourceVideo.start) * speed) / fps,
+          },
+        ],
+        fps,
+        { removeTranscriptCaptions: false },
+      );
+      if (editedMedia === currentClips) return currentClips;
+
+      const removedFrames = end - start;
+      return editedMedia.map((clip) =>
+        clip.track === "caption" &&
+        clip.caption?.generationId === gap.generationId &&
+        clip.start >= end
+          ? { ...clip, start: clip.start - removedFrames }
+          : clip,
+      );
+    }, clips);
+
 export const keepDominantVoiceInLinkedVideo = (
   clips: TimelineClip[],
   videoClipId: string,
@@ -5801,7 +6177,7 @@ export const ensureLinkedAudioForVideo = (
     ...(Number.isFinite(videoClip.sourceDuration)
       ? { sourceDuration: videoClip.sourceDuration }
       : {}),
-    color: "#2563eb",
+    color: "#4a4a4a",
     src: videoClip.src,
     audioKind: "linked",
     speed: videoClip.speed ?? 1,
@@ -6854,7 +7230,7 @@ export const getClipVisualPresentation = (
   if (effect === "glow") {
     parts.push(
       `brightness(${1 + 0.1 * effectAmount})`,
-      `drop-shadow(0 0 ${18 * effectAmount}px rgba(56, 214, 200, ${0.55 * effectAmount}))`,
+      `drop-shadow(0 0 ${18 * effectAmount}px rgba(245, 184, 0, ${0.55 * effectAmount}))`,
     );
   }
   if (effect === "grayscale") {
@@ -6887,7 +7263,7 @@ export const getClipVisualPresentation = (
     const x = Math.cos(angle) * distance;
     const y = Math.sin(angle) * distance;
     parts.push(
-      `drop-shadow(${x}px ${y}px 0 rgba(34, 211, 238, 0.95))`,
+      `drop-shadow(${x}px ${y}px 0 rgba(250, 204, 21, 0.95))`,
       `drop-shadow(${-x}px ${-y}px 0 rgba(244, 114, 182, 0.9))`,
       `drop-shadow(0 0 ${8 * effectAmount}px rgba(255, 255, 255, 0.75))`,
     );
@@ -6908,11 +7284,11 @@ export const getClipVisualPresentation = (
   if (effect === "neon-outline" && !cutoutLineEffect) {
     const width = Math.max(1, 3 * effectAmount);
     parts.push(
-      `drop-shadow(${width}px 0 0 #22d3ee)`,
-      `drop-shadow(${-width}px 0 0 #22d3ee)`,
+      `drop-shadow(${width}px 0 0 #facc15)`,
+      `drop-shadow(${-width}px 0 0 #facc15)`,
       `drop-shadow(0 ${width}px 0 #f472b6)`,
       `drop-shadow(0 ${-width}px 0 #f472b6)`,
-      `drop-shadow(0 0 ${14 * effectAmount}px rgba(34, 211, 238, 0.9))`,
+      `drop-shadow(0 0 ${14 * effectAmount}px rgba(250, 204, 21, 0.9))`,
     );
   }
   if (effect === "hand-drawn") {
@@ -6935,7 +7311,7 @@ export const getClipVisualPresentation = (
     parts.push(
       `drop-shadow(${x}px ${y}px 0 rgba(250, 204, 21, 0.95))`,
       `drop-shadow(${-y}px ${x}px 0 rgba(244, 114, 182, 0.9))`,
-      `drop-shadow(${-x}px ${-y}px 0 rgba(34, 211, 238, 0.9))`,
+      `drop-shadow(${-x}px ${-y}px 0 rgba(250, 204, 21, 0.9))`,
     );
     rotate = Math.sin(frame * 0.27) * 0.65 * effectAmount;
   }
@@ -6951,7 +7327,7 @@ export const getClipVisualPresentation = (
   if (effect === "motion-trail") {
     const trail = 5 + Math.abs(Math.sin(frame * 0.1)) * 7;
     parts.push(
-      `drop-shadow(${-trail * effectAmount}px 0 0 rgba(34, 211, 238, 0.58))`,
+      `drop-shadow(${-trail * effectAmount}px 0 0 rgba(250, 204, 21, 0.58))`,
       `drop-shadow(${-trail * 1.8 * effectAmount}px 1px 0 rgba(244, 114, 182, 0.38))`,
       `drop-shadow(${-trail * 2.6 * effectAmount}px 2px 0 rgba(250, 204, 21, 0.24))`,
     );
@@ -6963,7 +7339,7 @@ export const getClipVisualPresentation = (
     const x = Math.cos(angle) * radius;
     const y = Math.sin(angle) * radius;
     parts.push(
-      `drop-shadow(${x}px ${y}px 0 rgba(34, 211, 238, 0.95))`,
+      `drop-shadow(${x}px ${y}px 0 rgba(250, 204, 21, 0.95))`,
       `drop-shadow(${-y}px ${x}px 0 rgba(250, 204, 21, 0.92))`,
       `drop-shadow(${-x}px ${-y}px 0 rgba(244, 63, 94, 0.92))`,
       `drop-shadow(${y}px ${-x}px 0 rgba(168, 85, 247, 0.92))`,
@@ -6974,7 +7350,7 @@ export const getClipVisualPresentation = (
     parts.push(
       `brightness(${1 + 0.12 * spark * effectAmount})`,
       `drop-shadow(0 0 ${5 * spark * effectAmount}px rgba(255, 255, 255, 0.98))`,
-      `drop-shadow(0 0 ${18 * spark * effectAmount}px rgba(34, 211, 238, 0.92))`,
+      `drop-shadow(0 0 ${18 * spark * effectAmount}px rgba(250, 204, 21, 0.92))`,
     );
   }
   if (effect === "comic-pop") {
@@ -7539,7 +7915,11 @@ export const setClipAdjustmentById = (
       ...clip,
       adjustment: {
         scale: clamp(next.scale, 0.05, 4),
+        scaleX: clamp(next.scaleX ?? 1, 0.05, 4),
+        scaleY: clamp(next.scaleY ?? 1, 0.05, 4),
         rotation: clamp(next.rotation, -180, 180),
+        flipHorizontal: next.flipHorizontal,
+        flipVertical: next.flipVertical,
         positionX: clamp(next.positionX, -100, 100),
         positionY: clamp(next.positionY, -100, 100),
         cropTop: clamp(next.cropTop, 0, 45),

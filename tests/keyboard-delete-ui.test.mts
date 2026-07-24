@@ -22,11 +22,33 @@ test("Delete and Backspace remove any selected timeline or preview clip", () => 
   assert.match(handler, /event\.key !== "Delete"/);
   assert.match(handler, /event\.key !== "Backspace"/);
   assert.match(handler, /selectedClipIdsRef\.current\.length === 0/);
-  assert.match(handler, /deleteTimelineClipsWithRipple/);
+  assert.match(handler, /selectedTimelineRowClipIdsRef\.current/);
+  assert.match(handler, /deleteTimelineClips/);
+  assert.doesNotMatch(handler, /activeToolRef\.current === "media"/);
   assert.match(handler, /setStickerInteraction\(null\)/);
   assert.match(handler, /setCutoutInteraction\(null\)/);
   assert.match(handler, /setTextPreviewDrag\(null\)/);
   assert.match(handler, /setCaptionPreviewDrag\(null\)/);
+});
+
+test("every populated timeline row exposes its own delete icon", () => {
+  assert.match(composition, /className="track-delete-button"/);
+  assert.match(
+    composition,
+    /aria-label=\{`Delete \$\{track\.label \|\| "track"\}`\}/,
+  );
+  assert.match(composition, /deleteTimelineRow\(track\)/);
+});
+
+test("deleting an audio-only row does not delete its linked video", () => {
+  const helperStart = composition.indexOf("const deleteTimelineClips");
+  const helperEnd = composition.indexOf(
+    "useEffect(() =>",
+    helperStart,
+  );
+  const helper = composition.slice(helperStart, helperEnd);
+
+  assert.match(helper, /clip\.track !== "audio"/);
 });
 
 test("keyboard deletion protects fields while supporting every editor track", () => {

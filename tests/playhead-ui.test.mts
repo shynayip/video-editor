@@ -441,27 +441,27 @@ test("lets text, stickers, cutouts, and captions resize to their real duration",
   );
 });
 
-test("keeps linked audio internal and only reveals a row for recorded voiceover", () => {
+test("shows linked audio directly below its video row", () => {
   const compositionSource = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
 
-  assert.doesNotMatch(
+  assert.match(
     compositionSource,
-    /key: "audio", id: "audio" as TrackName, label: "Audio track"/,
+    /audioKind\?: "voiceover" \| "imported" \| "detached" \| "linked"/,
   );
   assert.match(
     compositionSource,
-    /getContextualAudioClips\(clips, contextualSelectionId\)\.length > 0/,
+    /key: `linked-audio-\$\{videoLayer\}`[\s\S]*?label:[\s\S]*?"Main audio"[\s\S]*?audioKind: "linked" as const/,
   );
   assert.match(
     compositionSource,
-    /clips\.some\(isVoiceoverClip\)[\s\S]*?label: "Voiceover track"/,
+    /order: videoRowOrder - 0\.25/,
   );
   assert.match(
     compositionSource,
-    /track\.audioKind === "voiceover"[\s\S]*?isVoiceoverClip/,
+    /track\.audioKind === "linked" \|\|[\s\S]*?contextualAudioClipIds\.has\(clip\.id\)/,
   );
 });
 
@@ -587,8 +587,8 @@ test("Auto cutout keeps manual cutout editing while replacing visible chroma cho
     "utf8",
   );
   const cutoutPanel = source.slice(
-    source.indexOf('</> : activeTool === "cutout" ? ('),
-    source.indexOf(') : activeTool === "stickers" ? <>'),
+    source.indexOf(') : activeTool === "cutout" ? ('),
+    source.indexOf(') : activeTool === "stickers" ? ('),
   );
 
   assert.match(source, /startCutoutTimelineDrag\(event, clip\)/);
@@ -596,6 +596,15 @@ test("Auto cutout keeps manual cutout editing while replacing visible chroma cho
   assert.match(source, /aria-label="Erase cutout background"/);
   assert.match(source, /aria-label="Restore cutout background"/);
   assert.match(source, /aria-label="Cutout brush size"/);
+  assert.match(
+    cutoutPanel,
+    /Cutout controls[\s\S]*Select a cutout in the preview or timeline to edit it\./,
+  );
+  assert.match(cutoutPanel, /className="cutout-toolbar-row"/);
+  assert.match(
+    css,
+    /\.cutout-toolbar-row\s*\{[^}]*display:\s*flex[^}]*flex-wrap:\s*nowrap/s,
+  );
   assert.match(
     cutoutPanel,
     /aria-label="Move cutout"[\s\S]*?disabled=\{isAutoCutoutLoading\}/,
@@ -610,7 +619,7 @@ test("Auto cutout keeps manual cutout editing while replacing visible chroma cho
   );
   assert.match(
     cutoutPanel,
-    /aria-label="Cutout brush size"[\s\S]*?disabled=\{!selectedCutoutClip \|\| cutoutBrushMode === "move" \|\| isAutoCutoutLoading\}/,
+    /aria-label="Cutout brush size"[\s\S]*?disabled=\{\s*!selectedCutoutClip \|\|\s*cutoutBrushMode === "move" \|\|\s*isAutoCutoutLoading\s*\}/,
   );
   assert.match(
     cutoutPanel,
@@ -641,7 +650,7 @@ test("Auto cutout keeps manual cutout editing while replacing visible chroma cho
   assert.doesNotMatch(source, /setSelectedCutoutChromaKey/);
   assert.match(
     source,
-    /className={`workspace \$\{activeTool === "cutout" \? "cutout-workspace" : ""\}/,
+    /activeTool === "cutout"[\s\S]*?\? "cutout-workspace"/,
   );
   assert.match(source, /getCutoutChromaKeyStyle\(videoClip\)/);
   assert.match(source, /getCutoutChromaKeyStyle/);
@@ -659,7 +668,14 @@ test("Auto cutout keeps manual cutout editing while replacing visible chroma cho
   assert.match(css, /\.preview-cutout\.restore-cutout-cursor/);
   assert.match(css, /\.preview-cutout-original/);
   assert.match(css, /\.chroma-key-defs/);
-  assert.match(css, /\.workspace\.cutout-workspace/);
+  assert.match(
+    css,
+    /\.workspace\.cutout-workspace \.workspace-resizer-details,[\s\S]*\.workspace\.cutout-workspace \.details-panel\s*\{[^}]*display:\s*none/s,
+  );
+  assert.match(
+    css,
+    /\.workspace\.cutout-workspace \.media-panel\s*\{[^}]*grid-column:\s*1\s*\/\s*3/s,
+  );
   assert.match(css, /\.auto-cutout-button\s*\{[^}]*width:\s*100%/s);
   assert.doesNotMatch(css, /\.preview-cutout\s*\{[^}]*max-height:/s);
   assert.doesNotMatch(
@@ -1811,6 +1827,44 @@ test("keeps sticky track labels above clips while the timeline scrolls", () => {
   );
 });
 
+test("does not show destructive delete buttons on track labels", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(source, /className="track-delete-button"/);
+  assert.doesNotMatch(source, /const deleteTimelineRow/);
+  assert.doesNotMatch(css, /\.track-delete-button/);
+  assert.match(source, /aria-label="Delete selected clips"/);
+});
+
+test("does not open floating quick-action buttons over preview videos", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
+
+  const previewSelection = source.slice(
+    source.indexOf("const showPreviewVideoControls"),
+    source.indexOf("const startPreviewScale"),
+  );
+  assert.doesNotMatch(previewSelection, /setVideoQuickMenu\(\{/);
+  assert.match(previewSelection, /setVideoQuickMenu\(null\)/);
+  assert.match(
+    css,
+    /\.video-quick-menu\s*\{[^}]*display:\s*none/s,
+  );
+});
+
 test("keeps new video layer drop targets accessible without visible wording", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
@@ -2128,7 +2182,7 @@ test("main voice action posts guarded analysis and commits once", () => {
     ),
   );
 
-  assert.match(source, /"Keep main voice"/);
+  assert.match(source, /"Silenced remover"/);
   assert.doesNotMatch(source, /"Remove silence"/);
   assert.doesNotMatch(source, /removeSilenceAutomatically/);
   assert.match(
@@ -2344,6 +2398,23 @@ test("shows compact audio waveforms inside video timeline clips", () => {
     /\.timeline-clip\.has-timeline-waveform:not\(\.audio-timeline-clip\)[\s\S]*?\.timeline-clip-video,[\s\S]*?bottom:\s*20px/s,
   );
   assert.match(css, /\.audio-waveform-line\s*\{[^}]*fill:\s*none[^}]*stroke:/s);
+});
+
+test("keeps audio fade ramps at or below the white volume line", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+  const fadeOverlayStart = source.indexOf('className="audio-fade-overlay"');
+  const volumeOverlayStart = source.indexOf(
+    'className="audio-volume-overlay"',
+    fadeOverlayStart,
+  );
+  assert.ok(fadeOverlayStart >= 0);
+  assert.ok(volumeOverlayStart > fadeOverlayStart);
+  const fadeOverlaySource = source.slice(fadeOverlayStart, volumeOverlayStart);
+  assert.match(fadeOverlaySource, /y2=\{getAudioVolumeLineY\(/);
+  assert.match(fadeOverlaySource, /y1=\{getAudioVolumeLineY\(/);
 });
 
 test("shows a top-right mute control on every extracted audio clip", () => {
@@ -2906,6 +2977,30 @@ test("reveals a protected delete control for each imported media item", () => {
   );
 });
 
+test("navigates imported media with all four arrow keys", () => {
+  const source = readFileSync(
+    new URL("../src/Composition.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /const handleMediaArrowNavigation/);
+  assert.match(
+    source,
+    /\["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"\]/,
+  );
+  assert.match(
+    source,
+    /querySelectorAll<HTMLElement>\(\s*"\[data-media-id\]"/s,
+  );
+  assert.match(source, /event\.shiftKey[\s\S]*nextSelectedIds/);
+  assert.match(
+    source,
+    /querySelector<HTMLButtonElement>\("\.media-thumb-select"\)[\s\S]*\.focus\(\)/,
+  );
+  assert.match(source, /scrollIntoView\(\{[\s\S]*block: "nearest"/);
+  assert.match(source, /aria-label=\{`Select \$\{mediaItem\.label\}`\}/);
+});
+
 test("lets the main Import button accept images and videos", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
@@ -2965,7 +3060,7 @@ test("places editing controls before the import library", () => {
   assert.match(css, /\.media-panel\s*\{[^}]*justify-self:\s*end/s);
 });
 
-test("keeps text and sticker tool libraries on the left", () => {
+test("keeps controls on the left and option libraries on the right", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
@@ -2977,6 +3072,14 @@ test("keeps text and sticker tool libraries on the left", () => {
 
   assert.match(
     source,
+    /activeTool === "cutout"[\s\S]*?\? "cutout-workspace"/,
+  );
+  assert.match(
+    source,
+    /activeTool === "adjustment"[\s\S]*?"library-left-workspace"/,
+  );
+  assert.doesNotMatch(
+    source,
     /activeTool === "text" \|\| activeTool === "stickers"[\s\S]*?"library-left-workspace"/,
   );
   assert.match(
@@ -2986,6 +3089,27 @@ test("keeps text and sticker tool libraries on the left", () => {
   assert.match(
     css,
     /\.workspace\.library-left-workspace \.details-panel\s*\{[^}]*grid-column:\s*2[^}]*justify-self:\s*end/s,
+  );
+  assert.match(source, /activeTool === "effects"[\s\S]*Effect controls/);
+  assert.match(source, /activeTool === "filters"[\s\S]*Filter controls/);
+  assert.match(source, /activeTool === "animations"[\s\S]*Animation controls/);
+  assert.match(
+    source,
+    /activeTool === "captions" && selectedCaptionClip[\s\S]*Caption controls/,
+  );
+  assert.match(
+    source,
+    /activeTool === "text" && selectedTextClip[\s\S]*Text controls/,
+  );
+  assert.match(source, /activeTool === "stickers"[\s\S]*Sticker controls/);
+  assert.match(
+    source,
+    /activeTool === "audio"[\s\S]*clipControlTarget\?\.track !== "audio"[\s\S]*Audio controls/,
+  );
+  assert.match(source, /activeTool === "transcript"[\s\S]*Transcript controls/);
+  assert.match(
+    css,
+    /\.media-panel \.visual-tool-panel > \.visual-intensity-control,[\s\S]*\.media-panel \.animation-tool-panel > \.animation-segment-control\s*\{[^}]*display:\s*none/s,
   );
 });
 
@@ -3054,12 +3178,32 @@ test("marquee-selects clips across every timeline row", () => {
   assert.match(source, /data-timeline-clip-id={clip\.id}/);
   assert.match(source, /getTimelineClipsInsideSelection/);
   assert.match(source, /const scrollWhileSelecting/);
+  assert.match(
+    source,
+    /getDragEdgeAutoScrollDelta\(\s*pointer\.x,\s*laneViewportLeft,\s*bounds\.right,\s*96,\s*20,/,
+  );
+  assert.match(
+    source,
+    /getDragEdgeAutoScrollDelta\(\s*pointer\.y,\s*bounds\.top,\s*bounds\.bottom,\s*96,\s*18,/,
+  );
   assert.match(source, /scrollArea\.scrollLeft \+= horizontalDelta/);
   assert.match(source, /scrollArea\.scrollTop \+= verticalDelta/);
   assert.match(source, /event\.shiftKey \|\| event\.ctrlKey \|\| event\.metaKey/);
+  assert.match(
+    source,
+    /if \(isAdditiveSelection\) \{\s*event\.preventDefault\(\);\s*toggleTimelineClipSelection\(clip\);/,
+  );
   assert.match(source, /multi-selected-timeline-clip/);
   assert.match(source, /timelineClipIds\?: string\[\]/);
   assert.match(source, /selected clips moved together/);
+  assert.match(
+    source,
+    /const selectedGroup =\s*selectedClipIdsRef\.current\.length > 1 &&\s*selectedClipIdsRef\.current\.includes\(clip\.id\)/,
+  );
+  assert.doesNotMatch(
+    source,
+    /const selectedGroup =\s*isAdditiveSelection &&/,
+  );
   assert.match(
     source,
     /startPointerDrag\(\s*event,\s*clip,\s*selectedGroup,\s*isAdditiveSelection,\s*\)/,
@@ -3086,4 +3230,16 @@ test("marquee-selects clips across every timeline row", () => {
   assert.match(source, /event\.key !== "Delete" && event\.key !== "Backspace"/);
   assert.match(css, /\.timeline-selection-box\s*\{/);
   assert.match(css, /\.timeline-clip\.multi-selected-timeline-clip\s*\{/);
+  assert.match(
+    css,
+    /\.timeline-clip\.selected-timeline-clip,\s*\.timeline-clip\.multi-selected-timeline-clip\s*\{[^}]*border-color:\s*var\(--theme-yellow\)/s,
+  );
+  assert.match(
+    css,
+    /\.timeline-clip\.multi-selected-timeline-clip \.trim-handle\s*\{\s*opacity:\s*1;/,
+  );
+  assert.match(
+    css,
+    /\.timeline-clip\.moving-timeline-clip\s*\{[^}]*border-color:\s*#facc15/s,
+  );
 });

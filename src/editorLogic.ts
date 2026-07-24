@@ -624,7 +624,7 @@ export type ClipVisualStyle = {
 export type CutoutLineStyle = "solid" | "glow" | "double" | "sketch";
 
 export const defaultCutoutLineStyle = {
-  color: "#facc15",
+  color: "#22d3ee",
   opacity: 90,
   width: 4,
   style: "solid" as CutoutLineStyle,
@@ -725,11 +725,7 @@ export type ClipAnimationPresentation = {
 
 export type ClipAdjustment = {
   scale: number;
-  scaleX?: number;
-  scaleY?: number;
   rotation: number;
-  flipHorizontal: boolean;
-  flipVertical: boolean;
   positionX: number;
   positionY: number;
   cropTop: number;
@@ -740,11 +736,7 @@ export type ClipAdjustment = {
 
 export const defaultClipAdjustment: ClipAdjustment = {
   scale: 1,
-  scaleX: 1,
-  scaleY: 1,
   rotation: 0,
-  flipHorizontal: false,
-  flipVertical: false,
   positionX: 0,
   positionY: 0,
   cropTop: 0,
@@ -1454,7 +1446,7 @@ export const createRecordedAudioClip = (
     track: "audio",
     start: options.start,
     duration,
-    color: "#4a4a4a",
+    color: "#2563eb",
     src: options.src,
     audioKind: "voiceover",
     volume: 1,
@@ -1479,7 +1471,7 @@ export const createBackgroundMusicClip = ({
   track: "audio",
   start: Math.max(0, playheadFrame),
   duration: Math.max(1, durationInFrames),
-  color: "#4a4a4a",
+  color: "#2563eb",
   src,
   audioKind: "music",
   volume: 0.7,
@@ -1512,7 +1504,7 @@ export const createVideoMediaPair = (
     ...(Number.isFinite(options.sourceDuration)
       ? { sourceDuration: Math.max(1, Math.round(options.sourceDuration ?? 1)) }
       : {}),
-    color: options.track === "main" ? "#3a3a3a" : "#292929",
+    color: options.track === "main" ? "#0891b2" : "#7c3aed",
     src: options.src,
     speed: 1,
     volume: 1,
@@ -1532,7 +1524,7 @@ export const createVideoMediaPair = (
     ...(Number.isFinite(options.sourceDuration)
       ? { sourceDuration: Math.max(1, Math.round(options.sourceDuration ?? 1)) }
       : {}),
-    color: "#4a4a4a",
+    color: "#2563eb",
     src: options.src,
     audioKind: "linked",
     speed: 1,
@@ -1558,7 +1550,7 @@ export const createImageMediaClip = (options: {
   track: options.track,
   start: options.start,
   duration: options.duration,
-  color: options.track === "main" ? "#3a3a3a" : "#292929",
+  color: options.track === "main" ? "#0891b2" : "#7c3aed",
   src: options.src,
   speed: 1,
   volume: 1,
@@ -1678,7 +1670,7 @@ export const createCutoutVideoPair = ({
     track: "audio",
     start: cutout.start,
     duration: cutout.duration,
-    color: "#4a4a4a",
+    color: "#2563eb",
     src,
     speed: 1,
     volume: 1,
@@ -2691,35 +2683,6 @@ export type PreviewAlignmentGuides = {
   verticalPositions?: number[];
 };
 
-export const getDirectionalPreviewAlignmentGuides = (
-  guides: PreviewAlignmentGuides,
-  deltaX: number,
-  deltaY: number,
-): PreviewAlignmentGuides => {
-  const isExactlyCentered =
-    guides.horizontal &&
-    guides.vertical &&
-    (guides.horizontalPositions ?? []).includes(50) &&
-    (guides.verticalPositions ?? []).includes(50);
-  if (isExactlyCentered) {
-    return guides;
-  }
-
-  if (Math.abs(deltaX) >= Math.abs(deltaY)) {
-    return {
-      ...guides,
-      horizontal: false,
-      horizontalPositions: [],
-    };
-  }
-
-  return {
-    ...guides,
-    vertical: false,
-    verticalPositions: [],
-  };
-};
-
 const previewSnapPoints = [0, 33.333, 50, 66.667, 100];
 
 const getNearestPreviewSnapPoint = (
@@ -3458,50 +3421,6 @@ export const getVideoLayer = (clip: TimelineClip): number | null => {
   if (clip.track !== "upper") return null;
 
   return clip.videoLayer ?? (clip.overlayLane ?? 0) + 1;
-};
-
-export const getTranscriptableRowClips = (
-  clips: TimelineClip[],
-  videoLayer: number | null,
-  selectedTrack: TrackName,
-): TimelineClip[] =>
-  clips
-    .filter((clip) => {
-      if (!clip.src || clip.mediaType === "image") {
-        return false;
-      }
-
-      if (videoLayer !== null) {
-        return getVideoLayer(clip) === videoLayer;
-      }
-
-      return (
-        selectedTrack === "cutout" &&
-        clip.track === "cutout" &&
-        clip.cutout?.mediaKind === "video"
-      );
-    })
-    .sort(
-      (first, second) =>
-        first.start - second.start || first.id.localeCompare(second.id),
-    );
-
-export const getClipTranscriptionSource = (
-  clip: TimelineClip,
-): TimelineClip => {
-  if (
-    clip.track !== "cutout" ||
-    clip.cutout?.mediaKind !== "video" ||
-    !clip.cutout.originalSrc
-  ) {
-    return clip;
-  }
-
-  return {
-    ...clip,
-    src: clip.cutout.originalSrc,
-    sourceStart: getEffectiveCutoutOriginalSourceStart(clip),
-  };
 };
 
 export type TimelineKeyboardDirection = "left" | "right" | "up" | "down";
@@ -4903,7 +4822,7 @@ export const addOverlayMediaClip = (
       track: "upper",
       start: media.start,
       duration: media.duration,
-      color: "#292929",
+      color: "#7c3aed",
       src: media.src,
       speed: 1,
       volume: 1,
@@ -5285,7 +5204,6 @@ export const removeSilenceFromLinkedVideo = (
   videoClipId: string,
   ranges: SilenceRange[],
   fps: number,
-  options: { removeTranscriptCaptions?: boolean } = {},
 ): TimelineClip[] => {
   const videoClip = clips.find(
     (clip) =>
@@ -5388,7 +5306,6 @@ export const removeSilenceFromLinkedVideo = (
 
   const nextClips = clips.flatMap((clip) => {
     if (
-      options.removeTranscriptCaptions !== false &&
       clip.track === "caption" &&
       clip.caption?.generationId?.startsWith("transcript-") &&
       clip.caption.sourceClipId === videoClip.id
@@ -5410,7 +5327,6 @@ export const removeSilenceFromLinkedVideo = (
   return normalizeTimelineTransitions(nextClips);
 };
 
-<<<<<<< Updated upstream
 const isTranscriptSourceDescendant = (
   clipId: string,
   sourceClipId: string,
@@ -5418,390 +5334,6 @@ const isTranscriptSourceDescendant = (
   clipId === sourceClipId || clipId.startsWith(`${sourceClipId}-speech-`);
 
 export const removeTranscriptSentenceFromLinkedVideo = (
-=======
-export type TranscriptWordEditTarget = {
-  clipId: string;
-  wordIndex: number;
-};
-
-export const getTranscriptWords = (text: string): string[] =>
-  text.trim().match(/\S+/g) ?? [];
-
-const normalizeTranscriptComparisonWord = (word: string): string =>
-  word.toLowerCase().replace(/^[^a-z0-9']+|[^a-z0-9']+$/g, "");
-
-export const getRemovedTranscriptWordIndexes = (
-  originalText: string,
-  editedText: string,
-): number[] => {
-  const originalWords = getTranscriptWords(originalText);
-  const editedWords = getTranscriptWords(editedText);
-  const originalNormalized = originalWords.map(
-    normalizeTranscriptComparisonWord,
-  );
-  const editedNormalized = editedWords.map(normalizeTranscriptComparisonWord);
-  const lengths = Array.from({ length: originalWords.length + 1 }, () =>
-    Array<number>(editedWords.length + 1).fill(0),
-  );
-
-  for (
-    let originalIndex = originalWords.length - 1;
-    originalIndex >= 0;
-    originalIndex -= 1
-  ) {
-    for (
-      let editedIndex = editedWords.length - 1;
-      editedIndex >= 0;
-      editedIndex -= 1
-    ) {
-      lengths[originalIndex][editedIndex] =
-        originalNormalized[originalIndex] === editedNormalized[editedIndex]
-          ? lengths[originalIndex + 1][editedIndex + 1] + 1
-          : Math.max(
-              lengths[originalIndex + 1][editedIndex],
-              lengths[originalIndex][editedIndex + 1],
-            );
-    }
-  }
-
-  const retainedOriginalIndexes = new Set<number>();
-  let originalIndex = 0;
-  let editedIndex = 0;
-  while (
-    originalIndex < originalWords.length &&
-    editedIndex < editedWords.length
-  ) {
-    if (originalNormalized[originalIndex] === editedNormalized[editedIndex]) {
-      retainedOriginalIndexes.add(originalIndex);
-      originalIndex += 1;
-      editedIndex += 1;
-    } else if (
-      lengths[originalIndex + 1][editedIndex] >=
-      lengths[originalIndex][editedIndex + 1]
-    ) {
-      originalIndex += 1;
-    } else {
-      editedIndex += 1;
-    }
-  }
-
-  return originalWords
-    .map((_, index) => index)
-    .filter((index) => !retainedOriginalIndexes.has(index));
-};
-
-const getTranscriptWordTimelineRange = (
-  clip: TimelineClip,
-  wordIndex: number,
-): { start: number; end: number } | null => {
-  const words = getTranscriptWords(clip.caption?.content ?? "");
-  if (
-    wordIndex < 0 ||
-    wordIndex >= words.length ||
-    !Number.isFinite(clip.start) ||
-    !Number.isFinite(clip.duration) ||
-    clip.duration < 1
-  ) {
-    return null;
-  }
-
-  const start =
-    clip.start + Math.floor((clip.duration * wordIndex) / words.length);
-  const end = Math.min(
-    clip.start + clip.duration,
-    clip.start +
-      Math.max(
-        Math.floor((clip.duration * (wordIndex + 1)) / words.length),
-        Math.floor((clip.duration * wordIndex) / words.length) + 1,
-      ),
-  );
-  return end > start ? { start, end } : null;
-};
-
-const findTranscriptSourceVideo = (
-  clips: TimelineClip[],
-  captionClip: TimelineClip,
-  frame: number,
-): TimelineClip | undefined => {
-  const directSource = clips.find(
-    (clip) =>
-      clip.id === captionClip.caption?.sourceClipId &&
-      (clip.track === "main" ||
-        clip.track === "upper" ||
-        clip.track === "cutout") &&
-      Boolean(clip.src) &&
-      frame >= clip.start &&
-      frame < clip.start + clip.duration,
-  );
-  if (directSource) return directSource;
-
-  return clips
-    .filter(
-      (clip) =>
-        (clip.track === "main" ||
-          clip.track === "upper" ||
-          clip.track === "cutout") &&
-        Boolean(clip.src) &&
-        frame >= clip.start &&
-        frame < clip.start + clip.duration,
-    )
-    .sort((left, right) => {
-      const leftLayer = getVideoLayer(left) ?? 0;
-      const rightLayer = getVideoLayer(right) ?? 0;
-      return rightLayer - leftLayer;
-    })[0];
-};
-
-const remapTranscriptSourceClipIds = (
-  clips: TimelineClip[],
-  generationId: string,
-): TimelineClip[] =>
-  clips.map((clip) => {
-    if (
-      clip.track !== "caption" ||
-      clip.caption?.generationId !== generationId
-    ) {
-      return clip;
-    }
-
-    const sourceVideo = findTranscriptSourceVideo(
-      clips,
-      clip,
-      Math.min(
-        clip.start + clip.duration - 1,
-        clip.start + Math.floor(clip.duration / 2),
-      ),
-    );
-    if (!sourceVideo || clip.caption.sourceClipId === sourceVideo.id) {
-      return clip;
-    }
-
-    return {
-      ...clip,
-      caption: { ...clip.caption, sourceClipId: sourceVideo.id },
-    };
-  });
-
-export const removeTranscriptWordFromLinkedVideo = (
-  clips: TimelineClip[],
-  transcriptClipId: string,
-  wordIndex: number,
-  fps: number,
-): TimelineClip[] => {
-  const transcriptClip = clips.find(
-    (clip) =>
-      clip.id === transcriptClipId &&
-      clip.track === "caption" &&
-      clip.caption?.generationId?.startsWith("transcript-"),
-  );
-  if (!transcriptClip?.caption) return clips;
-
-  const words = getTranscriptWords(transcriptClip.caption.content);
-  const range = getTranscriptWordTimelineRange(transcriptClip, wordIndex);
-  if (!range) return clips;
-
-  const sourceVideo = findTranscriptSourceVideo(
-    clips,
-    transcriptClip,
-    Math.floor((range.start + range.end) / 2),
-  );
-  if (!sourceVideo) return clips;
-
-  const rangeStart = Math.max(range.start, sourceVideo.start);
-  const rangeEnd = Math.min(
-    range.end,
-    sourceVideo.start + sourceVideo.duration,
-  );
-  const removedFrames = rangeEnd - rangeStart;
-  if (removedFrames < 1) return clips;
-
-  const speed = sourceVideo.speed ?? 1;
-  const removalRanges = [
-    {
-      startSeconds: ((rangeStart - sourceVideo.start) * speed) / fps,
-      endSeconds: ((rangeEnd - sourceVideo.start) * speed) / fps,
-    },
-  ];
-  const editedMedia = removeSilenceFromLinkedVideo(
-    clips,
-    sourceVideo.id,
-    removalRanges,
-    fps,
-    { removeTranscriptCaptions: false },
-  );
-  if (editedMedia === clips) return clips;
-
-  const generationId = transcriptClip.caption.generationId;
-  if (!generationId) return clips;
-  const nextWords = words.filter((_, index) => index !== wordIndex);
-  const updatedCaptions = editedMedia.flatMap<TimelineClip>((clip) => {
-    if (
-      clip.track !== "caption" ||
-      clip.caption?.generationId !== generationId
-    ) {
-      return [clip];
-    }
-    if (clip.id === transcriptClip.id) {
-      if (nextWords.length === 0 || clip.duration <= removedFrames) return [];
-      const content = nextWords.join(" ");
-      const caption = clip.caption;
-      if (!caption) return [clip];
-      return [
-        {
-          ...clip,
-          label: content,
-          duration: clip.duration - removedFrames,
-          caption: { ...caption, content },
-        },
-      ];
-    }
-    if (clip.start >= rangeEnd) {
-      return [{ ...clip, start: clip.start - removedFrames }];
-    }
-    return [clip];
-  });
-
-  return remapTranscriptSourceClipIds(updatedCaptions, generationId);
-};
-
-export const removeTranscriptWordsFromLinkedVideo = (
-  clips: TimelineClip[],
-  targets: TranscriptWordEditTarget[],
-  fps: number,
-): TimelineClip[] => {
-  const uniqueClipIds = new Set(targets.map((target) => target.clipId));
-  if (uniqueClipIds.size === 1 && targets.length > 0) {
-    const transcriptClipId = targets[0].clipId;
-    const transcriptClip = clips.find(
-      (clip) =>
-        clip.id === transcriptClipId &&
-        clip.track === "caption" &&
-        clip.caption?.generationId?.startsWith("transcript-"),
-    );
-    const words = getTranscriptWords(transcriptClip?.caption?.content ?? "");
-    const removedWordIndexes = Array.from(
-      new Set(
-        targets
-          .map((target) => target.wordIndex)
-          .filter((wordIndex) => wordIndex >= 0 && wordIndex < words.length),
-      ),
-    ).sort((left, right) => left - right);
-
-    if (transcriptClip?.caption && removedWordIndexes.length > 0) {
-      const timelineRanges = removedWordIndexes
-        .map((wordIndex) =>
-          getTranscriptWordTimelineRange(transcriptClip, wordIndex),
-        )
-        .filter(
-          (range): range is { start: number; end: number } => range !== null,
-        );
-      const firstRange = timelineRanges[0];
-      const sourceVideo = firstRange
-        ? findTranscriptSourceVideo(
-            clips,
-            transcriptClip,
-            Math.floor((firstRange.start + firstRange.end) / 2),
-          )
-        : undefined;
-
-      if (sourceVideo && timelineRanges.length === removedWordIndexes.length) {
-        const absoluteRemovalRanges = timelineRanges
-          .map((range) => ({
-            start: Math.max(range.start, sourceVideo.start),
-            end: Math.min(range.end, sourceVideo.start + sourceVideo.duration),
-          }))
-          .filter((range) => range.end > range.start);
-        const removedFrames = absoluteRemovalRanges.reduce(
-          (total, range) => total + range.end - range.start,
-          0,
-        );
-        const speed = sourceVideo.speed ?? 1;
-        const editedMedia = removeSilenceFromLinkedVideo(
-          clips,
-          sourceVideo.id,
-          absoluteRemovalRanges.map((range) => ({
-            startSeconds: ((range.start - sourceVideo.start) * speed) / fps,
-            endSeconds: ((range.end - sourceVideo.start) * speed) / fps,
-          })),
-          fps,
-          { removeTranscriptCaptions: false },
-        );
-
-        if (editedMedia !== clips && removedFrames > 0) {
-          const generationId = transcriptClip.caption.generationId;
-          const removedIndexSet = new Set(removedWordIndexes);
-          const nextWords = words.filter(
-            (_, wordIndex) => !removedIndexSet.has(wordIndex),
-          );
-          const updatedCaptions = editedMedia.flatMap<TimelineClip>((clip) => {
-            if (
-              clip.track !== "caption" ||
-              clip.caption?.generationId !== generationId
-            ) {
-              return [clip];
-            }
-            if (clip.id === transcriptClip.id) {
-              if (nextWords.length === 0 || clip.duration <= removedFrames) {
-                return [];
-              }
-              const content = nextWords.join(" ");
-              return [
-                {
-                  ...clip,
-                  label: content,
-                  duration: clip.duration - removedFrames,
-                  caption: {
-                    ...defaultCaptionStyle,
-                    ...clip.caption,
-                    content,
-                  },
-                },
-              ];
-            }
-
-            const shift = absoluteRemovalRanges.reduce(
-              (total, range) =>
-                range.end <= clip.start
-                  ? total + range.end - range.start
-                  : total,
-              0,
-            );
-            return shift > 0
-              ? [{ ...clip, start: clip.start - shift }]
-              : [clip];
-          });
-
-          return generationId
-            ? remapTranscriptSourceClipIds(updatedCaptions, generationId)
-            : updatedCaptions;
-        }
-      }
-    }
-  }
-
-  const orderedTargets = [...targets].sort((left, right) => {
-    const leftClip = clips.find((clip) => clip.id === left.clipId);
-    const rightClip = clips.find((clip) => clip.id === right.clipId);
-    return (
-      (rightClip?.start ?? -1) - (leftClip?.start ?? -1) ||
-      right.wordIndex - left.wordIndex
-    );
-  });
-
-  return orderedTargets.reduce(
-    (currentClips, target) =>
-      removeTranscriptWordFromLinkedVideo(
-        currentClips,
-        target.clipId,
-        target.wordIndex,
-        fps,
-      ),
-    clips,
-  );
-};
-
-export const removeTranscriptSegmentFromLinkedVideo = (
->>>>>>> Stashed changes
   clips: TimelineClip[],
   transcriptClipId: string,
   fps: number,
@@ -5810,7 +5342,6 @@ export const removeTranscriptSegmentFromLinkedVideo = (
     (clip) =>
       clip.id === transcriptClipId &&
       clip.track === "caption" &&
-<<<<<<< Updated upstream
       clip.caption?.generationId?.startsWith("transcript-") &&
       clip.caption.sourceClipId,
   );
@@ -6082,77 +5613,6 @@ export const removeTranscriptWordsFromLinkedVideo = (
     ...rebuiltTranscriptClips,
   ];
 };
-=======
-      clip.caption?.generationId?.startsWith("transcript-"),
-  );
-  if (!transcriptClip?.caption) return clips;
-
-  const words = getTranscriptWords(transcriptClip.caption.content);
-  return removeTranscriptWordsFromLinkedVideo(
-    clips,
-    words.map((_, wordIndex) => ({ clipId: transcriptClipId, wordIndex })),
-    fps,
-  );
-};
-
-export type TranscriptGapEditTarget = {
-  generationId: string;
-  start: number;
-  end: number;
-};
-
-export const removeTranscriptGapsFromLinkedVideo = (
-  clips: TimelineClip[],
-  gaps: TranscriptGapEditTarget[],
-  fps: number,
-): TimelineClip[] =>
-  [...gaps]
-    .sort((left, right) => right.start - left.start)
-    .reduce((currentClips, gap) => {
-      const start = Math.max(0, Math.round(gap.start));
-      const end = Math.max(start + 1, Math.round(gap.end));
-      const sourceVideo = currentClips
-        .filter(
-          (clip) =>
-            (clip.track === "main" ||
-              clip.track === "upper" ||
-              clip.track === "cutout") &&
-            Boolean(clip.src) &&
-            start >= clip.start &&
-            end <= clip.start + clip.duration,
-        )
-        .sort(
-          (left, right) =>
-            (getVideoLayer(right) ?? 0) - (getVideoLayer(left) ?? 0),
-        )[0];
-      if (!sourceVideo) return currentClips;
-
-      const speed = sourceVideo.speed ?? 1;
-      const editedMedia = removeSilenceFromLinkedVideo(
-        currentClips,
-        sourceVideo.id,
-        [
-          {
-            startSeconds: ((start - sourceVideo.start) * speed) / fps,
-            endSeconds: ((end - sourceVideo.start) * speed) / fps,
-          },
-        ],
-        fps,
-        { removeTranscriptCaptions: false },
-      );
-      if (editedMedia === currentClips) return currentClips;
-
-      const removedFrames = end - start;
-      const shiftedCaptions = editedMedia.map((clip) =>
-        clip.track === "caption" &&
-        clip.caption?.generationId === gap.generationId &&
-        clip.start >= end
-          ? { ...clip, start: clip.start - removedFrames }
-          : clip,
-      );
-      return remapTranscriptSourceClipIds(shiftedCaptions, gap.generationId);
-    }, clips);
->>>>>>> Stashed changes
 
 export const keepDominantVoiceInLinkedVideo = (
   clips: TimelineClip[],
@@ -6341,7 +5801,7 @@ export const ensureLinkedAudioForVideo = (
     ...(Number.isFinite(videoClip.sourceDuration)
       ? { sourceDuration: videoClip.sourceDuration }
       : {}),
-    color: "#4a4a4a",
+    color: "#2563eb",
     src: videoClip.src,
     audioKind: "linked",
     speed: videoClip.speed ?? 1,
@@ -7394,7 +6854,7 @@ export const getClipVisualPresentation = (
   if (effect === "glow") {
     parts.push(
       `brightness(${1 + 0.1 * effectAmount})`,
-      `drop-shadow(0 0 ${18 * effectAmount}px rgba(245, 184, 0, ${0.55 * effectAmount}))`,
+      `drop-shadow(0 0 ${18 * effectAmount}px rgba(56, 214, 200, ${0.55 * effectAmount}))`,
     );
   }
   if (effect === "grayscale") {
@@ -7427,7 +6887,7 @@ export const getClipVisualPresentation = (
     const x = Math.cos(angle) * distance;
     const y = Math.sin(angle) * distance;
     parts.push(
-      `drop-shadow(${x}px ${y}px 0 rgba(250, 204, 21, 0.95))`,
+      `drop-shadow(${x}px ${y}px 0 rgba(34, 211, 238, 0.95))`,
       `drop-shadow(${-x}px ${-y}px 0 rgba(244, 114, 182, 0.9))`,
       `drop-shadow(0 0 ${8 * effectAmount}px rgba(255, 255, 255, 0.75))`,
     );
@@ -7448,11 +6908,11 @@ export const getClipVisualPresentation = (
   if (effect === "neon-outline" && !cutoutLineEffect) {
     const width = Math.max(1, 3 * effectAmount);
     parts.push(
-      `drop-shadow(${width}px 0 0 #facc15)`,
-      `drop-shadow(${-width}px 0 0 #facc15)`,
+      `drop-shadow(${width}px 0 0 #22d3ee)`,
+      `drop-shadow(${-width}px 0 0 #22d3ee)`,
       `drop-shadow(0 ${width}px 0 #f472b6)`,
       `drop-shadow(0 ${-width}px 0 #f472b6)`,
-      `drop-shadow(0 0 ${14 * effectAmount}px rgba(250, 204, 21, 0.9))`,
+      `drop-shadow(0 0 ${14 * effectAmount}px rgba(34, 211, 238, 0.9))`,
     );
   }
   if (effect === "hand-drawn") {
@@ -7475,7 +6935,7 @@ export const getClipVisualPresentation = (
     parts.push(
       `drop-shadow(${x}px ${y}px 0 rgba(250, 204, 21, 0.95))`,
       `drop-shadow(${-y}px ${x}px 0 rgba(244, 114, 182, 0.9))`,
-      `drop-shadow(${-x}px ${-y}px 0 rgba(250, 204, 21, 0.9))`,
+      `drop-shadow(${-x}px ${-y}px 0 rgba(34, 211, 238, 0.9))`,
     );
     rotate = Math.sin(frame * 0.27) * 0.65 * effectAmount;
   }
@@ -7491,7 +6951,7 @@ export const getClipVisualPresentation = (
   if (effect === "motion-trail") {
     const trail = 5 + Math.abs(Math.sin(frame * 0.1)) * 7;
     parts.push(
-      `drop-shadow(${-trail * effectAmount}px 0 0 rgba(250, 204, 21, 0.58))`,
+      `drop-shadow(${-trail * effectAmount}px 0 0 rgba(34, 211, 238, 0.58))`,
       `drop-shadow(${-trail * 1.8 * effectAmount}px 1px 0 rgba(244, 114, 182, 0.38))`,
       `drop-shadow(${-trail * 2.6 * effectAmount}px 2px 0 rgba(250, 204, 21, 0.24))`,
     );
@@ -7503,7 +6963,7 @@ export const getClipVisualPresentation = (
     const x = Math.cos(angle) * radius;
     const y = Math.sin(angle) * radius;
     parts.push(
-      `drop-shadow(${x}px ${y}px 0 rgba(250, 204, 21, 0.95))`,
+      `drop-shadow(${x}px ${y}px 0 rgba(34, 211, 238, 0.95))`,
       `drop-shadow(${-y}px ${x}px 0 rgba(250, 204, 21, 0.92))`,
       `drop-shadow(${-x}px ${-y}px 0 rgba(244, 63, 94, 0.92))`,
       `drop-shadow(${y}px ${-x}px 0 rgba(168, 85, 247, 0.92))`,
@@ -7514,7 +6974,7 @@ export const getClipVisualPresentation = (
     parts.push(
       `brightness(${1 + 0.12 * spark * effectAmount})`,
       `drop-shadow(0 0 ${5 * spark * effectAmount}px rgba(255, 255, 255, 0.98))`,
-      `drop-shadow(0 0 ${18 * spark * effectAmount}px rgba(250, 204, 21, 0.92))`,
+      `drop-shadow(0 0 ${18 * spark * effectAmount}px rgba(34, 211, 238, 0.92))`,
     );
   }
   if (effect === "comic-pop") {
@@ -8079,11 +7539,7 @@ export const setClipAdjustmentById = (
       ...clip,
       adjustment: {
         scale: clamp(next.scale, 0.05, 4),
-        scaleX: clamp(next.scaleX ?? 1, 0.05, 4),
-        scaleY: clamp(next.scaleY ?? 1, 0.05, 4),
         rotation: clamp(next.rotation, -180, 180),
-        flipHorizontal: next.flipHorizontal,
-        flipVertical: next.flipVertical,
         positionX: clamp(next.positionX, -100, 100),
         positionY: clamp(next.positionY, -100, 100),
         cropTop: clamp(next.cropTop, 0, 45),

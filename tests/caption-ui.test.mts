@@ -400,7 +400,7 @@ test("imports parsed caption files as regular caption clips in exactly one commi
   );
 });
 
-test("gates caption transcription to selected source-backed videos in both auto modes", () => {
+test("allows auto captions and lyrics for a selected video clip or video row", () => {
   const source = readFileSync(
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
@@ -416,15 +416,23 @@ test("gates caption transcription to selected source-backed videos in both auto 
   );
   assert.match(
     captionPanel,
-    /disabled=\{isAutoCaptionLoading \|\| !selectedCaptionSourceClip\}/,
+    /disabled=\{isAutoCaptionLoading \|\| !canGenerateTranscript\}/,
   );
   assert.match(
     captionPanel,
-    /Select a main or upper video clip before generating auto captions\./,
+    /Select a video clip or click empty space in a video\s*row before generating auto captions\./,
   );
   assert.match(
     captionPanel,
-    /Select a main or upper video clip before generating auto lyrics\./,
+    /Select a video clip or click empty space in a video\s*row before generating auto lyrics\./,
+  );
+  assert.match(
+    source,
+    /await generateCaptionForSelection\("auto"\)/,
+  );
+  assert.match(
+    source,
+    /await generateCaptionForSelection\("lyrics"\)/,
   );
 });
 

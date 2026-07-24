@@ -21,6 +21,7 @@ import {
   ArrowUpDown,
   AudioLines,
   Captions,
+  Check,
   ChevronRight,
   CircleHelp,
   ClipboardPaste,
@@ -60,7 +61,6 @@ import {
   Plus,
   Redo2,
   RefreshCcw,
-  Replace,
   RotateCcw,
   RotateCw,
   Scissors,
@@ -126,7 +126,6 @@ import {
   getDraggedClipStart,
   getDragEdgeAutoScrollDelta,
   getMediaTrimFrameFromPointer,
-  getVideoClipDragPreviewStart,
   getContextualAudioClips,
   getCaptionPosition,
   getResizedCaptionFontSizeFromHandle,
@@ -170,14 +169,16 @@ import {
   getCompactedTimelineGroupStarts,
   getTranscriptableRowClips,
   getVideoLayer,
+  getVideoLayerStackOrder,
   getVideoLayerControlState,
   getVideoLayerEnd,
   moveVideoClipToLayer,
   placeVideoPairOnLayer,
   insertVideoPairOnLayerAtFrame,
+  preventVideoLayerClipOverlaps,
   parseSavedEditorProject,
   removeUnusedMediaItem,
-  replaceClipMediaById,
+  rippleTrimVideoClipById,
   replaceGeneratedCaptionBatch,
   removeBrowserOnlySavedMedia,
   getTranscriptWords,
@@ -220,6 +221,7 @@ import {
   toggleClipVisibilityById,
   toggleTrackVisibility,
   shouldMovePlayheadDuringScrub,
+  shouldMuteVideoNativeAudio,
   splitClipByIdAtFrame,
   intersectSourceRanges,
   subtractSourceRanges,
@@ -244,7 +246,6 @@ import {
   SavedEditorProject,
   TimelineClip,
   TrackName,
-  trimClipById,
   trimMediaItemRange,
   undoTimelineHistory,
   VideoLayerDirection,
@@ -2788,11 +2789,16 @@ const textFontOptions = [
   "Inter",
   "Arial",
   "Arial Black",
+  "Bahnschrift",
+  "Bookman Old Style",
+  "Calibri",
+  "Cambria",
   "Segoe UI",
   "Impact",
   "Georgia",
   "Garamond",
   "Palatino Linotype",
+  "Rockwell",
   "Verdana",
   "Trebuchet MS",
   "Century Gothic",
@@ -2908,6 +2914,89 @@ const textStylePresets: TextStylePreset[] = [
       effect: "outline",
     },
   },
+  {
+    id: "cinematic",
+    label: "Cinematic",
+    sample: "A NEW CHAPTER",
+    style: {
+      fontFamily: "Garamond",
+      fontWeight: "700",
+      fontStyle: "normal",
+      color: "#fef3c7",
+      effect: "shadow",
+    },
+  },
+  {
+    id: "subtitle",
+    label: "Subtitle",
+    sample: "Clear and readable",
+    style: {
+      fontFamily: "Arial",
+      fontWeight: "700",
+      fontStyle: "normal",
+      color: "#ffffff",
+      effect: "outline",
+    },
+  },
+  {
+    id: "tech",
+    label: "Tech",
+    sample: "SYSTEM ONLINE",
+    style: {
+      fontFamily: "Bahnschrift",
+      fontWeight: "700",
+      fontStyle: "normal",
+      color: "#67e8f9",
+      effect: "glow",
+    },
+  },
+  {
+    id: "luxury",
+    label: "Luxury",
+    sample: "Signature",
+    style: {
+      fontFamily: "Palatino Linotype",
+      fontWeight: "700",
+      fontStyle: "italic",
+      color: "#fde68a",
+      effect: "shadow",
+    },
+  },
+  {
+    id: "headline",
+    label: "Headline",
+    sample: "BREAKING NEWS",
+    style: {
+      fontFamily: "Franklin Gothic Medium",
+      fontWeight: "900",
+      fontStyle: "normal",
+      color: "#ffffff",
+      effect: "shadow",
+    },
+  },
+  {
+    id: "playful",
+    label: "Playful",
+    sample: "Good vibes!",
+    style: {
+      fontFamily: "Trebuchet MS",
+      fontWeight: "900",
+      fontStyle: "italic",
+      color: "#f9a8d4",
+      effect: "outline",
+    },
+  },
+];
+
+const textColorSwatches = [
+  "#ffffff",
+  "#f5b800",
+  "#67e8f9",
+  "#f9a8d4",
+  "#86efac",
+  "#fb7185",
+  "#c4b5fd",
+  "#111111",
 ];
 
 const textEffectOptions: Array<{ id: TextEffect; label: string }> = [
@@ -3602,6 +3691,7 @@ type TimelineRow = {
   label: string;
   order: number;
   videoLayer?: number;
+  captionKind?: "manual" | "auto" | "lyrics" | "transcript";
   audioKind?: "voiceover" | "imported" | "detached" | "linked";
   audioClipIds?: string[];
 };
@@ -3610,68 +3700,65 @@ type TranscriptSentenceEditorProps = {
   clipId: string;
   content: string;
   timestamp: string;
-  onDeleteWords: (clipId: string, wordIndexes: number[]) => void;
+  onCommitEdit: (clipId: string, editedContent: string) => void;
 };
 
 const TranscriptSentenceEditor = memo<TranscriptSentenceEditorProps>(
-  ({ clipId, content, timestamp, onDeleteWords }) => {
+  ({ clipId, content, timestamp, onCommitEdit }) => {
     const [draft, setDraft] = useState(content);
-    const committedDeletionRef = useRef(false);
+    const committedDraftRef = useRef<string | null>(null);
 
     useEffect(() => {
       setDraft(content);
+      committedDraftRef.current = null;
     }, [content]);
 
-    const commitDeletedWords = () => {
-      if (committedDeletionRef.current) {
-        committedDeletionRef.current = false;
+    const commitEdit = () => {
+      const commitKey = `${content}\u0000${draft}`;
+      if (draft === content || committedDraftRef.current === commitKey) {
         return;
       }
-      const removedWordIndexes = getRemovedTranscriptWordIndexes(
-        content,
-        draft,
-      );
-      if (removedWordIndexes.length === 0) {
-        setDraft(content);
-        return;
-      }
-      onDeleteWords(clipId, removedWordIndexes);
+      committedDraftRef.current = commitKey;
+      onCommitEdit(clipId, draft);
     };
 
-    return (
-      <textarea
-        className="transcript-sentence-editor"
-        value={draft}
-        aria-label={`Edit transcript at ${timestamp}`}
-        title="Deleted words are immediately removed from the video and audio. Use Shift+Enter for a new line."
-        rows={2}
-        onChange={(event) => {
-          const nextDraft = event.currentTarget.value;
-          setDraft(nextDraft);
+    useEffect(() => {
+      if (draft === content) return;
+      const timer = window.setTimeout(commitEdit, 650);
+      return () => window.clearTimeout(timer);
+    }, [content, draft]);
 
-          if (
-            getTranscriptWords(nextDraft).length <
-            getTranscriptWords(content).length
-          ) {
-            const removedWordIndexes = getRemovedTranscriptWordIndexes(
-              content,
-              nextDraft,
-            );
-            if (removedWordIndexes.length > 0) {
-              committedDeletionRef.current = true;
-              onDeleteWords(clipId, removedWordIndexes);
+    return (
+      <div className="transcript-sentence-editor-shell">
+        <textarea
+          className="transcript-sentence-editor"
+          value={draft}
+          aria-label={`Edit transcript at ${timestamp}`}
+          title="Type directly in this box. Deleted words are removed from the transcript, video, and audio."
+          rows={3}
+          onChange={(event) => setDraft(event.currentTarget.value)}
+          onBlur={commitEdit}
+          onPointerDown={focusTextareaOnPointerDown}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              commitEdit();
             }
-          }
-        }}
-        onBlur={commitDeletedWords}
-        onPointerDown={focusTextareaOnPointerDown}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            event.currentTarget.blur();
-          }
-        }}
-      />
+          }}
+        />
+        <button
+          className="transcript-edit-apply"
+          type="button"
+          disabled={draft === content}
+          aria-label={`Apply transcript edit at ${timestamp}`}
+          title="Apply transcript edit"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={commitEdit}
+        >
+          <Check aria-hidden="true" />
+          <span>Apply</span>
+        </button>
+      </div>
     );
   },
 );
@@ -3730,9 +3817,16 @@ const packDetachedAudioIntoNonOverlappingLanes = (
   return lanes;
 };
 
-const isTranscriptSettingClip = (clip: TimelineClip) =>
-  clip.track === "caption" &&
-  clip.caption?.generationId?.startsWith("transcript-");
+const getCaptionTimelineRowKind = (
+  clip: TimelineClip,
+): TimelineRow["captionKind"] | null => {
+  if (clip.track !== "caption") return null;
+  const generationId = clip.caption?.generationId;
+  if (generationId?.startsWith("transcript-")) return "transcript";
+  if (generationId?.startsWith("lyric-")) return "lyrics";
+  if (generationId) return "auto";
+  return "manual";
+};
 
 const timelineRowContainsClip = (row: TimelineRow, clip: TimelineClip) => {
   if (row.audioKind === "linked") {
@@ -3747,8 +3841,11 @@ const timelineRowContainsClip = (row: TimelineRow, clip: TimelineClip) => {
   if (row.audioKind === "imported") {
     return isImportedAudioClip(clip);
   }
-  if (row.id === "caption" && isTranscriptSettingClip(clip)) {
-    return false;
+  if (row.id === "caption") {
+    return (
+      clip.track === "caption" &&
+      getCaptionTimelineRowKind(clip) === (row.captionKind ?? "manual")
+    );
   }
 
   return row.videoLayer !== undefined
@@ -3785,6 +3882,13 @@ type PointerDrag = {
   scrollStartTop?: number;
   originalStart?: number;
   grabOffsetFrames?: number;
+  grabOffsetX?: number;
+  grabOffsetY?: number;
+  previewWidth?: number;
+  previewHeight?: number;
+  previewSrc?: string;
+  previewMediaType?: "video" | "image";
+  previewSourceStart?: number;
 };
 
 type TrimDrag = {
@@ -4107,7 +4211,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const commandKeyLabel = isAppleDevice ? "⌘" : "Ctrl";
   const deleteKeyLabel = isAppleDevice ? "⌫" : "Delete";
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const replaceVideoInputRef = useRef<HTMLInputElement>(null);
   const importChoiceDialogRef = useRef<HTMLDialogElement>(null);
   const mediaTrimDialogRef = useRef<HTMLDialogElement>(null);
   const mediaTrimVideoRef = useRef<HTMLVideoElement>(null);
@@ -4136,8 +4239,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const previewSourceRef = useRef<string | null>(null);
   const timelineContentRef = useRef<HTMLDivElement>(null);
   const timelineScrollRef = useRef<HTMLDivElement>(null);
-  const lastTimelineScrollLeftRef = useRef(0);
-  const suppressTimelineScrollPlayheadFollowRef = useRef(false);
   const mediaLibraryRef = useRef<HTMLDivElement>(null);
   const mediaGridRef = useRef<HTMLDivElement>(null);
   const mediaSelectionBoxRef = useRef<MediaSelectionBox | null>(null);
@@ -4206,7 +4307,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [mediaPreviewDuration, setMediaPreviewDuration] = useState(0);
   const [isMediaPreviewPlaying, setIsMediaPreviewPlaying] = useState(false);
   const [mediaPreviewVolume, setMediaPreviewVolume] = useState(1);
+  const [previewMasterVolume, setPreviewMasterVolume] = useState(1);
   const [isPreviewMasterMuted, setIsPreviewMasterMuted] = useState(false);
+  const [isPreviewDockVolumeOpen, setIsPreviewDockVolumeOpen] =
+    useState(false);
+  const [previewAspectRatio, setPreviewAspectRatio] = useState(9 / 16);
+  const updatePreviewAspectRatio = useCallback(
+    (width: number, height: number) => {
+      if (width <= 0 || height <= 0) {
+        return;
+      }
+      setPreviewAspectRatio(width / height);
+    },
+    [],
+  );
   const [socialPreviewPlatform, setSocialPreviewPlatform] =
     useState<SocialPreviewPlatform>("none");
   const [mediaTrimDraft, setMediaTrimDraft] = useState<{
@@ -4307,8 +4421,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [roughEditTemplateRotation, setRoughEditTemplateRotation] = useState<
     RoughEditTemplate[]
   >(["full-b-roll", "picture-in-picture", "split-screen"]);
-  const [roughEditSectionTemplateOverrides, setRoughEditSectionTemplateOverrides] =
-    useState<Record<number, RoughEditTemplate>>({});
+  const [
+    roughEditSectionTemplateOverrides,
+    setRoughEditSectionTemplateOverrides,
+  ] = useState<Record<number, RoughEditTemplate>>({});
   const [roughEditSectionSeconds, setRoughEditSectionSeconds] = useState(4);
   const [roughEditBRollLaneCount, setRoughEditBRollLaneCount] = useState(3);
   const [roughEditUseMovingHead, setRoughEditUseMovingHead] = useState(true);
@@ -4426,9 +4542,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     anchorClipId: string;
     mode: "copy" | "cut";
   } | null>(null);
-  const [replaceVideoClipId, setReplaceVideoClipId] = useState<string | null>(
-    null,
-  );
   const [textDraft, setTextDraft] = useState("");
   const [captionDraft, setCaptionDraft] = useState("");
   const [captionMode, setCaptionMode] = useState<
@@ -4817,61 +4930,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setProjectStatus("Timeline fitted to viewport");
   }, [projectDuration]);
 
-  const suppressNextTimelineScrollPlayheadFollow = useCallback(() => {
-    suppressTimelineScrollPlayheadFollowRef.current = true;
-    window.requestAnimationFrame(() => {
-      const scrollArea = timelineScrollRef.current;
-      if (scrollArea) {
-        lastTimelineScrollLeftRef.current = scrollArea.scrollLeft;
-      }
-      suppressTimelineScrollPlayheadFollowRef.current = false;
-    });
-  }, []);
-
-  const updatePlayheadFromTimelineScroll = useCallback(() => {
-    const scrollArea = timelineScrollRef.current;
-    if (!scrollArea) return;
-
-    const currentScrollLeft = scrollArea.scrollLeft;
-    if (Math.abs(currentScrollLeft - lastTimelineScrollLeftRef.current) < 1) {
-      return;
-    }
-    lastTimelineScrollLeftRef.current = currentScrollLeft;
-
-    if (
-      suppressTimelineScrollPlayheadFollowRef.current ||
-      previewMode !== "timeline" ||
-      isPreviewPlaying ||
-      isScrubbing ||
-      pointerDrag ||
-      trimDrag
-    ) {
-      return;
-    }
-
-    const nextFrame = Math.max(
-      0,
-      Math.min(
-        Math.max(0, projectDuration - 1),
-        Math.round(currentScrollLeft / Math.max(0.001, timelineScale)),
-      ),
-    );
-
-    if (nextFrame === playheadFrame) return;
-    playheadFrameRef.current = nextFrame;
-    setPlayheadFrame(nextFrame);
-    setPreviewMode("timeline");
-  }, [
-    isPreviewPlaying,
-    isScrubbing,
-    playheadFrame,
-    pointerDrag,
-    previewMode,
-    projectDuration,
-    timelineScale,
-    trimDrag,
-  ]);
-
   const zoomTimelineBy = useCallback(
     (amount: number, anchorClientX?: number) => {
       const scrollArea = timelineScrollRef.current;
@@ -4912,12 +4970,25 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       setTimelineScale(nextScale);
       if (scrollArea && nextScrollLeft !== null) {
         requestAnimationFrame(() => {
-          suppressNextTimelineScrollPlayheadFollow();
           scrollArea.scrollLeft = nextScrollLeft;
         });
       }
     },
-    [suppressNextTimelineScrollPlayheadFollow],
+    [],
+  );
+  const getPointerTimelineFrame = useCallback(
+    (clientX: number) => {
+      const bounds = timelineContentRef.current?.getBoundingClientRect();
+      if (!bounds) return null;
+
+      return getTimelineFrameFromPointer(
+        clientX,
+        bounds.left,
+        timelineOrigin,
+        timelineScale,
+      );
+    },
+    [timelineScale],
   );
   const videoPlaybackDuration = useMemo(
     () => getVideoPlaybackDuration(clips),
@@ -4939,11 +5010,27 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     pointerDrag?.type === "timeline"
       ? clips.find((clip) => clip.id === pointerDrag.id)
       : null;
+  const timelinePointerDragTargetStart =
+    pointerDrag?.type === "timeline" &&
+    pointerDrag.activated &&
+    pointerDrag.originalStart !== undefined &&
+    pointerDrag.pointerStartX !== undefined
+      ? getDraggedClipStart({
+          originalStart: pointerDrag.originalStart,
+          pointerStartX: pointerDrag.pointerStartX,
+          pointerX:
+            pointerDrag.x +
+            ((timelineScrollRef.current?.scrollLeft ??
+              pointerDrag.scrollStartLeft ??
+              0) -
+              (pointerDrag.scrollStartLeft ?? 0)),
+          pixelsPerFrame: timelineScale,
+        })
+      : null;
   const timelineGroupDragPreview = useMemo(() => {
     if (
       pointerDrag?.type !== "timeline" ||
       (pointerDrag.timelineClipIds?.length ?? 0) <= 1 ||
-      pointerDrag.pointerStartX === undefined ||
       pointerDrag.originalStart === undefined
     ) {
       return null;
@@ -4956,17 +5043,9 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     });
     const movingClips = clips.filter((clip) => ids.has(clip.id));
     const earliestStart = Math.min(...movingClips.map((clip) => clip.start));
-    const scrollLeftDelta =
-      (timelineScrollRef.current?.scrollLeft ??
-        pointerDrag.scrollStartLeft ??
-        0) - (pointerDrag.scrollStartLeft ?? 0);
     const requestedDelta = Math.round(
-      getDraggedClipStart({
-        originalStart: pointerDrag.originalStart,
-        pointerStartX: pointerDrag.pointerStartX,
-        pointerX: pointerDrag.x + scrollLeftDelta,
-        pixelsPerFrame: timelineScale,
-      }) - pointerDrag.originalStart,
+      (timelinePointerDragTargetStart ?? pointerDrag.originalStart) -
+        pointerDrag.originalStart,
     );
     const frameDelta = Math.max(-earliestStart, requestedDelta);
 
@@ -4979,7 +5058,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         frameDelta,
       }),
     };
-  }, [clips, pointerDrag]);
+  }, [clips, pointerDrag, timelinePointerDragTargetStart]);
   const timelineDragPreviewOffsetY =
     pointerDrag?.activated &&
     pointerDrag.type === "timeline" &&
@@ -4991,6 +5070,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           0) -
           (pointerDrag.scrollStartTop ?? 0))
       : 0;
+  const isSingleTimelinePointerDrag = Boolean(
+    pointerDrag?.activated &&
+    pointerDrag.type === "timeline" &&
+    (pointerDrag.timelineClipIds?.length ?? 1) === 1,
+  );
   const isVideoPointerDrag = Boolean(
     pointerDrag?.activated &&
     (draggedMediaItem ||
@@ -5040,21 +5124,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     () => createTimelineTicks(projectDuration, fps),
     [projectDuration],
   );
-  const getPointerTimelineFrame = useCallback(
-    (clientX: number) => {
-      const bounds = timelineContentRef.current?.getBoundingClientRect();
-      if (!bounds) return null;
-
-      return getTimelineFrameFromPointer(
-        clientX,
-        bounds.left,
-        timelineOrigin,
-        timelineScale,
-      );
-    },
-    [timelineScale],
-  );
-
   const mainClip = clips.find((clip) => clip.track === "main");
   const mainClipSpeed = mainClip?.speed ?? 1;
   const mainClipVolume = mainClip?.volume ?? 1;
@@ -5065,16 +5134,78 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       : null;
   const selectedCaptionSourceClip =
     selectedClip &&
-    (selectedClip.track === "main" || selectedClip.track === "upper") &&
+    (selectedClip.track === "main" ||
+      selectedClip.track === "upper" ||
+      selectedClip.track === "audio") &&
     selectedClip.src
       ? selectedClip
       : null;
+  const selectedTranscriptAudioRowClips = useMemo(() => {
+    if (selectedClip || selectedTrack !== "audio" || !selectedTimelineRowKey) {
+      return [];
+    }
+
+    if (selectedTimelineRowKey.startsWith("linked-audio-")) {
+      const videoLayer = Number(
+        selectedTimelineRowKey.slice("linked-audio-".length),
+      );
+      if (!Number.isFinite(videoLayer)) return [];
+
+      return clips.filter((audioClip) => {
+        if (
+          audioClip.track !== "audio" ||
+          !audioClip.src ||
+          !audioClip.linkedClipId
+        ) {
+          return false;
+        }
+        const linkedVideo = clips.find(
+          (clip) =>
+            clip.id === audioClip.linkedClipId &&
+            clip.linkedClipId === audioClip.id,
+        );
+        return linkedVideo ? getVideoLayer(linkedVideo) === videoLayer : false;
+      });
+    }
+
+    if (selectedTimelineRowKey.startsWith("detached-audio-lane-")) {
+      const laneIndex = Number(
+        selectedTimelineRowKey.slice("detached-audio-lane-".length),
+      );
+      if (!Number.isInteger(laneIndex) || laneIndex < 0) return [];
+      return (
+        packDetachedAudioIntoNonOverlappingLanes(
+          clips.filter(isDetachedAudioClip),
+        )[laneIndex] ?? []
+      ).filter((clip) => Boolean(clip.src));
+    }
+
+    if (selectedTimelineRowKey === "imported-audio") {
+      return clips.filter(
+        (clip) => isImportedAudioClip(clip) && Boolean(clip.src),
+      );
+    }
+
+    if (selectedTimelineRowKey === "voiceover") {
+      return clips.filter((clip) => isVoiceoverClip(clip) && Boolean(clip.src));
+    }
+
+    return [];
+  }, [clips, selectedClip, selectedTimelineRowKey, selectedTrack]);
   const selectedTranscriptRowClips = useMemo(
     () =>
       selectedClip
         ? []
-        : getTranscriptableRowClips(clips, selectedVideoLayer, selectedTrack),
-    [clips, selectedClip, selectedTrack, selectedVideoLayer],
+        : selectedTrack === "audio"
+          ? selectedTranscriptAudioRowClips
+          : getTranscriptableRowClips(clips, selectedVideoLayer, selectedTrack),
+    [
+      clips,
+      selectedClip,
+      selectedTrack,
+      selectedTranscriptAudioRowClips,
+      selectedVideoLayer,
+    ],
   );
   const transcriptSourceClips = selectedCaptionSourceClip
     ? [selectedCaptionSourceClip]
@@ -5085,15 +5216,33 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         `${clip.id}:${clip.src}:${clip.start}:${clip.sourceStart ?? 0}:${clip.duration}:${clip.speed ?? 1}`,
     )
     .join("|");
+  const selectedAudioTranscriptRowLabel =
+    selectedTrack === "audio" && selectedTranscriptAudioRowClips.length > 0
+      ? selectedTimelineRowKey?.startsWith("linked-audio-")
+        ? (() => {
+            const videoLayer = Number(
+              selectedTimelineRowKey.slice("linked-audio-".length),
+            );
+            return videoLayer === 0
+              ? "Main audio"
+              : `Layer ${videoLayer > 0 ? "+" : ""}${videoLayer} audio`;
+          })()
+        : selectedTimelineRowKey?.startsWith("detached-audio-lane-")
+          ? "Extracted audio"
+          : selectedTimelineRowKey === "voiceover"
+            ? "Voiceover track"
+            : "Imported audio"
+      : null;
   const selectedTranscriptRowLabel =
     !selectedCaptionSourceClip && selectedTranscriptRowClips.length > 0
-      ? selectedVideoLayer !== null
-        ? selectedVideoLayer === 0
-          ? "Main track"
-          : `Video layer ${selectedVideoLayer > 0 ? "+" : ""}${selectedVideoLayer}`
-        : selectedTrack === "cutout"
-          ? "Cutout track"
-          : null
+      ? (selectedAudioTranscriptRowLabel ??
+        (selectedVideoLayer !== null
+          ? selectedVideoLayer === 0
+            ? "Main track"
+            : `Video layer ${selectedVideoLayer > 0 ? "+" : ""}${selectedVideoLayer}`
+          : selectedTrack === "cutout"
+            ? "Cutout track"
+            : null))
       : null;
   const canGenerateTranscript = transcriptSourceClips.length > 0;
   const selectedMainVoiceClip =
@@ -5376,9 +5525,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   );
   const roughEditBRollMediaItems = useMemo(
     () =>
-      mediaItems.filter(
-        (mediaItem) => mediaItem.id !== roughEditARollMediaId,
-      ),
+      mediaItems.filter((mediaItem) => mediaItem.id !== roughEditARollMediaId),
     [mediaItems, roughEditARollMediaId],
   );
   const roughEditSelectedBRollItems = roughEditBRollMediaItems.filter(
@@ -5577,11 +5724,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           volume: 0,
           videoLayer: headOverlayLayer,
           timelineRowOrder: 100 + headOverlayLayer,
-          adjustment: getRoughEditAdjustment(
-            "a-roll",
-            section.template,
-            index,
-          ),
+          adjustment: getRoughEditAdjustment("a-roll", section.template, index),
         });
       }
     });
@@ -5698,7 +5841,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     firstClip: TimelineClip,
     secondClip: TimelineClip,
   ) =>
-    (getVideoLayer(firstClip) ?? 0) - (getVideoLayer(secondClip) ?? 0) ||
+    getVideoLayerStackOrder(firstClip) - getVideoLayerStackOrder(secondClip) ||
     firstClip.start - secondClip.start ||
     firstClip.id.localeCompare(secondClip.id);
   const timelinePreviewFrame =
@@ -5753,14 +5896,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             clip.src &&
             !clip.hidden,
         )
+        .sort(
+          (firstClip, secondClip) =>
+            getVideoLayerStackOrder(firstClip) -
+            getVideoLayerStackOrder(secondClip),
+        )
         .map(getVideoLayer)
         .filter((videoLayer): videoLayer is number => videoLayer !== null),
     ),
-  ).sort((firstLayer, secondLayer) => firstLayer - secondLayer);
+  );
   const getPreviewVideoLayerZIndex = (clip: TimelineClip) => {
     const videoLayer = getVideoLayer(clip);
     return videoLayer === null ? 0 : previewVideoLayers.indexOf(videoLayer) + 1;
   };
+  const previewCanvasClip = activeVideoLayers[0];
   const topVisibleVideoClip = activeVideoLayers[activeVideoLayers.length - 1];
   const activeStickerClips = getActiveClipsAtFrame(
     clips,
@@ -5786,34 +5935,58 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       clip.caption && !clip.caption.generationId?.startsWith("transcript-"),
   );
   const previewCaptionClips = activeCaptionClips;
-  const selectedTranscriptSourceClipId =
-    selectedCaptionClip?.caption?.generationId?.startsWith("transcript-")
-      ? selectedCaptionClip.caption.sourceClipId
-      : selectedCaptionSourceClip
-        ? (clips.find(
-            (clip) =>
-              clip.track === "caption" &&
-              clip.caption?.generationId?.startsWith("transcript-") &&
-              clip.caption.sourceClipId &&
-              (selectedCaptionSourceClip.id === clip.caption.sourceClipId ||
-                selectedCaptionSourceClip.id.startsWith(
-                  `${clip.caption.sourceClipId}-speech-`,
-                )),
-          )?.caption?.sourceClipId ?? selectedCaptionSourceClip.id)
-        : null;
+  const selectedTranscriptSourceClipIds = useMemo(() => {
+    if (
+      selectedCaptionClip?.caption?.generationId?.startsWith("transcript-") &&
+      selectedCaptionClip.caption.sourceClipId
+    ) {
+      return [selectedCaptionClip.caption.sourceClipId];
+    }
+
+    const selectedSources = selectedCaptionSourceClip
+      ? [selectedCaptionSourceClip]
+      : selectedTranscriptRowClips;
+    return Array.from(
+      new Set(
+        selectedSources.map(
+          (sourceClip) =>
+            clips.find(
+              (clip) =>
+                clip.track === "caption" &&
+                clip.caption?.generationId?.startsWith("transcript-") &&
+                clip.caption.sourceClipId &&
+                (sourceClip.id === clip.caption.sourceClipId ||
+                  sourceClip.id.startsWith(
+                    `${clip.caption.sourceClipId}-speech-`,
+                  )),
+            )?.caption?.sourceClipId ?? sourceClip.id,
+        ),
+      ),
+    );
+  }, [
+    clips,
+    selectedCaptionClip,
+    selectedCaptionSourceClip,
+    selectedTranscriptRowClips,
+  ]);
   const transcriptClips = useMemo(
     () =>
-      selectedTranscriptSourceClipId
+      selectedTranscriptSourceClipIds.length > 0
         ? clips
             .filter(
               (clip) =>
                 clip.track === "caption" &&
                 clip.caption?.generationId?.startsWith("transcript-") &&
-                clip.caption.sourceClipId === selectedTranscriptSourceClipId,
+                Boolean(
+                  clip.caption.sourceClipId &&
+                  selectedTranscriptSourceClipIds.includes(
+                    clip.caption.sourceClipId,
+                  ),
+                ),
             )
             .sort((a, b) => a.start - b.start)
         : [],
-    [clips, selectedTranscriptSourceClipId],
+    [clips, selectedTranscriptSourceClipIds],
   );
   const transcriptWordEntries = useMemo(
     () =>
@@ -5898,15 +6071,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     return gaps;
   }, [transcriptClips]);
   const playbackAudioClips = useMemo(
-    () => [
-      ...getPlaybackAudioClips(clips, playheadFrame).filter((audioClip) =>
-        clips.some(
-          (clip) =>
-            clip.track === "cutout" && clip.id === audioClip.linkedClipId,
-        ),
+    () =>
+      Array.from(
+        new Map(
+          [
+            ...getPlaybackAudioClips(clips, playheadFrame),
+            ...getIndependentPlaybackAudioClips(clips, playheadFrame),
+          ].map((audioClip) => [audioClip.id, audioClip]),
+        ).values(),
       ),
-      ...getIndependentPlaybackAudioClips(clips, playheadFrame),
-    ],
     [clips, playheadFrame],
   );
   const timelineRows = useMemo<TimelineRow[]>(() => {
@@ -6002,18 +6175,42 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             },
           ]
         : []),
-      ...(clips.some(
-        (clip) => clip.track === "caption" && !isTranscriptSettingClip(clip),
-      )
-        ? [
-            {
-              key: "caption",
-              id: "caption" as TrackName,
-              label: "Caption track",
-              order: 10_000,
-            },
-          ]
-        : []),
+      ...(
+        [
+          {
+            kind: "lyrics" as const,
+            key: "caption-lyrics",
+            label: "Lyrics",
+            order: 10_002,
+          },
+          {
+            kind: "auto" as const,
+            key: "caption-auto",
+            label: "Auto captions",
+            order: 10_001,
+          },
+          {
+            kind: "manual" as const,
+            key: "caption-manual",
+            label: "Caption track",
+            order: 10_000,
+          },
+        ] as const
+      ).flatMap((captionRow) =>
+        clips.some(
+          (clip) => getCaptionTimelineRowKind(clip) === captionRow.kind,
+        )
+          ? [
+              {
+                key: captionRow.key,
+                id: "caption" as TrackName,
+                label: captionRow.label,
+                captionKind: captionRow.kind,
+                order: captionRow.order,
+              },
+            ]
+          : [],
+      ),
       {
         key: "main",
         id: "main" as TrackName,
@@ -6208,6 +6405,25 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setIsMediaPreviewVolumeAdjusting(false);
     setIsMediaPreviewVolumeOpen(false);
   }, [previewMode, selectedMediaId]);
+
+  useEffect(() => {
+    if (
+      previewMode !== "timeline" ||
+      !previewCanvasClip ||
+      isImageClip(previewCanvasClip)
+    ) {
+      return;
+    }
+    const video = previewLayerVideoRefs.current.get(previewCanvasClip.id);
+    if (video?.videoWidth && video.videoHeight) {
+      updatePreviewAspectRatio(video.videoWidth, video.videoHeight);
+    }
+  }, [
+    previewCanvasClip,
+    previewMode,
+    timelinePreviewFrame,
+    updatePreviewAspectRatio,
+  ]);
 
   useEffect(() => {
     if (activeTool !== "captions" || !selectedCaptionClip?.caption) {
@@ -7548,16 +7764,19 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   };
 
   const removeTranscriptSentence = (transcriptClipId: string) => {
-    const transcriptClip = clips.find((clip) => clip.id === transcriptClipId);
+    const currentClips = clipsRef.current;
+    const transcriptClip = currentClips.find(
+      (clip) => clip.id === transcriptClipId,
+    );
     const sourceClipId = transcriptClip?.caption?.sourceClipId;
     if (!transcriptClip || !sourceClipId) return;
 
     const nextClips = removeTranscriptSentenceFromLinkedVideo(
-      clips,
+      currentClips,
       transcriptClipId,
       fps,
     );
-    if (nextClips === clips) {
+    if (nextClips === currentClips) {
       setCaptionStatus({
         kind: "error",
         message: "The matching video and linked audio could not be edited.",
@@ -7637,6 +7856,54 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     },
     [commitClipChange],
   );
+
+  const commitTranscriptTextEdit = (
+    transcriptClipId: string,
+    editedContent: string,
+  ) => {
+    const transcriptClip = clipsRef.current.find(
+      (clip) =>
+        clip.id === transcriptClipId &&
+        clip.track === "caption" &&
+        clip.caption?.generationId?.startsWith("transcript-"),
+    );
+    if (!transcriptClip?.caption) return;
+
+    const normalizedEditedContent = editedContent.trim().replace(/\s+/g, " ");
+    if (!normalizedEditedContent) {
+      removeTranscriptSentence(transcriptClipId);
+      return;
+    }
+
+    const removedWordIndexes = getRemovedTranscriptWordIndexes(
+      transcriptClip.caption.content,
+      normalizedEditedContent,
+    );
+    if (removedWordIndexes.length > 0) {
+      removeTranscriptWords(transcriptClipId, removedWordIndexes);
+      return;
+    }
+
+    if (normalizedEditedContent === transcriptClip.caption.content) return;
+    commitClipChange((currentClips) =>
+      currentClips.map((clip) =>
+        clip.id === transcriptClipId && clip.caption
+          ? {
+              ...clip,
+              label: normalizedEditedContent,
+              caption: {
+                ...clip.caption,
+                content: normalizedEditedContent,
+              },
+            }
+          : clip,
+      ),
+    );
+    setCaptionStatus({
+      kind: "success",
+      message: "Transcript text updated.",
+    });
+  };
 
   const updateSelectedTextRotation = (rotation: number) => {
     commitClipChange((currentClips) =>
@@ -8210,39 +8477,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     setProjectStatus("Video fitted to screen");
   };
 
-  const chooseReplacementVideo = (clipId: string) => {
-    setIsVideoMoreMenuOpen(false);
-    setReplaceVideoClipId(clipId);
-    replaceVideoInputRef.current?.click();
-  };
-
-  const replaceSelectedVideoFromGallery = async (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file = event.currentTarget.files?.[0];
-    const clipId = replaceVideoClipId;
-    event.currentTarget.value = "";
-    setReplaceVideoClipId(null);
-    if (!file || !clipId || !file.type.startsWith("video/")) return;
-
-    const previewSrc = URL.createObjectURL(file);
-    try {
-      const uploadedMedia = await uploadMediaFile(file);
-      const label = (uploadedMedia.label || file.name).replace(/\.[^.]+$/, "");
-      commitClipChange((currentClips) =>
-        replaceClipMediaById(currentClips, clipId, {
-          label,
-          src: uploadedMedia.src,
-        }),
-      );
-      setSelectedClipId(clipId);
-      setPreviewMode("timeline");
-      setProjectStatus(`${label} replaced the selected video`);
-    } finally {
-      URL.revokeObjectURL(previewSrc);
-    }
-  };
-
   const copyVideoClipToClipboard = (clipId: string, mode: "copy" | "cut") => {
     const videoClip = clips.find(
       (clip) =>
@@ -8443,16 +8677,99 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   };
 
   const showPreviewVideoControls = (
-    event: React.MouseEvent<HTMLElement>,
-    clip: TimelineClip,
+    event: React.MouseEvent<HTMLElement> | React.PointerEvent<HTMLElement>,
+    clickedClip: TimelineClip,
     sourceWidth: number,
     sourceHeight: number,
   ) => {
-    if (clip.track !== "main" && clip.track !== "upper") return false;
-    const previewBounds = previewWindowRef.current?.getBoundingClientRect();
-    if (!previewBounds || sourceWidth <= 0 || sourceHeight <= 0) return false;
+    const pointHitsVisibleVideo = (clip: TimelineClip) => {
+      const video = previewLayerVideoRefs.current.get(clip.id);
+      if (!video || video.style.visibility === "hidden") return false;
 
-    const sourceAspect = sourceWidth / sourceHeight;
+      const bounds = video.getBoundingClientRect();
+      const intrinsicWidth = video.videoWidth;
+      const intrinsicHeight = video.videoHeight;
+      if (
+        bounds.width <= 0 ||
+        bounds.height <= 0 ||
+        intrinsicWidth <= 0 ||
+        intrinsicHeight <= 0
+      ) {
+        return false;
+      }
+
+      const adjustment = {
+        ...defaultClipAdjustment,
+        ...clip.adjustment,
+      };
+      const adjustedSourceAspect =
+        (intrinsicWidth / intrinsicHeight) *
+        (Math.abs(adjustment.scaleX ?? 1) /
+          Math.max(0.001, Math.abs(adjustment.scaleY ?? 1)));
+      const elementAspect = bounds.width / bounds.height;
+      let visibleWidth = bounds.width;
+      let visibleHeight = bounds.height;
+
+      if (adjustedSourceAspect >= elementAspect) {
+        visibleHeight = bounds.width / adjustedSourceAspect;
+      } else {
+        visibleWidth = bounds.height * adjustedSourceAspect;
+      }
+
+      let left = bounds.left + (bounds.width - visibleWidth) / 2;
+      let top = bounds.top + (bounds.height - visibleHeight) / 2;
+      left += visibleWidth * (adjustment.cropLeft / 100);
+      top += visibleHeight * (adjustment.cropTop / 100);
+      visibleWidth *=
+        Math.max(0, 100 - adjustment.cropLeft - adjustment.cropRight) / 100;
+      visibleHeight *=
+        Math.max(0, 100 - adjustment.cropTop - adjustment.cropBottom) / 100;
+
+      return (
+        event.clientX >= left &&
+        event.clientX <= left + visibleWidth &&
+        event.clientY >= top &&
+        event.clientY <= top + visibleHeight
+      );
+    };
+
+    const clip = isImageClip(clickedClip)
+      ? clickedClip
+      : [...activeVideoLayers]
+          .filter((candidate) => !isImageClip(candidate))
+          .sort(
+            (left, right) =>
+              getPreviewVideoLayerZIndex(right) -
+              getPreviewVideoLayerZIndex(left),
+          )
+          .find(pointHitsVisibleVideo);
+
+    if (!clip) {
+      event.preventDefault();
+      event.stopPropagation();
+      clearEditorSelection();
+      setSelectedPreviewFrameBase(null);
+      setIsVideoMoreMenuOpen(false);
+      setVideoQuickMenu(null);
+      return null;
+    }
+
+    if (clip.track !== "main" && clip.track !== "upper") return null;
+    const previewBounds = previewWindowRef.current?.getBoundingClientRect();
+    if (!previewBounds) return null;
+
+    const selectedVideoElement = previewLayerVideoRefs.current.get(clip.id);
+    const targetSourceWidth =
+      selectedVideoElement?.videoWidth ||
+      (clip.id === clickedClip.id ? sourceWidth : 0) ||
+      previewBounds.width;
+    const targetSourceHeight =
+      selectedVideoElement?.videoHeight ||
+      (clip.id === clickedClip.id ? sourceHeight : 0) ||
+      previewBounds.height;
+    if (targetSourceWidth <= 0 || targetSourceHeight <= 0) return null;
+
+    const sourceAspect = targetSourceWidth / targetSourceHeight;
     const previewAspect = previewBounds.width / previewBounds.height;
     const widthPercent =
       sourceAspect >= previewAspect
@@ -8477,8 +8794,29 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       heightPercent,
     });
     setIsVideoMoreMenuOpen(false);
-    setVideoQuickMenu(null);
-    return true;
+    const adjustment = {
+      ...defaultClipAdjustment,
+      ...clip.adjustment,
+    };
+    const frameHeight =
+      previewBounds.height *
+      (heightPercent / 100) *
+      Math.abs(adjustment.scale * (adjustment.scaleY ?? 1));
+    const frameCenterX =
+      previewBounds.left +
+      previewBounds.width * (0.5 + adjustment.positionX / 100);
+    const frameCenterY =
+      previewBounds.top +
+      previewBounds.height * (0.5 + adjustment.positionY / 100);
+    setVideoQuickMenu({
+      clipId: clip.id,
+      left: Math.min(
+        window.innerWidth - 150,
+        Math.max(150, frameCenterX),
+      ),
+      top: Math.max(8, frameCenterY - frameHeight / 2 - 68),
+    });
+    return clip;
   };
 
   const startPreviewScale = (
@@ -9552,7 +9890,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       }
 
       const requestToken = Symbol("auto-caption-request");
-      const selectionVersion = autoCaptionSelectionVersionRef.current;
       const sourceClipId = selectedCaptionSourceClip.id;
       const sourceClipSrc = selectedCaptionSourceClip.src;
       const sourceClipSourceStart = selectedCaptionSourceClip.sourceStart ?? 0;
@@ -9566,8 +9903,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         fps;
       const abortController = new AbortController();
       const isActiveAutoCaptionRequest = () =>
-        autoCaptionRequestRef.current === requestToken &&
-        autoCaptionSelectionVersionRef.current === selectionVersion;
+        autoCaptionRequestRef.current === requestToken;
       autoCaptionRequestRef.current = requestToken;
       autoCaptionAbortControllerRef.current = abortController;
       setIsAutoCaptionLoading(true);
@@ -9681,7 +10017,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         );
         if (
           !isActiveAutoCaptionRequest() ||
-          selectedClipIdRef.current !== sourceClipId ||
           !currentSourceClip ||
           (currentSourceClip.track !== "main" &&
             currentSourceClip.track !== "upper") ||
@@ -9720,7 +10055,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             (clip) => clip.id === sourceClipId,
           );
           if (
-            selectedClipIdRef.current !== sourceClipId ||
             !commitSourceClip ||
             (commitSourceClip.track !== "main" &&
               commitSourceClip.track !== "upper") ||
@@ -9790,231 +10124,271 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     ],
   );
 
-  const generateAutoCaptions = useCallback(async () => {
-    await generateCaptionBatch("auto");
-  }, [generateCaptionBatch]);
-
-  const generateAutoLyrics = useCallback(async () => {
-    await generateCaptionBatch("lyrics");
-  }, [generateCaptionBatch]);
-
-  const generateTranscript = useCallback(async () => {
-    if (selectedCaptionSourceClip) {
-      await generateCaptionBatch("transcript");
-      return;
-    }
-
-    if (selectedTranscriptRowClips.length === 0) {
-      setCaptionStatus({
-        kind: "error",
-        message:
-          "Select a video layer or the Cutout track to generate its transcript.",
-      });
-      return;
-    }
-
-    if (autoCaptionRequestRef.current) {
-      abortAutoCaptionRequest();
-    }
-
-    const requestToken = Symbol("row-transcript-request");
-    const selectionVersion = autoCaptionSelectionVersionRef.current;
-    const abortController = new AbortController();
-    const sourceSnapshots = selectedTranscriptRowClips.map((clip) => ({
-      clipId: clip.id,
-      serializedClip: JSON.stringify(clip),
-      requestClip: getClipTranscriptionSource(clip),
-    }));
-    const isActiveRowTranscriptRequest = () =>
-      autoCaptionRequestRef.current === requestToken &&
-      autoCaptionSelectionVersionRef.current === selectionVersion;
-
-    autoCaptionRequestRef.current = requestToken;
-    autoCaptionAbortControllerRef.current = abortController;
-    setIsAutoCaptionLoading(true);
-    setCaptionStatus({
-      kind: "loading",
-      message: `Transcribing selected row (0/${sourceSnapshots.length})...`,
-    });
-
-    try {
-      const generatedGroups: Array<{
-        sourceClipId: string;
-        captions: TimelineClip[];
-      }> = [];
-
-      for (const [index, snapshot] of sourceSnapshots.entries()) {
-        if (!isActiveRowTranscriptRequest()) {
-          return;
-        }
-
-        const requestClip = snapshot.requestClip;
-        const clipResponse = await fetch(resolveMediaSource(requestClip.src!), {
-          signal: abortController.signal,
-        });
-        if (!clipResponse.ok) {
-          throw new Error(
-            `Could not load ${requestClip.label} for transcription.`,
-          );
-        }
-
-        const clipBlob = await clipResponse.blob();
-        if (!isActiveRowTranscriptRequest()) {
-          return;
-        }
-        const clipFile = new File(
-          [clipBlob],
-          getCaptionSourceFileName(requestClip, clipBlob),
-          { type: clipBlob.type || "application/octet-stream" },
-        );
-        const formData = new FormData();
-        formData.append("file", clipFile);
-        formData.append(
-          "sourceStart",
-          String((requestClip.sourceStart ?? 0) / fps),
-        );
-        formData.append(
-          "duration",
-          String((requestClip.duration * (requestClip.speed ?? 1)) / fps),
-        );
-
-        const transcriptionResponse = await fetch("/api/transcribe", {
-          method: "POST",
-          body: formData,
-          signal: abortController.signal,
-        });
-        if (!isActiveRowTranscriptRequest()) {
-          return;
-        }
-
-        let payload: unknown;
-        try {
-          payload = await transcriptionResponse.json();
-        } catch {
-          throw new Error(
-            transcriptionResponse.ok
-              ? "Transcription response did not include caption segments."
-              : `Transcript generation failed for ${requestClip.label}.`,
-          );
-        }
-
-        const serverErrorMessage =
-          typeof payload === "object" &&
-          payload !== null &&
-          !Array.isArray(payload) &&
-          "error" in payload &&
-          typeof payload.error === "object" &&
-          payload.error !== null &&
-          "message" in payload.error &&
-          typeof payload.error.message === "string" &&
-          payload.error.message.trim()
-            ? payload.error.message.trim()
-            : null;
-        if (!transcriptionResponse.ok) {
-          throw new Error(
-            serverErrorMessage ??
-              `Transcript generation failed for ${requestClip.label}.`,
-          );
-        }
-        if (
-          typeof payload !== "object" ||
-          payload === null ||
-          Array.isArray(payload) ||
-          !("segments" in payload) ||
-          !Array.isArray(payload.segments)
-        ) {
-          throw new Error(
-            "Transcription response did not include caption segments.",
-          );
-        }
-
-        const sourceClip = JSON.parse(snapshot.serializedClip) as TimelineClip;
-        const captions = createGeneratedCaptionClips({
-          sourceClip: { ...sourceClip, sourceStart: 0 },
-          segments: payload.segments,
-          fps,
-          timelineDuration: getTimelineDuration(clipsRef.current),
-          generationId: `transcript-row-${Date.now()}-${index}`,
-          style: captionStyle,
-        });
-        generatedGroups.push({ sourceClipId: sourceClip.id, captions });
-        setCaptionStatus({
-          kind: "loading",
-          message: `Transcribing selected row (${index + 1}/${sourceSnapshots.length})...`,
-        });
-      }
-
-      if (!isActiveRowTranscriptRequest()) {
+  const generateCaptionForSelection = useCallback(
+    async (kind: "auto" | "lyrics" | "transcript") => {
+      if (selectedCaptionSourceClip) {
+        await generateCaptionBatch(kind);
         return;
       }
-      const generatedCaptionCount = generatedGroups.reduce(
-        (total, group) => total + group.captions.length,
-        0,
-      );
-      if (generatedCaptionCount === 0) {
-        throw new Error("No speech was found in the selected row.");
+
+      if (selectedTranscriptRowClips.length === 0) {
+        setCaptionStatus({
+          kind: "error",
+          message:
+            kind === "lyrics"
+              ? "Select a video, audio, or Cutout row to generate auto lyrics."
+              : kind === "transcript"
+                ? "Select a video, audio, or Cutout row to generate its transcript."
+                : "Select a video, audio, or Cutout row to generate auto captions.",
+        });
+        return;
       }
 
-      commitClipChange((currentClips) => {
-        const rowIsStillCurrent = sourceSnapshots.every((snapshot) => {
-          const currentClip = currentClips.find(
-            (clip) => clip.id === snapshot.clipId,
+      if (autoCaptionRequestRef.current) {
+        abortAutoCaptionRequest();
+      }
+
+      const requestToken = Symbol(`row-${kind}-request`);
+      const abortController = new AbortController();
+      const sourceSnapshots = selectedTranscriptRowClips.map((clip) => ({
+        clipId: clip.id,
+        serializedClip: JSON.stringify(clip),
+        requestClip: getClipTranscriptionSource(clip),
+      }));
+      const isActiveRowTranscriptRequest = () =>
+        autoCaptionRequestRef.current === requestToken;
+
+      autoCaptionRequestRef.current = requestToken;
+      autoCaptionAbortControllerRef.current = abortController;
+      setIsAutoCaptionLoading(true);
+      setCaptionStatus({
+        kind: "loading",
+        message: `${
+          kind === "lyrics"
+            ? "Generating lyrics for"
+            : kind === "transcript"
+              ? "Transcribing"
+              : "Generating captions for"
+        } selected row (0/${sourceSnapshots.length})...`,
+      });
+
+      try {
+        const generatedGroups: Array<{
+          sourceClipId: string;
+          captions: TimelineClip[];
+        }> = [];
+
+        for (const [index, snapshot] of sourceSnapshots.entries()) {
+          if (!isActiveRowTranscriptRequest()) {
+            return;
+          }
+
+          const requestClip = snapshot.requestClip;
+          const clipResponse = await fetch(
+            resolveMediaSource(requestClip.src!),
+            {
+              signal: abortController.signal,
+            },
           );
-          return (
-            currentClip &&
-            JSON.stringify(currentClip) === snapshot.serializedClip
+          if (!clipResponse.ok) {
+            throw new Error(
+              `Could not load ${requestClip.label} for transcription.`,
+            );
+          }
+
+          const clipBlob = await clipResponse.blob();
+          if (!isActiveRowTranscriptRequest()) {
+            return;
+          }
+          const clipFile = new File(
+            [clipBlob],
+            getCaptionSourceFileName(requestClip, clipBlob),
+            { type: clipBlob.type || "application/octet-stream" },
           );
-        });
-        if (!rowIsStillCurrent) {
-          return currentClips;
+          const formData = new FormData();
+          formData.append("file", clipFile);
+          formData.append(
+            "sourceStart",
+            String((requestClip.sourceStart ?? 0) / fps),
+          );
+          formData.append(
+            "duration",
+            String((requestClip.duration * (requestClip.speed ?? 1)) / fps),
+          );
+
+          const transcriptionResponse = await fetch("/api/transcribe", {
+            method: "POST",
+            body: formData,
+            signal: abortController.signal,
+          });
+          if (!isActiveRowTranscriptRequest()) {
+            return;
+          }
+
+          let payload: unknown;
+          try {
+            payload = await transcriptionResponse.json();
+          } catch {
+            throw new Error(
+              transcriptionResponse.ok
+                ? "Transcription response did not include caption segments."
+                : `Transcript generation failed for ${requestClip.label}.`,
+            );
+          }
+
+          const serverErrorMessage =
+            typeof payload === "object" &&
+            payload !== null &&
+            !Array.isArray(payload) &&
+            "error" in payload &&
+            typeof payload.error === "object" &&
+            payload.error !== null &&
+            "message" in payload.error &&
+            typeof payload.error.message === "string" &&
+            payload.error.message.trim()
+              ? payload.error.message.trim()
+              : null;
+          if (!transcriptionResponse.ok) {
+            throw new Error(
+              serverErrorMessage ??
+                `Transcript generation failed for ${requestClip.label}.`,
+            );
+          }
+          if (
+            typeof payload !== "object" ||
+            payload === null ||
+            Array.isArray(payload) ||
+            !("segments" in payload) ||
+            !Array.isArray(payload.segments)
+          ) {
+            throw new Error(
+              "Transcription response did not include caption segments.",
+            );
+          }
+
+          const sourceClip = JSON.parse(
+            snapshot.serializedClip,
+          ) as TimelineClip;
+          const captions = createGeneratedCaptionClips({
+            sourceClip: { ...sourceClip, sourceStart: 0 },
+            segments: payload.segments,
+            fps,
+            timelineDuration: getTimelineDuration(clipsRef.current),
+            generationId: `${
+              kind === "lyrics"
+                ? "lyric"
+                : kind === "transcript"
+                  ? "transcript"
+                  : "caption"
+            }-row-${Date.now()}-${index}`,
+            style: captionStyle,
+          });
+          generatedGroups.push({ sourceClipId: sourceClip.id, captions });
+          setCaptionStatus({
+            kind: "loading",
+            message: `${
+              kind === "lyrics"
+                ? "Generating lyrics for"
+                : kind === "transcript"
+                  ? "Transcribing"
+                  : "Generating captions for"
+            } selected row (${index + 1}/${sourceSnapshots.length})...`,
+          });
         }
 
-        return generatedGroups.reduce(
-          (nextClips, group) =>
-            replaceGeneratedCaptionBatch(
+        if (!isActiveRowTranscriptRequest()) {
+          return;
+        }
+        const generatedCaptionCount = generatedGroups.reduce(
+          (total, group) => total + group.captions.length,
+          0,
+        );
+        if (generatedCaptionCount === 0) {
+          throw new Error("No speech was found in the selected row.");
+        }
+
+        commitClipChange((currentClips) => {
+          return generatedGroups.reduce((nextClips, group) => {
+            const snapshot = sourceSnapshots.find(
+              (candidate) => candidate.clipId === group.sourceClipId,
+            );
+            const currentClip = nextClips.find(
+              (clip) => clip.id === group.sourceClipId,
+            );
+            if (
+              !snapshot ||
+              !currentClip ||
+              JSON.stringify(currentClip) !== snapshot.serializedClip
+            ) {
+              return nextClips;
+            }
+
+            return replaceGeneratedCaptionBatch(
               nextClips,
               group.sourceClipId,
               group.captions,
-            ),
-          currentClips,
-        );
-      });
-      setPreviewMode("timeline");
-      setCaptionStatus({
-        kind: "success",
-        message: `Transcript ready with ${generatedCaptionCount} timed segments from ${sourceSnapshots.length} clips.`,
-      });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return;
+            );
+          }, currentClips);
+        });
+        setPreviewMode("timeline");
+        setCaptionStatus({
+          kind: "success",
+          message:
+            kind === "lyrics"
+              ? `Added ${generatedCaptionCount} lyric captions from ${sourceSnapshots.length} clips.`
+              : kind === "transcript"
+                ? `Transcript ready with ${generatedCaptionCount} timed segments from ${sourceSnapshots.length} clips.`
+                : `Added ${generatedCaptionCount} auto captions from ${sourceSnapshots.length} clips.`,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        if (!isActiveRowTranscriptRequest()) {
+          return;
+        }
+        setCaptionStatus({
+          kind: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : kind === "lyrics"
+                ? "Auto lyric generation failed. Please try again."
+                : kind === "transcript"
+                  ? "Transcript generation failed. Please try again."
+                  : "Auto caption generation failed. Please try again.",
+        });
+      } finally {
+        if (autoCaptionRequestRef.current === requestToken) {
+          autoCaptionRequestRef.current = null;
+          setIsAutoCaptionLoading(false);
+        }
+        if (autoCaptionAbortControllerRef.current === abortController) {
+          autoCaptionAbortControllerRef.current = null;
+        }
       }
-      if (!isActiveRowTranscriptRequest()) {
-        return;
-      }
-      setCaptionStatus({
-        kind: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Transcript generation failed. Please try again.",
-      });
-    } finally {
-      if (autoCaptionRequestRef.current === requestToken) {
-        autoCaptionRequestRef.current = null;
-        setIsAutoCaptionLoading(false);
-      }
-      if (autoCaptionAbortControllerRef.current === abortController) {
-        autoCaptionAbortControllerRef.current = null;
-      }
-    }
-  }, [
-    abortAutoCaptionRequest,
-    captionStyle,
-    commitClipChange,
-    generateCaptionBatch,
-    selectedCaptionSourceClip,
-    selectedTranscriptRowClips,
-  ]);
+    },
+    [
+      abortAutoCaptionRequest,
+      captionStyle,
+      commitClipChange,
+      generateCaptionBatch,
+      selectedCaptionSourceClip,
+      selectedTranscriptRowClips,
+    ],
+  );
+
+  const generateAutoCaptions = useCallback(async () => {
+    await generateCaptionForSelection("auto");
+  }, [generateCaptionForSelection]);
+
+  const generateAutoLyrics = useCallback(async () => {
+    await generateCaptionForSelection("lyrics");
+  }, [generateCaptionForSelection]);
+
+  const generateTranscript = useCallback(async () => {
+    await generateCaptionForSelection("transcript");
+  }, [generateCaptionForSelection]);
 
   const removeAllTranscriptFillers = useCallback(() => {
     if (transcriptFillerWords.length === 0) return;
@@ -11553,6 +11927,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   ) => {
     if (previewMode !== "media") return;
     const video = event.currentTarget;
+    updatePreviewAspectRatio(video.videoWidth, video.videoHeight);
     if (isSelectedMediaScene) {
       video.currentTime = mediaPreviewStartSeconds;
     }
@@ -11623,8 +11998,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     );
   };
 
-  const togglePreviewDockMute = () => {
-    setIsPreviewMasterMuted((muted) => !muted);
+  const handlePreviewMasterVolumeChange = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const nextVolume = Math.max(
+      0,
+      Math.min(1, Number(event.currentTarget.value)),
+    );
+    setPreviewMasterVolume(nextVolume);
+    setIsPreviewMasterMuted(nextVolume === 0);
   };
 
   const selectSocialPreviewPlatform = (platform: SocialPreviewPlatform) => {
@@ -12392,6 +12774,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     }
     const pointerFrame = getPointerTimelineFrame(event.clientX) ?? clip.start;
     const timelineScroll = timelineScrollRef.current;
+    const clipBounds = event.currentTarget.getBoundingClientRect();
     const nextDrag: PointerDrag = {
       type: "timeline",
       id: clip.id,
@@ -12410,6 +12793,17 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       scrollStartTop: timelineScroll?.scrollTop ?? 0,
       originalStart: clip.start,
       grabOffsetFrames: pointerFrame - clip.start,
+      grabOffsetX: event.clientX - clipBounds.left,
+      grabOffsetY: event.clientY - clipBounds.top,
+      previewWidth: clipBounds.width,
+      previewHeight: clipBounds.height,
+      previewSrc: clip.src,
+      previewMediaType: clip.src
+        ? isImageSource(clip.src)
+          ? "image"
+          : "video"
+        : undefined,
+      previewSourceStart: clip.sourceStart,
     };
     pointerDragRef.current = nextDrag;
     pointerDragPositionRef.current = { x: event.clientX, y: event.clientY };
@@ -12424,6 +12818,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     pointerDragStartedRef.current = false;
+    const card =
+      event.currentTarget.closest<HTMLElement>("[data-media-id]") ??
+      event.currentTarget;
+    const cardBounds = card.getBoundingClientRect();
     const mediaIds = selectedMediaIds.includes(mediaItem.id)
       ? selectedMediaIds
       : [mediaItem.id];
@@ -12440,6 +12838,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       y: event.clientY,
       pointerStartX: event.clientX,
       pointerStartY: event.clientY,
+      grabOffsetX: event.clientX - cardBounds.left,
+      grabOffsetY: event.clientY - cardBounds.top,
+      previewWidth: cardBounds.width,
+      previewHeight: cardBounds.height,
+      previewSrc: mediaItem.src,
+      previewMediaType: getMediaItemType(mediaItem),
+      previewSourceStart: mediaItem.sourceStart,
     };
     pointerDragRef.current = nextDrag;
     pointerDragPositionRef.current = { x: event.clientX, y: event.clientY };
@@ -13165,12 +13570,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
 
       setTimelineHistory((currentHistory) => ({
         ...currentHistory,
-        present: trimClipById(
-          trimDrag.originalClips,
-          trimDrag.clipId,
-          trimDrag.edge,
-          frameDelta,
-          minimumDuration,
+        present: preventVideoLayerClipOverlaps(
+          rippleTrimVideoClipById(
+            trimDrag.originalClips,
+            trimDrag.clipId,
+            trimDrag.edge,
+            frameDelta,
+            minimumDuration,
+          ),
         ),
       }));
     };
@@ -14316,10 +14723,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
       isPreviewMasterMuted
         ? 0
         : previewMode === "media"
-          ? mediaPreviewVolume
+          ? mediaPreviewVolume * previewMasterVolume
           : previewVideoMuted
             ? 0
-            : previewVolume,
+            : previewVolume * previewMasterVolume,
     );
     video.muted =
       isPreviewMasterMuted || (previewMode === "timeline" && previewVideoMuted);
@@ -14354,6 +14761,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     isMediaPreviewPlaying,
     mediaPreviewTime,
     mediaPreviewVolume,
+    previewMasterVolume,
     isPreviewMasterMuted,
     timelinePreviewFrame,
     previewSource?.src,
@@ -14396,11 +14804,16 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         : timelinePreviewFrame < videoClip.start
           ? videoClip.start
           : videoClip.start + videoClip.duration - 1;
-      const videoMuted = !isActive || (videoClip.volume ?? 1) === 0;
+      const videoMuted =
+        !isActive ||
+        (videoClip.volume ?? 1) === 0 ||
+        shouldMuteVideoNativeAudio(clips, timelinePreviewFrame, videoClip.id);
       const desiredTime = Math.max(
         0,
         getClipSourceTime(videoClip, previewFrame, fps),
       );
+      const wasActive = video.dataset.timelineActive === "true";
+      const becameActive = isActive && !wasActive;
       const seekTolerance = isPreviewPlaying && isActive ? 0.45 : 0.04;
 
       video.playbackRate = videoClip.speed ?? 1;
@@ -14409,12 +14822,18 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         videoMuted || isPreviewMasterMuted
           ? 0
           : (videoClip.volume ?? 1) *
-              getClipAudioFadeMultiplier(videoClip, timelinePreviewFrame),
+              getClipAudioFadeMultiplier(videoClip, timelinePreviewFrame) *
+              previewMasterVolume,
       );
-      video.muted = videoMuted || isPreviewMasterMuted;
-      if (Math.abs(video.currentTime - desiredTime) > seekTolerance) {
+      video.muted =
+        videoMuted || isPreviewMasterMuted || previewMasterVolume === 0;
+      if (
+        becameActive ||
+        Math.abs(video.currentTime - desiredTime) > seekTolerance
+      ) {
         video.currentTime = desiredTime;
       }
+      video.dataset.timelineActive = String(isActive);
 
       if (isPreviewPlaying && (isActive || participatesInTransition)) {
         if (video.paused) {
@@ -14429,6 +14848,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     clips,
     isPreviewPlaying,
     isPreviewMasterMuted,
+    previewMasterVolume,
     releasePreviewMediaGain,
     setPreviewMediaGain,
     timelinePreviewFrame,
@@ -14460,9 +14880,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         isPreviewMasterMuted
           ? 0
           : (audioClip.volume ?? 1) *
-              getClipAudioFadeMultiplier(audioClip, playheadFrame),
+              getClipAudioFadeMultiplier(audioClip, playheadFrame) *
+              previewMasterVolume,
       );
-      audio.muted = isPreviewMasterMuted;
+      audio.muted = isPreviewMasterMuted || previewMasterVolume === 0;
       if (audio.readyState === 0) {
         if (audio.dataset.timelineLoadRequested !== "true") {
           audio.dataset.timelineLoadRequested = "true";
@@ -14485,6 +14906,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   }, [
     isPreviewPlaying,
     isPreviewMasterMuted,
+    previewMasterVolume,
     playbackAudioClips,
     playheadFrame,
     releasePreviewMediaGain,
@@ -14541,18 +14963,10 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
     if (Math.abs(nextScrollLeft - scrollArea.scrollLeft) < 1) return;
 
     const animationFrame = window.requestAnimationFrame(() => {
-      suppressNextTimelineScrollPlayheadFollow();
       scrollArea.scrollLeft = nextScrollLeft;
     });
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [
-    playheadFrame,
-    pointerDrag,
-    previewMode,
-    suppressNextTimelineScrollPlayheadFollow,
-    timelineScale,
-    trimDrag,
-  ]);
+  }, [playheadFrame, pointerDrag, previewMode, timelineScale, trimDrag]);
 
   return (
     <main
@@ -15084,11 +15498,15 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           aria-pressed={roughEditBRollMediaIds.includes(
                             mediaItem.id,
                           )}
-                          onClick={() => toggleRoughEditBRollMedia(mediaItem.id)}
+                          onClick={() =>
+                            toggleRoughEditBRollMedia(mediaItem.id)
+                          }
                         >
                           <span className="rough-edit-choice-preview">
                             <span aria-hidden="true">
-                              {getMediaItemType(mediaItem) === "image" ? "IMG" : "▶"}
+                              {getMediaItemType(mediaItem) === "image"
+                                ? "IMG"
+                                : "▶"}
                             </span>
                           </span>
                           <strong>{mediaItem.label}</strong>
@@ -15118,8 +15536,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           aria-label={`Template ${slotIndex + 1}`}
                           value={templateId}
                           onChange={(event) => {
-                            const nextTemplate =
-                              event.currentTarget.value as RoughEditTemplate;
+                            const nextTemplate = event.currentTarget
+                              .value as RoughEditTemplate;
                             setRoughEditTemplateRotation((currentRotation) =>
                               currentRotation.map((currentTemplate, index) =>
                                 index === slotIndex
@@ -15201,8 +15619,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       className="rough-reset-button"
                       type="button"
                       disabled={
-                        Object.keys(roughEditSectionTemplateOverrides).length ===
-                        0
+                        Object.keys(roughEditSectionTemplateOverrides)
+                          .length === 0
                       }
                       onClick={() => setRoughEditSectionTemplateOverrides({})}
                     >
@@ -15222,8 +15640,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           >
                             <strong>{section.index + 1}</strong>
                             <span>
-                              {formatTimelineTimecode(section.startFrame, fps)} ·{" "}
-                              {(section.duration / fps).toFixed(1)}s
+                              {formatTimelineTimecode(section.startFrame, fps)}{" "}
+                              · {(section.duration / fps).toFixed(1)}s
                             </span>
                             {section.template === "picture-in-picture" &&
                             roughEditUseMovingHead ? (
@@ -15245,9 +15663,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 }`}
                                 value={section.template}
                                 onChange={(event) => {
-                                  const nextTemplate =
-                                    event.currentTarget
-                                      .value as RoughEditTemplate;
+                                  const nextTemplate = event.currentTarget
+                                    .value as RoughEditTemplate;
                                   setRoughEditSectionTemplateOverrides(
                                     (currentOverrides) => ({
                                       ...currentOverrides,
@@ -15617,8 +16034,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 </div>
                 {!canGenerateTranscript ? (
                   <p className="caption-auto-hint">
-                    Select a video clip, video-layer row, or the Cutout track to
-                    generate a transcript.
+                    Select a video or audio clip, a video or audio row, or the
+                    Cutout track to generate a transcript.
                   </p>
                 ) : selectedTranscriptRowLabel ? (
                   <p className="transcript-selected-source">
@@ -15730,7 +16147,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             clipId={clip.id}
                             content={clip.caption?.content ?? ""}
                             timestamp={formatTimelineClock(clip.start, fps)}
-                            onDeleteWords={removeTranscriptWords}
+                            onCommitEdit={commitTranscriptTextEdit}
                           />
                         </div>
                         <button
@@ -15838,20 +16255,25 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     {captionMode === "auto" ? (
                       <div className="caption-auto-panel">
                         <p className="caption-auto-copy">
-                          Generate captions from the selected main or upper
-                          video clip.
+                          Generate captions from a selected video clip or every
+                          video in a selected row.
                         </p>
-                        {!selectedCaptionSourceClip ? (
+                        {!canGenerateTranscript ? (
                           <p className="caption-auto-hint">
-                            Select a main or upper video clip before generating
-                            auto captions.
+                            Select a video or audio clip, or select a video or
+                            audio row before generating auto captions.
+                          </p>
+                        ) : selectedTranscriptRowLabel ? (
+                          <p className="transcript-selected-source">
+                            Selected row: {selectedTranscriptRowLabel} (
+                            {selectedTranscriptRowClips.length} clips)
                           </p>
                         ) : null}
                         <button
                           className="import-button"
                           type="button"
                           disabled={
-                            isAutoCaptionLoading || !selectedCaptionSourceClip
+                            isAutoCaptionLoading || !canGenerateTranscript
                           }
                           onClick={generateAutoCaptions}
                         >
@@ -15864,20 +16286,25 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     {captionMode === "lyrics" ? (
                       <div className="caption-auto-panel">
                         <p className="caption-auto-copy">
-                          Generate lyric captions from the selected main or
-                          upper video clip.
+                          Generate lyric captions from a selected video clip or
+                          every video in a selected row.
                         </p>
-                        {!selectedCaptionSourceClip ? (
+                        {!canGenerateTranscript ? (
                           <p className="caption-auto-hint">
-                            Select a main or upper video clip before generating
-                            auto lyrics.
+                            Select a video or audio clip, or select a video or
+                            audio row before generating auto lyrics.
+                          </p>
+                        ) : selectedTranscriptRowLabel ? (
+                          <p className="transcript-selected-source">
+                            Selected row: {selectedTranscriptRowLabel} (
+                            {selectedTranscriptRowClips.length} clips)
                           </p>
                         ) : null}
                         <button
                           className="import-button"
                           type="button"
                           disabled={
-                            isAutoCaptionLoading || !selectedCaptionSourceClip
+                            isAutoCaptionLoading || !canGenerateTranscript
                           }
                           onClick={generateAutoLyrics}
                         >
@@ -16916,7 +17343,14 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         />
 
         <section className="preview-panel">
-          <div className="preview-shell">
+          <div
+            className="preview-shell"
+            style={
+              {
+                "--preview-aspect-ratio": previewAspectRatio,
+              } as CSSProperties
+            }
+          >
             <div
               className="preview-window"
               ref={previewWindowRef}
@@ -16961,11 +17395,28 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             }`}
                             data-video-layer={getVideoLayer(videoClip)}
                             src={resolveMediaSource(videoClip.src ?? "")}
+                            onLoad={(event) => {
+                              if (previewCanvasClip?.id === videoClip.id) {
+                                updatePreviewAspectRatio(
+                                  event.currentTarget.naturalWidth,
+                                  event.currentTarget.naturalHeight,
+                                );
+                              }
+                            }}
                             onPointerDown={(event) => {
                               event.stopPropagation();
+                              const resolvedClip = showPreviewVideoControls(
+                                event,
+                                videoClip,
+                                event.currentTarget.naturalWidth,
+                                event.currentTarget.naturalHeight,
+                              );
                               if (
+                                resolvedClip?.id === videoClip.id &&
                                 activeTool === "adjustment" &&
-                                clipControlTarget?.id === videoClip.id
+                                clipControlTarget?.id === videoClip.id &&
+                                selectedPreviewFrameBase?.clipId ===
+                                  clipControlTarget?.id
                               ) {
                                 startManualAdjustmentPan(event);
                               }
@@ -17007,7 +17458,13 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                         const isVisibleVideoClip =
                           isActiveVideoClip || isTransitionPreviewClip;
                         const videoMuted =
-                          !isActiveVideoClip || (videoClip.volume ?? 1) === 0;
+                          !isActiveVideoClip ||
+                          (videoClip.volume ?? 1) === 0 ||
+                          shouldMuteVideoNativeAudio(
+                            clips,
+                            timelinePreviewFrame,
+                            videoClip.id,
+                          );
 
                         return (
                           // eslint-disable-next-line @remotion/warn-native-media-tag
@@ -17026,9 +17483,18 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                             preload="auto"
                             onPointerDown={(event) => {
                               event.stopPropagation();
+                              const resolvedClip = showPreviewVideoControls(
+                                event,
+                                videoClip,
+                                event.currentTarget.videoWidth,
+                                event.currentTarget.videoHeight,
+                              );
                               if (
+                                resolvedClip?.id === videoClip.id &&
                                 activeTool === "adjustment" &&
-                                clipControlTarget?.id === videoClip.id
+                                clipControlTarget?.id === videoClip.id &&
+                                selectedPreviewFrameBase?.clipId ===
+                                  clipControlTarget?.id
                               ) {
                                 startManualAdjustmentPan(event);
                               }
@@ -17046,6 +17512,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 videoClip,
                                 event,
                               );
+                              if (previewCanvasClip?.id === videoClip.id) {
+                                updatePreviewAspectRatio(
+                                  event.currentTarget.videoWidth,
+                                  event.currentTarget.videoHeight,
+                                );
+                              }
                               const loadedPreviewFrame = activeVideoClipIds.has(
                                 videoClip.id,
                               )
@@ -17134,8 +17606,7 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                               <div
                                 className="preview-video-transform-shell"
                                 style={{
-                                  zIndex:
-                                    getPreviewVideoLayerZIndex(selectedClip),
+                                  zIndex: previewVideoLayers.length + 2,
                                   transform: `translate(${adjustment.positionX}%, ${adjustment.positionY}%) scale(${adjustment.scale * (adjustment.scaleX ?? 1)}, ${adjustment.scale * (adjustment.scaleY ?? 1)}) rotate(${adjustment.rotation}deg)`,
                                   translate: framePresentation.translate,
                                   scale: framePresentation.scale,
@@ -17213,6 +17684,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                     <Img
                       className="preview-image"
                       src={resolveMediaSource(previewSource.src)}
+                      onLoad={(event) =>
+                        updatePreviewAspectRatio(
+                          event.currentTarget.naturalWidth,
+                          event.currentTarget.naturalHeight,
+                        )
+                      }
                       style={{
                         ...getClipFrameStyle(undefined, timelinePreviewFrame),
                         ...getClipAdjustmentStyle(),
@@ -17246,8 +17723,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                           preload="auto"
                           muted={false}
                           onLoadedMetadata={(event) => {
+                            const audio = event.currentTarget;
+                            audio.currentTime = Math.max(
+                              0,
+                              getClipSourceTime(audioClip, playheadFrame, fps),
+                            );
                             if (isPreviewPlaying) {
-                              const audio = event.currentTarget;
                               void audio.play().catch(() => undefined);
                             }
                           }}
@@ -18263,21 +18744,40 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   <Play aria-hidden="true" />
                 )}
               </button>
-              <button
-                className="preview-dock-button"
-                type="button"
-                aria-label={
-                  isPreviewMasterMuted ? "Unmute preview" : "Mute preview"
-                }
-                title={isPreviewMasterMuted ? "Unmute" : "Mute"}
-                onClick={togglePreviewDockMute}
-              >
-                {isPreviewMasterMuted ? (
-                  <VolumeX aria-hidden="true" />
-                ) : (
-                  <Volume2 aria-hidden="true" />
-                )}
-              </button>
+              <div className="preview-dock-volume-control">
+                <button
+                  className="preview-dock-button"
+                  type="button"
+                  aria-label="Adjust preview volume"
+                  title="Volume"
+                  aria-expanded={isPreviewDockVolumeOpen}
+                  onClick={() =>
+                    setIsPreviewDockVolumeOpen((isOpen) => !isOpen)
+                  }
+                >
+                  {isPreviewMasterMuted || previewMasterVolume === 0 ? (
+                    <VolumeX aria-hidden="true" />
+                  ) : (
+                    <Volume2 aria-hidden="true" />
+                  )}
+                </button>
+                {isPreviewDockVolumeOpen ? (
+                  <div className="preview-dock-volume-popover">
+                    <output>{Math.round(previewMasterVolume * 100)}%</output>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={previewMasterVolume}
+                      aria-label="Preview master volume"
+                      aria-orientation="vertical"
+                      aria-valuetext={`${Math.round(previewMasterVolume * 100)}%`}
+                      onChange={handlePreviewMasterVolumeChange}
+                    />
+                  </div>
+                ) : null}
+              </div>
               <span className="preview-dock-time">
                 {formatMediaPreviewTime(previewDockCurrentSeconds)}
               </span>
@@ -18813,6 +19313,24 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   }
                 />
               </label>
+              <div className="text-color-swatches" aria-label="Quick colors">
+                {textColorSwatches.map((color) => (
+                  <button
+                    className={
+                      selectedTextStyle.color.toLowerCase() ===
+                      color.toLowerCase()
+                        ? "active-text-color"
+                        : ""
+                    }
+                    key={color}
+                    type="button"
+                    aria-label={`Set text color to ${color}`}
+                    title={color}
+                    style={{ backgroundColor: color }}
+                    onClick={() => updateSelectedTextStyle({ color })}
+                  />
+                ))}
+              </div>
               <div className="text-toggle-row" aria-label="Text style">
                 <button
                   className={
@@ -18931,8 +19449,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
               <div className="tool-control-panel-heading">
                 <strong>Transcript controls</strong>
                 <span>
-                  Select a video row, then generate or edit its transcript in
-                  the options panel.
+                  Select a video or audio row, then generate or edit its
+                  transcript in the options panel.
                 </span>
               </div>
             </div>
@@ -19289,7 +19807,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         <div
           className="timeline-scroll"
           ref={timelineScrollRef}
-          onScroll={updatePlayheadFromTimelineScroll}
           onPointerDown={(event) => {
             const target = event.target;
             if (
@@ -19383,9 +19900,12 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 track.id === "main" ||
                 track.id === "upper" ||
                 track.id === "cutout";
+              const isVideoLayerRow = track.videoLayer !== undefined;
+              const isSecondaryLinkedAudioRow =
+                track.key.startsWith("linked-audio-") &&
+                track.key !== "linked-audio-0";
               const shouldHideTrackHeader =
-                track.id === "audio" ||
-                (track.videoLayer !== undefined && track.videoLayer !== 0);
+                isVideoLayerRow || isSecondaryLinkedAudioRow;
 
               return (
                 <Fragment key={track.key}>
@@ -19417,20 +19937,27 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                       className={`track-label ${selectedTrack === track.id ? "selected-track-label" : ""} ${
                         shouldHideTrackHeader ? "empty-track-label" : ""
                       }`}
-                      role={
-                        track.videoLayer !== undefined && track.videoLayer !== 0
-                          ? "group"
-                          : undefined
-                      }
-                      aria-label={
-                        track.videoLayer !== undefined && track.videoLayer !== 0
-                          ? `Video layer ${track.videoLayer > 0 ? `+${track.videoLayer}` : track.videoLayer}`
-                          : undefined
-                      }
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Select ${
+                        isVideoLayerRow
+                          ? "video"
+                          : isSecondaryLinkedAudioRow
+                            ? "audio"
+                            : track.label
+                      } row`}
                       onPointerDown={(event) => {
                         if (event.target === event.currentTarget) {
                           startTimelineSelection(event);
                         }
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        clearEditorSelection();
+                        setSelectedTrack(track.id);
+                        setSelectedTimelineRowKey(track.key);
+                        setSelectedVideoLayer(track.videoLayer ?? null);
                       }}
                       onClick={(event) => {
                         if (suppressTrackLabelClickRef.current) {
@@ -19739,6 +20266,11 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                 ? "moving-timeline-clip"
                                 : ""
                             } ${
+                              isSingleTimelinePointerDrag &&
+                              pointerDrag?.id === clip.id
+                                ? "floating-preview-source-clip"
+                                : ""
+                            } ${
                               transcriptEditGroupClassByClipId.get(clip.id) ??
                               ""
                             }`}
@@ -19851,26 +20383,8 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                                       pointerDrag.id === clip.id &&
                                       pointerDrag.pointerStartX !== undefined &&
                                       pointerDrag.originalStart !== undefined
-                                    ? getVideoClipDragPreviewStart(
-                                        clips,
-                                        clip.id,
-                                        getDraggedClipStart({
-                                          originalStart:
-                                            pointerDrag.originalStart,
-                                          pointerStartX:
-                                            pointerDrag.pointerStartX,
-                                          pointerX:
-                                            pointerDrag.x +
-                                            ((timelineScrollRef.current
-                                              ?.scrollLeft ??
-                                              pointerDrag.scrollStartLeft ??
-                                              0) -
-                                              (pointerDrag.scrollStartLeft ??
-                                                0)),
-                                          pixelsPerFrame: timelineScale,
-                                        }),
-                                        projectDuration,
-                                      ) * timelineScale
+                                    ? (timelinePointerDragTargetStart ??
+                                        clip.start) * timelineScale
                                     : clip.start * timelineScale
                               }px`,
                               width: `${clip.duration * timelineScale}px`,
@@ -20417,14 +20931,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         </div>
       </dialog>
 
-      <input
-        ref={replaceVideoInputRef}
-        className="hidden-file-input"
-        type="file"
-        accept="video/*"
-        onChange={(event) => void replaceSelectedVideoFromGallery(event)}
-      />
-
       {videoQuickMenu ? (
         <div
           className="video-quick-menu"
@@ -20437,15 +20943,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
           onPointerDown={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
         >
-          <button
-            type="button"
-            role="menuitem"
-            aria-label="Change video from gallery"
-            title="Change video from gallery"
-            onClick={() => chooseReplacementVideo(videoQuickMenu.clipId)}
-          >
-            <Replace aria-hidden="true" />
-          </button>
           <button
             type="button"
             role="menuitem"
@@ -20562,19 +21059,6 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                 </span>
                 <span>Delete</span>
                 <kbd>Backspace</kbd>
-              </button>
-
-              <span className="video-more-menu-separator" aria-hidden="true" />
-              <button
-                className="video-more-menu-item"
-                type="button"
-                role="menuitem"
-                onClick={() => chooseReplacementVideo(videoQuickMenu.clipId)}
-              >
-                <span className="video-more-menu-icon" aria-hidden="true">
-                  <Replace />
-                </span>
-                <span>Replace</span>
               </button>
 
               <span className="video-more-menu-separator" aria-hidden="true" />
@@ -21095,15 +21579,43 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
         </div>
       ) : null}
 
-      {pointerDrag?.type === "media" ? (
+      {pointerDrag?.activated &&
+      (pointerDrag.type === "media" || isSingleTimelinePointerDrag) ? (
         <div
-          className="drag-preview"
+          className={`drag-preview ${
+            pointerDrag.type === "timeline"
+              ? "timeline-pointer-drag-preview"
+              : "media-pointer-drag-preview"
+          }`}
           style={{
-            left: pointerDrag.x,
-            top: pointerDrag.y,
+            left: pointerDrag.x - (pointerDrag.grabOffsetX ?? 0),
+            top: pointerDrag.y - (pointerDrag.grabOffsetY ?? 0),
+            width: pointerDrag.previewWidth,
+            height: pointerDrag.previewHeight,
           }}
         >
-          <span>{pointerDrag.label}</span>
+          {pointerDrag.previewSrc ? (
+            pointerDrag.previewMediaType === "image" ? (
+              <Img
+                className="drag-preview-media"
+                src={resolveMediaSource(pointerDrag.previewSrc)}
+              />
+            ) : (
+              // eslint-disable-next-line @remotion/warn-native-media-tag
+              <video
+                className="drag-preview-media"
+                src={resolveMediaSource(pointerDrag.previewSrc)}
+                muted
+                playsInline
+                preload="metadata"
+                onLoadedMetadata={(event) => {
+                  event.currentTarget.currentTime =
+                    (pointerDrag.previewSourceStart ?? 0) / fps;
+                }}
+              />
+            )
+          ) : null}
+          <span className="drag-preview-label">{pointerDrag.label}</span>
         </div>
       ) : null}
     </main>

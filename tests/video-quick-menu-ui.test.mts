@@ -36,6 +36,54 @@ test("video controls open from the visible media element", () => {
   );
 });
 
+test("preview selection follows the video layer that was actually clicked", () => {
+  const controlsStart = composition.indexOf("const showPreviewVideoControls =");
+  const controlsEnd = composition.indexOf(
+    "const startPreviewScale =",
+    controlsStart,
+  );
+  const controlsBody = composition.slice(controlsStart, controlsEnd);
+
+  assert.notEqual(controlsStart, -1);
+  assert.notEqual(controlsEnd, -1);
+  assert.match(controlsBody, /const pointHitsVisibleVideo =/);
+  assert.match(controlsBody, /\.find\(pointHitsVisibleVideo\)/);
+  assert.match(controlsBody, /if \(!clip\) \{[\s\S]*?clearEditorSelection\(\)/);
+  assert.match(controlsBody, /setVideoQuickMenu\(\{\s*clipId: clip\.id,/);
+  assert.doesNotMatch(controlsBody, /selectedTimelineVideoClip/);
+  assert.match(
+    composition,
+    /className="preview-video-transform-shell"[\s\S]*?zIndex:\s*previewVideoLayers\.length \+ 2/,
+  );
+});
+
+test("pointer down selects preview media before the adjustment drag begins", () => {
+  assert.match(
+    composition,
+    /onPointerDown=\{\(event\) => \{[\s\S]*?const resolvedClip = showPreviewVideoControls\(\s*event,\s*videoClip,[\s\S]*?resolvedClip\?\.id === videoClip\.id[\s\S]*?startManualAdjustmentPan\(event\)/,
+  );
+});
+
+test("preview and export preserve the visible timeline row stacking order", () => {
+  assert.match(
+    composition,
+    /const previewVideoLayers = Array\.from\(\s*new Set\([\s\S]*?getVideoLayerStackOrder\(firstClip\) -\s*getVideoLayerStackOrder\(secondClip\)[\s\S]*?\.map\(getVideoLayer\)/,
+  );
+  assert.doesNotMatch(
+    composition,
+    /previewVideoLayers[\s\S]{0,120}\.sort\(\(firstLayer, secondLayer\) => firstLayer - secondLayer\)/,
+  );
+
+  const exportComposition = fs.readFileSync(
+    "src/ExportComposition.tsx",
+    "utf8",
+  );
+  assert.match(
+    exportComposition,
+    /getVideoLayerStackOrder\(first\) - getVideoLayerStackOrder\(second\)/,
+  );
+});
+
 test("video quick actions stay open while the same video remains selected", () => {
   const functionBody = (startMarker: string, endMarker: string) => {
     const start = composition.indexOf(startMarker);
@@ -52,20 +100,13 @@ test("video quick actions stay open while the same video remains selected", () =
     ),
     functionBody(
       "const fitTimelineClipToScreen",
-      "const chooseReplacementVideo",
-    ),
-    functionBody(
-      "const chooseReplacementVideo",
-      "const replaceSelectedVideoFromGallery",
+      "const copyVideoClipToClipboard",
     ),
     functionBody(
       "const moveVideoToOverlayFromMenu",
       "const importNewOverlayFromMenu",
     ),
-    functionBody(
-      "const importNewOverlayFromMenu",
-      "const startManualCrop",
-    ),
+    functionBody("const importNewOverlayFromMenu", "const startManualCrop"),
   ]) {
     assert.doesNotMatch(body, /setVideoQuickMenu\(null\)/);
   }

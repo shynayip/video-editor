@@ -23,18 +23,18 @@ test("keeps transcript-generated captions out of the video preview", () => {
   );
 });
 
-test("shows transcript sentences only for the selected video row", () => {
+test("shows transcript sentences for every source in the selected video row", () => {
   assert.match(
     compositionSource,
-    /const selectedTranscriptSourceClipId =[\s\S]*selectedCaptionSourceClip\?\.id/,
+    /const selectedTranscriptSourceClipIds = useMemo/,
   );
   assert.match(
     compositionSource,
-    /clip\.caption\.sourceClipId === selectedTranscriptSourceClipId/,
+    /selectedTranscriptSourceClipIds\.includes\(\s*clip\.caption\.sourceClipId/,
   );
   assert.match(
     compositionSource,
-    /\[clips, selectedTranscriptSourceClipId\]/,
+    /\[clips, selectedTranscriptSourceClipIds\]/,
   );
 });
 
@@ -53,16 +53,16 @@ test("keeps sentence deletion linked to video and audio edits", () => {
 
 test("edits selected caption text without deleting its box or cutting media", () => {
   const handlerStart = compositionSource.indexOf(
-    "const commitSelectedCaptionContent",
+    "const updateSelectedCaptionContent",
   );
   const handlerEnd = compositionSource.indexOf(
-    "const updateSelectedTextRotation",
+    "const removeTranscriptSentence",
     handlerStart,
   );
   const handler = compositionSource.slice(handlerStart, handlerEnd);
 
-  assert.match(handler, /updateSelectedCaptionContent\(content\)/);
-  assert.match(handler, /setCaptionDraft\(content\)/);
+  assert.match(handler, /caption: \{ \.\.\.clip\.caption, content \}/);
+  assert.match(handler, /setPreviewMode\("timeline"\)/);
   assert.doesNotMatch(handler, /deleteClipById/);
   assert.doesNotMatch(handler, /removeTranscriptWordsFromLinkedVideo/);
   assert.doesNotMatch(handler, /setSelectedClipId\(null\)/);
@@ -75,23 +75,36 @@ test("allows the transcript textarea to receive pointer focus", () => {
   );
   assert.match(
     compositionSource,
-    /className="transcript-sentence-editor"[\s\S]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/,
+    /className="transcript-sentence-editor"[\s\S]*onPointerDown=\{focusTextareaOnPointerDown\}/,
   );
 });
 
-test("Enter commits transcript word deletions while Shift+Enter adds a line", () => {
+test("transcript text edits apply from one typewriter-style textbox", () => {
   assert.match(
     compositionSource,
-    /title="Delete words, then press Enter to cut them from the video and audio\. Use Shift\+Enter for a new line\."/,
+    /className="transcript-sentence-editor"/,
   );
   assert.match(
     compositionSource,
-    /onKeyDown=\{\(event\) => \{\s*if \(event\.key === "Enter" && !event\.shiftKey\) \{\s*event\.preventDefault\(\);\s*event\.currentTarget\.blur\(\);/,
+    /className="transcript-edit-apply"/,
   );
   assert.match(
     compositionSource,
-    /onBlur=\{commitDeletedWords\}/,
+    /const timer = window\.setTimeout\(commitEdit, 650\)/,
   );
+  assert.match(
+    compositionSource,
+    /onCommitEdit\(clipId, draft\)/,
+  );
+  assert.match(
+    compositionSource,
+    /onBlur=\{commitEdit\}/,
+  );
+  assert.match(
+    compositionSource,
+    /if \(!normalizedEditedContent\) \{[\s\S]*removeTranscriptSentence\(transcriptClipId\)/,
+  );
+  assert.doesNotMatch(compositionSource, /className="transcript-word-button"/);
 });
 
 test("allows a selected video or cutout row to generate one combined transcript", () => {

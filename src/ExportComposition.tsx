@@ -20,7 +20,7 @@ import {
   getTextAnimationPresentation,
   getTextAnimationVisibleCharacterCount,
   getTextualClipDisplayColors,
-  getVideoLayer,
+  getVideoLayerStackOrder,
   shouldMuteVideoNativeAudio,
   type CaptionOverlay,
   type SavedEditorProject,
@@ -435,7 +435,7 @@ export const ExportComposition = ({
     )
     .sort(
       (first, second) =>
-        (getVideoLayer(first) ?? 0) - (getVideoLayer(second) ?? 0) ||
+        getVideoLayerStackOrder(first) - getVideoLayerStackOrder(second) ||
         first.start - second.start,
     );
 

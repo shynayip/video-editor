@@ -384,7 +384,10 @@ test("keeps short videos visually separate without a trailing animation plus", (
 
   assert.doesNotMatch(source, /trailing-animation-anchor/);
   assert.doesNotMatch(source, /Open ending animation for/);
-  assert.match(source, /clip\.duration \* timelineScale < 180[\s\S]*?compact-video-timeline-clip/);
+  assert.match(
+    source,
+    /clip\.duration \* timelineScale < 180[\s\S]*?compact-video-timeline-clip/,
+  );
   assert.match(
     css,
     /\.timeline-clip\.compact-video-timeline-clip > \.timeline-clip-label,[\s\S]*?\.clip-mute-button\s*\{\s*display:\s*none/s,
@@ -426,15 +429,24 @@ test("lets text, stickers, cutouts, and captions resize to their real duration",
     new URL("../src/Composition.tsx", import.meta.url),
     "utf8",
   );
-  const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
 
   assert.match(
     source,
     /targetClip\.track === "caption"[\s\S]*targetClip\.track === "text"[\s\S]*targetClip\.track === "sticker"[\s\S]*targetClip\.track === "cutout"[\s\S]*\? 1\s*:\s*15/,
   );
   assert.match(css, /\.timeline-clip\s*\{[^}]*min-width:\s*2px/s);
-  assert.match(source, /clip\.duration \* timelineScale < 120[\s\S]*compact-overlay-clip/);
-  assert.match(source, /clip\.duration \* timelineScale < 48[\s\S]*tiny-overlay-clip/);
+  assert.match(
+    source,
+    /clip\.duration \* timelineScale < 120[\s\S]*compact-overlay-clip/,
+  );
+  assert.match(
+    source,
+    /clip\.duration \* timelineScale < 48[\s\S]*tiny-overlay-clip/,
+  );
   assert.match(
     css,
     /\.timeline-clip\.compact-overlay-clip > \.timeline-clip-label,[\s\S]*\.timeline-clip\.compact-overlay-clip > \.clip-mute-button\s*\{\s*display:\s*none/,
@@ -455,10 +467,7 @@ test("shows linked audio directly below its video row", () => {
     compositionSource,
     /key: `linked-audio-\$\{videoLayer\}`[\s\S]*?label:[\s\S]*?"Main audio"[\s\S]*?audioKind: "linked" as const/,
   );
-  assert.match(
-    compositionSource,
-    /order: videoRowOrder - 0\.25/,
-  );
+  assert.match(compositionSource, /order: videoRowOrder - 0\.25/);
   assert.match(
     compositionSource,
     /track\.audioKind === "linked" \|\|[\s\S]*?contextualAudioClipIds\.has\(clip\.id\)/,
@@ -648,10 +657,7 @@ test("Auto cutout keeps manual cutout editing while replacing visible chroma cho
   assert.doesNotMatch(cutoutPanel, />White<\/button>/);
   assert.doesNotMatch(cutoutPanel, />Black<\/button>/);
   assert.doesNotMatch(source, /setSelectedCutoutChromaKey/);
-  assert.match(
-    source,
-    /activeTool === "cutout"[\s\S]*?\? "cutout-workspace"/,
-  );
+  assert.match(source, /activeTool === "cutout"[\s\S]*?\? "cutout-workspace"/);
   assert.match(source, /getCutoutChromaKeyStyle\(videoClip\)/);
   assert.match(source, /getCutoutChromaKeyStyle/);
   assert.match(source, /createCutoutMaskDataUrl/);
@@ -710,10 +716,7 @@ test("renders every video cutout as a thumbnail filmstrip with its waveform", ()
     source,
     /clip\.track === "cutout" &&[\s\S]*?getCutoutChromaKeyStyle\(/,
   );
-  assert.doesNotMatch(
-    source,
-    /<video\s+className="timeline-cutout-media"/,
-  );
+  assert.doesNotMatch(source, /<video\s+className="timeline-cutout-media"/);
 });
 
 test("selects timeline clips without moving them until a deliberate drag", () => {
@@ -1164,6 +1167,10 @@ test("keeps overlay preview playback synchronized with the editor", () => {
   );
   assert.match(
     compositionSource,
+    /const seekTolerance = isPreviewPlaying \? 0\.45 : 0\.04/,
+  );
+  assert.match(
+    compositionSource,
     /if \(isPreviewPlaying && \(isActive \|\| participatesInTransition\)\)[\s\S]*?video\.play\(\)[\s\S]*?else[\s\S]*?video\.pause\(\)/,
   );
 });
@@ -1355,10 +1362,7 @@ test("uses plain arrow keys for timeline selection and shift arrows for nudging"
     compositionSource,
     /canNudgeSelectedClip\s*&&\s*event\.shiftKey\s*&&\s*\(direction === "left" \|\| direction === "right"\)/,
   );
-  assert.match(
-    compositionSource,
-    /const frameStep = 5;/,
-  );
+  assert.match(compositionSource, /const frameStep = 5;/);
   assert.match(
     compositionSource,
     /getTimelineKeyboardNavigationTarget\(\{\s*clips,\s*selectedClipId: selectedClipIdRef\.current,\s*direction,\s*\}\)/,
@@ -1859,10 +1863,7 @@ test("does not open floating quick-action buttons over preview videos", () => {
   );
   assert.doesNotMatch(previewSelection, /setVideoQuickMenu\(\{/);
   assert.match(previewSelection, /setVideoQuickMenu\(null\)/);
-  assert.match(
-    css,
-    /\.video-quick-menu\s*\{[^}]*display:\s*none/s,
-  );
+  assert.match(css, /\.video-quick-menu\s*\{[^}]*display:\s*none/s);
 });
 
 test("keeps new video layer drop targets accessible without visible wording", () => {
@@ -2723,7 +2724,10 @@ test("imports audio directly from audio files or video soundtracks", () => {
     source,
     /isVideoSource\s*\? readVideoDurationInFrames\(previewSrc\)\s*:\s*readAudioDurationInFrames\(previewSrc\)/,
   );
-  assert.match(source, /label: isVideoSource \? `\$\{sourceLabel\} audio` : sourceLabel/);
+  assert.match(
+    source,
+    /label: isVideoSource \? `\$\{sourceLabel\} audio` : sourceLabel/,
+  );
   assert.match(source, /accept="audio\/\*,video\/\*"/);
   assert.match(source, /onChange=\{importAudioSources\}/);
 });
@@ -2984,10 +2988,7 @@ test("navigates imported media with all four arrow keys", () => {
   );
 
   assert.match(source, /const handleMediaArrowNavigation/);
-  assert.match(
-    source,
-    /\["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"\]/,
-  );
+  assert.match(source, /\["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"\]/);
   assert.match(
     source,
     /querySelectorAll<HTMLElement>\(\s*"\[data-media-id\]"/s,
@@ -3032,7 +3033,10 @@ test("keeps editing controls readable beside auto-fitting asset grids", () => {
     css,
     /\.editor-shell\s*\{[^}]*grid-template-columns:[^;}]*clamp\(320px,\s*25vw,\s*380px\)[^;}]*minmax\(340px,\s*1fr\)/s,
   );
-  assert.match(css, /\.media-panel\s*\{[^}]*grid-column:\s*2[^}]*width:\s*100%/s);
+  assert.match(
+    css,
+    /\.media-panel\s*\{[^}]*grid-column:\s*2[^}]*width:\s*100%/s,
+  );
   assert.match(
     css,
     /\.details-panel\s*\{[^}]*grid-column:\s*1[^}]*width:\s*100%[^}]*min-width:\s*320px/s,
@@ -3070,10 +3074,7 @@ test("keeps controls on the left and option libraries on the right", () => {
     "utf8",
   );
 
-  assert.match(
-    source,
-    /activeTool === "cutout"[\s\S]*?\? "cutout-workspace"/,
-  );
+  assert.match(source, /activeTool === "cutout"[\s\S]*?\? "cutout-workspace"/);
   assert.match(
     source,
     /activeTool === "adjustment"[\s\S]*?"library-left-workspace"/,
@@ -3188,7 +3189,10 @@ test("marquee-selects clips across every timeline row", () => {
   );
   assert.match(source, /scrollArea\.scrollLeft \+= horizontalDelta/);
   assert.match(source, /scrollArea\.scrollTop \+= verticalDelta/);
-  assert.match(source, /event\.shiftKey \|\| event\.ctrlKey \|\| event\.metaKey/);
+  assert.match(
+    source,
+    /event\.shiftKey \|\| event\.ctrlKey \|\| event\.metaKey/,
+  );
   assert.match(
     source,
     /if \(isAdditiveSelection\) \{\s*event\.preventDefault\(\);\s*toggleTimelineClipSelection\(clip\);/,
@@ -3200,10 +3204,7 @@ test("marquee-selects clips across every timeline row", () => {
     source,
     /const selectedGroup =\s*selectedClipIdsRef\.current\.length > 1 &&\s*selectedClipIdsRef\.current\.includes\(clip\.id\)/,
   );
-  assert.doesNotMatch(
-    source,
-    /const selectedGroup =\s*isAdditiveSelection &&/,
-  );
+  assert.doesNotMatch(source, /const selectedGroup =\s*isAdditiveSelection &&/);
   assert.match(
     source,
     /startPointerDrag\(\s*event,\s*clip,\s*selectedGroup,\s*isAdditiveSelection,\s*\)/,
@@ -3217,8 +3218,14 @@ test("marquee-selects clips across every timeline row", () => {
   assert.match(source, /suppressTrackLabelClickRef/);
   assert.match(source, /const timelineGroupDragPreview = useMemo/);
   assert.match(source, /timelineGroupDragPreview\?\.ids\.has\(clip\.id\)/);
-  assert.match(source, /onPointerDownCapture=\{holdTimelinePreviewFromPointer\}/);
-  assert.match(source, /Moving \$\{timelineClipIds\.length\} selected clips together/);
+  assert.match(
+    source,
+    /onPointerDownCapture=\{holdTimelinePreviewFromPointer\}/,
+  );
+  assert.match(
+    source,
+    /Moving \$\{timelineClipIds\.length\} selected clips together/,
+  );
   assert.match(
     source,
     /startPointerDrag\(\s*event,\s*clip,\s*selectedGroup,\s*isAdditiveSelection,\s*\)/,

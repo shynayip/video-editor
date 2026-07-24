@@ -42,7 +42,6 @@ import {
   getStableTimelineFrameDelta,
   getDragEdgeAutoScrollDelta,
   getPlaybackFollowScrollLeft,
-  getTimelineScrollFollowPlayheadFrame,
   getMediaTrimFrameFromPointer,
   getTimelineFrameFromPointer,
   getManualRotationAngle,
@@ -70,6 +69,7 @@ import {
   moveVideoClipToLayer,
   placeVideoPairInInsertedLayer,
   placeVideoPairOnLayer,
+  preventVideoLayerClipOverlaps,
   insertVideoPairOnLayerAtFrame,
   hasClipsOnTrack,
   findAvailableOverlayLane,
@@ -164,6 +164,7 @@ import {
   shouldMovePlayheadDuringScrub,
   shouldShowAudioTrackForSelection,
   trimClipById,
+  rippleTrimVideoClipById,
   trimMediaItemRange,
   synchronizeOriginalAudio,
   undoTimelineHistory,
@@ -641,10 +642,7 @@ test("uses the selected imported copy as the source for nested copy names", () =
   });
 
   assert.equal(firstCopy.copiedItems[0]?.label, "Scene 5.1 (copy 1)");
-  assert.equal(
-    nestedCopy.copiedItems[0]?.label,
-    "Scene 5.1 (copy 1) (copy 1)",
-  );
+  assert.equal(nestedCopy.copiedItems[0]?.label, "Scene 5.1 (copy 1) (copy 1)");
   assert.equal(
     normalizeMediaSceneLabels(nestedCopy.mediaItems).at(-1)?.label,
     "Scene 5.1 (copy 1) (copy 1)",
@@ -1736,45 +1734,6 @@ test("follows the playhead in both directions after it reaches a visible edge", 
       playheadX: 2900,
     }),
     2000,
-  );
-});
-
-test("moves the playhead to the visible timeline center after manual scrolling", () => {
-  assert.equal(
-    getTimelineScrollFollowPlayheadFrame({
-      scrollLeft: 0,
-      viewportWidth: 1000,
-      contentWidth: 3000,
-      playheadX: 500,
-      timelineOrigin: 100,
-      timelineScale: 2,
-      projectDuration: 1200,
-    }),
-    null,
-  );
-  assert.equal(
-    getTimelineScrollFollowPlayheadFrame({
-      scrollLeft: 1200,
-      viewportWidth: 1000,
-      contentWidth: 3000,
-      playheadX: 100,
-      timelineOrigin: 100,
-      timelineScale: 2,
-      projectDuration: 1200,
-    }),
-    800,
-  );
-  assert.equal(
-    getTimelineScrollFollowPlayheadFrame({
-      scrollLeft: 2600,
-      viewportWidth: 1000,
-      contentWidth: 4000,
-      playheadX: 100,
-      timelineOrigin: 100,
-      timelineScale: 2,
-      projectDuration: 1200,
-    }),
-    1199,
   );
 });
 
@@ -3324,6 +3283,104 @@ test("right trim shortens linked video and audio without trimming narration", ()
   assert.equal(result.find((clip) => clip.id === "main")?.duration, 75);
   assert.equal(result.find((clip) => clip.id === "audio")?.duration, 75);
   assert.equal(result.find((clip) => clip.id === "voice")?.duration, 120);
+});
+
+test("ripple trim restores a video tail and moves later video with its linked audio", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "first",
+      label: "First video",
+      track: "main",
+      start: 0,
+      duration: 60,
+      sourceStart: 0,
+      sourceDuration: 180,
+      color: "#0891b2",
+      linkedClipId: "first-audio",
+    },
+    {
+      id: "first-audio",
+      label: "First audio",
+      track: "audio",
+      start: 0,
+      duration: 60,
+      sourceStart: 0,
+      sourceDuration: 180,
+      color: "#2563eb",
+      linkedClipId: "first",
+    },
+    {
+      id: "second",
+      label: "Second video",
+      track: "main",
+      start: 60,
+      duration: 90,
+      sourceStart: 0,
+      sourceDuration: 180,
+      color: "#0891b2",
+      linkedClipId: "second-audio",
+    },
+    {
+      id: "second-audio",
+      label: "Second audio",
+      track: "audio",
+      start: 60,
+      duration: 90,
+      sourceStart: 0,
+      sourceDuration: 180,
+      color: "#2563eb",
+      linkedClipId: "second",
+    },
+    {
+      id: "caption",
+      label: "Caption",
+      track: "caption",
+      start: 60,
+      duration: 30,
+      color: "#ef4444",
+    },
+  ];
+
+  const result = rippleTrimVideoClipById(clips, "first", "right", 30, 1);
+
+  assert.deepEqual(
+    result.map(({ id, start, duration }) => ({ id, start, duration })),
+    [
+      { id: "first", start: 0, duration: 90 },
+      { id: "first-audio", start: 0, duration: 90 },
+      { id: "second", start: 90, duration: 90 },
+      { id: "second-audio", start: 90, duration: 90 },
+      { id: "caption", start: 60, duration: 30 },
+    ],
+  );
+});
+
+test("ripple trim closes the lane when shortening an earlier video", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "first",
+      label: "First video",
+      track: "main",
+      start: 0,
+      duration: 60,
+      sourceDuration: 180,
+      color: "#0891b2",
+    },
+    {
+      id: "second",
+      label: "Second video",
+      track: "main",
+      start: 60,
+      duration: 90,
+      sourceDuration: 180,
+      color: "#0891b2",
+    },
+  ];
+
+  const result = rippleTrimVideoClipById(clips, "first", "right", -20, 1);
+
+  assert.equal(result[0].duration, 40);
+  assert.equal(result[1].start, 40);
 });
 
 test("trim leaves legacy original audio unchanged when link metadata is missing", () => {
@@ -6205,6 +6262,47 @@ test("visual tools fall back to the highest visible signed video layer", () => {
   assert.equal(getVisualToolTargetClipId(clips, null, 30), aboveThree.id);
 });
 
+test("reordered video rows control which overlapping clip is shown on top", () => {
+  const [layerTwo] = createVideoMediaPair({
+    videoId: "layer-2",
+    audioId: "layer-2-audio",
+    track: "upper",
+    label: "Layer two",
+    src: "layer-two.mp4",
+    start: 0,
+    duration: 120,
+  });
+  layerTwo.videoLayer = 2;
+  layerTwo.timelineRowOrder = 140;
+
+  const [layerFour] = createVideoMediaPair({
+    videoId: "layer-4",
+    audioId: "layer-4-audio",
+    track: "upper",
+    label: "Layer four",
+    src: "layer-four.mp4",
+    start: 0,
+    duration: 120,
+  });
+  layerFour.videoLayer = 4;
+  layerFour.timelineRowOrder = 120;
+
+  const active = getActiveVideoLayersAtFrame(
+    [layerTwo, layerFour],
+    30,
+  );
+
+  assert.deepEqual(active.map((clip) => clip.id), [
+    layerFour.id,
+    layerTwo.id,
+  ]);
+  assert.equal(getTopVisibleVideoClipAtFrame(active, 30)?.id, layerTwo.id);
+  assert.equal(
+    getVisualToolTargetClipId([layerTwo, layerFour], null, 30),
+    layerTwo.id,
+  );
+});
+
 test("returns the original array when moving a video clip is a true no-op", () => {
   const [video, audio] = createVideoMediaPair({
     videoId: "video",
@@ -6258,7 +6356,7 @@ test("snaps a moved clip flush after the front video for a small overlap", () =>
   assert.equal(moved.find((clip) => clip.id === newAudio.id)?.start, 120);
 });
 
-test("restores a later clip when it is dragged across an earlier clip", () => {
+test("snaps a later clip before an earlier clip when dragged across it", () => {
   const [oldClip] = createVideoMediaPair({
     videoId: "old",
     audioId: "old-audio",
@@ -6281,8 +6379,8 @@ test("restores a later clip when it is dragged across an earlier clip", () => {
   const clips = [oldClip, newClip];
   const moved = moveVideoClipToLayer(clips, newClip.id, 0, 100);
 
-  assert.strictEqual(moved, clips);
-  assert.equal(newClip.start, 300);
+  assert.notStrictEqual(moved, clips);
+  assert.equal(moved.find((clip) => clip.id === newClip.id)?.start, 60);
 });
 
 test("allows moving a video exactly beside another video", () => {
@@ -6310,7 +6408,7 @@ test("allows moving a video exactly beside another video", () => {
   assert.equal(moved.find((clip) => clip.id === newClip.id)?.start, 120);
 });
 
-test("restores a video moved onto an occupied video layer", () => {
+test("snaps a video beside an occupied video layer", () => {
   const [mainClip] = createVideoMediaPair({
     videoId: "main",
     audioId: "main-audio",
@@ -6334,9 +6432,38 @@ test("restores a video moved onto an occupied video layer", () => {
 
   const moved = moveVideoClipToLayer(clips, upperClip.id, 0, 60);
 
-  assert.strictEqual(moved, clips);
-  assert.equal(upperClip.start, 180);
-  assert.equal(upperClip.videoLayer, 1);
+  assert.notStrictEqual(moved, clips);
+  assert.equal(moved.find((clip) => clip.id === upperClip.id)?.start, 120);
+  assert.equal(
+    moved.find((clip) => clip.id === upperClip.id)?.videoLayer,
+    undefined,
+  );
+});
+
+test("repairs overlapping video rows and keeps reciprocal audio aligned", () => {
+  const [first] = createVideoMediaPair({
+    videoId: "first",
+    audioId: "first-audio",
+    track: "main",
+    label: "First",
+    src: "first.mp4",
+    start: 0,
+    duration: 120,
+  });
+  const [second, secondAudio] = createVideoMediaPair({
+    videoId: "second",
+    audioId: "second-audio",
+    track: "main",
+    label: "Second",
+    src: "second.mp4",
+    start: 60,
+    duration: 90,
+  });
+
+  const repaired = preventVideoLayerClipOverlaps([first, second, secondAudio]);
+
+  assert.equal(repaired.find((clip) => clip.id === second.id)?.start, 120);
+  assert.equal(repaired.find((clip) => clip.id === secondAudio.id)?.start, 120);
 });
 
 test("does not create an empty narration clip", () => {
@@ -8216,6 +8343,44 @@ test("drops malformed transcript segments before generating captions", () => {
   assert.deepEqual(result, []);
 });
 
+test("normalizes overlapping generated captions into one ordered row", () => {
+  const sourceClip: TimelineClip = {
+    id: "main-1",
+    label: "Video",
+    track: "main",
+    start: 0,
+    duration: 300,
+    color: "#0891b2",
+    speed: 1,
+  };
+
+  const result = createGeneratedCaptionClips({
+    sourceClip,
+    segments: [
+      {startSeconds: 0, endSeconds: 3, text: "First"},
+      {startSeconds: 2, endSeconds: 4, text: "Second"},
+      {startSeconds: 3.5, endSeconds: 5, text: "Third"},
+    ],
+    fps: 30,
+    timelineDuration: 300,
+    generationId: "overlap",
+    style: defaultCaptionStyle,
+  });
+
+  assert.deepEqual(
+    result.map(({label, start, duration}) => ({label, start, duration})),
+    [
+      {label: "First", start: 0, duration: 60},
+      {label: "Second", start: 60, duration: 45},
+      {label: "Third", start: 105, duration: 45},
+    ],
+  );
+  result.slice(1).forEach((clip, index) => {
+    const previous = result[index];
+    assert.ok(previous.start + previous.duration <= clip.start);
+  });
+});
+
 test("groups adjacent transcript-edited video segments as one timeline item", () => {
   const clips: TimelineClip[] = [
     {
@@ -8248,18 +8413,20 @@ test("groups adjacent transcript-edited video segments as one timeline item", ()
   ];
 
   assert.equal(getTranscriptEditGroupId("video-speech-1"), "video");
+  assert.equal(getTranscriptEditGroupId("video-speech-0-speech-1"), "video");
   assert.equal(
-    getTranscriptEditGroupId("video-speech-0-speech-1"),
+    getTranscriptEditGroupId(
+      "video-speech-ripple-90-120-before-speech-ripple-30-60-after",
+    ),
     "video",
   );
-  assert.deepEqual(
-    getTranscriptEditGroupClipIds(clips, "video-speech-1"),
-    ["video-speech-0", "video-speech-1"],
-  );
-  assert.deepEqual(
-    getTranscriptEditGroupClipIds(clips, "other-video"),
-    ["other-video"],
-  );
+  assert.deepEqual(getTranscriptEditGroupClipIds(clips, "video-speech-1"), [
+    "video-speech-0",
+    "video-speech-1",
+  ]);
+  assert.deepEqual(getTranscriptEditGroupClipIds(clips, "other-video"), [
+    "other-video",
+  ]);
 });
 
 test("deleting a transcript word removes the matching linked video and audio range", () => {
@@ -9628,7 +9795,10 @@ test("can split only the selected video while leaving linked audio intact", () =
   });
 
   assert.equal(result.filter((clip) => clip.track === "main").length, 2);
-  assert.deepEqual(result.filter((clip) => clip.track === "audio"), [audio]);
+  assert.deepEqual(
+    result.filter((clip) => clip.track === "audio"),
+    [audio],
+  );
 });
 
 test("removes one transcript sentence with the matching video and audio range", () => {
@@ -9703,7 +9873,10 @@ test("removes one transcript sentence with the matching video and audio range", 
     30,
   );
 
-  assert.equal(result.some((clip) => clip.id === firstSentence.id), false);
+  assert.equal(
+    result.some((clip) => clip.id === firstSentence.id),
+    false,
+  );
   assert.equal(result.find((clip) => clip.id === secondSentence.id)?.start, 60);
   assert.equal(
     result
@@ -9717,8 +9890,14 @@ test("removes one transcript sentence with the matching video and audio range", 
       .reduce((total, clip) => total + clip.duration, 0),
     330,
   );
-  assert.equal(result.find((clip) => clip.id === followingVideo.id)?.start, 270);
-  assert.equal(result.find((clip) => clip.id === followingAudio.id)?.start, 270);
+  assert.equal(
+    result.find((clip) => clip.id === followingVideo.id)?.start,
+    270,
+  );
+  assert.equal(
+    result.find((clip) => clip.id === followingAudio.id)?.start,
+    270,
+  );
 });
 
 test("removes transcript words from linked video and audio and closes the gap", () => {
@@ -9783,8 +9962,7 @@ test("removes transcript words from linked video and audio and closes the gap", 
     result
       .filter(
         (clip) =>
-          clip.track === "main" &&
-          clip.id.startsWith(`${video.id}-speech-`),
+          clip.track === "main" && clip.id.startsWith(`${video.id}-speech-`),
       )
       .reduce((total, clip) => total + clip.duration, 0),
     90,
@@ -9793,23 +9971,178 @@ test("removes transcript words from linked video and audio and closes the gap", 
     result
       .filter(
         (clip) =>
-          clip.track === "audio" &&
-          clip.id.startsWith(`${audio.id}-speech-`),
+          clip.track === "audio" && clip.id.startsWith(`${audio.id}-speech-`),
       )
       .reduce((total, clip) => total + clip.duration, 0),
     90,
   );
-  assert.equal(
-    result.find((clip) => clip.id === followingVideo.id)?.start,
-    90,
-  );
-  assert.equal(
-    result.find((clip) => clip.id === followingAudio.id)?.start,
-    90,
-  );
+  assert.equal(result.find((clip) => clip.id === followingVideo.id)?.start, 90);
+  assert.equal(result.find((clip) => clip.id === followingAudio.id)?.start, 90);
   assert.equal(
     result.find((clip) => clip.id === transcript.id)?.caption?.content,
     "one three four",
+  );
+});
+
+test("compacts the complete video row after transcript deletion", () => {
+  const video: TimelineClip = {
+    id: "row-source-video",
+    label: "Source video",
+    track: "main",
+    start: 0,
+    duration: 120,
+    color: "#0891b2",
+    src: "/media/row-source.mp4",
+    linkedClipId: "row-source-audio",
+  };
+  const audio: TimelineClip = {
+    id: "row-source-audio",
+    label: "Source audio",
+    track: "audio",
+    start: 0,
+    duration: 120,
+    color: "#2563eb",
+    src: "/media/row-source.mp4",
+    linkedClipId: video.id,
+  };
+  const transcript: TimelineClip = {
+    id: "row-transcript",
+    label: "one two three four",
+    track: "caption",
+    start: 0,
+    duration: 120,
+    color: "#ef4444",
+    caption: {
+      ...defaultCaptionStyle,
+      content: "one two three four",
+      sourceClipId: video.id,
+      generationId: "transcript-row-batch",
+    },
+  };
+  const laterVideo: TimelineClip = {
+    ...video,
+    id: "row-later-video",
+    label: "Later video",
+    start: 180,
+    duration: 60,
+    linkedClipId: "row-later-audio",
+  };
+  const laterAudio: TimelineClip = {
+    ...audio,
+    id: "row-later-audio",
+    label: "Later audio",
+    start: 180,
+    duration: 60,
+    linkedClipId: laterVideo.id,
+  };
+
+  const result = removeTranscriptWordsFromLinkedVideo(
+    [video, audio, transcript, laterVideo, laterAudio],
+    [{ clipId: transcript.id, wordIndex: 1 }],
+    30,
+  );
+
+  assert.equal(result.find((clip) => clip.id === laterVideo.id)?.start, 90);
+  assert.equal(result.find((clip) => clip.id === laterAudio.id)?.start, 90);
+});
+
+test("supports repeated transcript ripple deletions across retained media segments", () => {
+  const video: TimelineClip = {
+    id: "repeated-word-video",
+    label: "Repeated word video",
+    track: "main",
+    start: 0,
+    duration: 120,
+    color: "#0891b2",
+    src: "/media/repeated-words.mp4",
+    linkedClipId: "repeated-word-audio",
+  };
+  const audio: TimelineClip = {
+    id: "repeated-word-audio",
+    label: "Repeated word audio",
+    track: "audio",
+    start: 0,
+    duration: 120,
+    color: "#2563eb",
+    src: "/media/repeated-words.mp4",
+    linkedClipId: video.id,
+  };
+  const transcript: TimelineClip = {
+    id: "repeated-word-transcript",
+    label: "one two three four",
+    track: "caption",
+    start: 0,
+    duration: 120,
+    color: "#ef4444",
+    caption: {
+      ...defaultCaptionStyle,
+      content: "one two three four",
+      sourceClipId: video.id,
+      generationId: "transcript-repeated-word-batch",
+    },
+  };
+  const followingVideo: TimelineClip = {
+    ...video,
+    id: "repeated-following-video",
+    label: "Following video",
+    start: 120,
+    duration: 60,
+    linkedClipId: "repeated-following-audio",
+  };
+  const followingAudio: TimelineClip = {
+    ...audio,
+    id: "repeated-following-audio",
+    label: "Following audio",
+    start: 120,
+    duration: 60,
+    linkedClipId: followingVideo.id,
+  };
+
+  const firstResult = removeTranscriptWordsFromLinkedVideo(
+    [video, audio, transcript, followingVideo, followingAudio],
+    [{ clipId: transcript.id, wordIndex: 1 }],
+    30,
+  );
+  const secondResult = removeTranscriptWordsFromLinkedVideo(
+    firstResult,
+    [{ clipId: transcript.id, wordIndex: 1 }],
+    30,
+  );
+
+  assert.equal(
+    secondResult
+      .filter(
+        (clip) =>
+          clip.track === "main" && clip.id.startsWith(`${video.id}-speech-`),
+      )
+      .reduce((total, clip) => total + clip.duration, 0),
+    60,
+  );
+  assert.equal(
+    secondResult
+      .filter(
+        (clip) =>
+          clip.track === "audio" && clip.id.startsWith(`${audio.id}-speech-`),
+      )
+      .reduce((total, clip) => total + clip.duration, 0),
+    60,
+  );
+  assert.equal(
+    secondResult.find((clip) => clip.id === followingVideo.id)?.start,
+    60,
+  );
+  assert.equal(
+    secondResult.find((clip) => clip.id === followingAudio.id)?.start,
+    60,
+  );
+  assert.equal(
+    secondResult.find((clip) => clip.id === transcript.id)?.caption?.content,
+    "one four",
+  );
+  assert.equal(
+    secondResult.find((clip) => clip.id === transcript.id)?.caption
+      ?.sourceClipId,
+    video.id,
   );
 });
 

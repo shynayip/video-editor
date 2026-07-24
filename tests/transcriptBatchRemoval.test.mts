@@ -208,9 +208,161 @@ test("cuts native video audio and ripples later media with its transcript", () =
   );
   assert.ok(firstVideoSegments.every((clip) => !clip.audioDetached));
   assert.equal(result.find((clip) => clip.id === "later-video")?.start, 100);
-  assert.equal(result.find((clip) => clip.id === "later-transcript")?.start, 100);
+  assert.equal(
+    result.find((clip) => clip.id === "later-transcript")?.start,
+    100,
+  );
   assert.equal(
     result.find((clip) => clip.id === "first-transcript")?.caption?.content,
     "one three",
+  );
+});
+
+test("fully removes a long numeric product term from video and audio", () => {
+  const clips: TimelineClip[] = [
+    {
+      id: "product-video",
+      label: "Product",
+      track: "main",
+      start: 0,
+      duration: 130,
+      sourceStart: 0,
+      src: "product.mp4",
+      color: "#0891b2",
+      linkedClipId: "product-audio",
+    },
+    {
+      id: "product-audio",
+      label: "Product audio",
+      track: "audio",
+      start: 0,
+      duration: 130,
+      sourceStart: 0,
+      src: "product.mp4",
+      color: "#2563eb",
+      linkedClipId: "product-video",
+    },
+    {
+      id: "product-transcript",
+      label:
+        "It comes with a 5000mAh battery and snaps magnetically onto a compatible iPhone",
+      track: "caption",
+      start: 0,
+      duration: 130,
+      color: "#ef4444",
+      caption: {
+        ...defaultCaptionStyle,
+        content:
+          "It comes with a 5000mAh battery and snaps magnetically onto a compatible iPhone",
+        sourceClipId: "product-video",
+        generationId: "transcript-product",
+      },
+    },
+  ];
+
+  const result = removeTranscriptWordsFromLinkedVideo(
+    clips,
+    [{ clipId: "product-transcript", wordIndex: 4 }],
+    30,
+  );
+
+  const videoDuration = result
+    .filter((clip) => clip.track === "main")
+    .reduce((total, clip) => total + clip.duration, 0);
+  const audioDuration = result
+    .filter((clip) => clip.track === "audio")
+    .reduce((total, clip) => total + clip.duration, 0);
+  assert.equal(videoDuration, 104);
+  assert.equal(audioDuration, 104);
+  assert.equal(
+    result.find((clip) => clip.id === "product-transcript")?.caption?.content,
+    "It comes with a battery and snaps magnetically onto a compatible iPhone",
+  );
+});
+
+test("deduplicates and compacts transcript descendants with synchronized audio", () => {
+  const transcriptCaption: TimelineClip = {
+    id: "transcript-segment",
+    label: "one two three",
+    track: "caption",
+    start: 0,
+    duration: 150,
+    color: "#ef4444",
+    caption: {
+      ...defaultCaptionStyle,
+      content: "one two three",
+      sourceClipId: "video",
+      generationId: "transcript-repeat",
+    },
+  };
+  const clips: TimelineClip[] = [
+    {
+      id: "video-speech-existing",
+      label: "Lesson",
+      track: "main",
+      start: 0,
+      duration: 150,
+      sourceStart: 0,
+      src: "lesson.mp4",
+      color: "#0891b2",
+      linkedClipId: "audio-speech-existing",
+    },
+    {
+      id: "audio-speech-existing",
+      label: "Lesson audio",
+      track: "audio",
+      start: 0,
+      duration: 150,
+      sourceStart: 0,
+      src: "lesson.mp4",
+      color: "#2563eb",
+      linkedClipId: "video-speech-existing",
+    },
+    {
+      id: "video-speech-duplicate",
+      label: "Lesson",
+      track: "main",
+      start: 0,
+      duration: 150,
+      sourceStart: 0,
+      src: "lesson.mp4",
+      color: "#0891b2",
+      linkedClipId: "audio-speech-duplicate",
+    },
+    {
+      id: "audio-speech-duplicate",
+      label: "Lesson audio",
+      track: "audio",
+      start: 0,
+      duration: 150,
+      sourceStart: 0,
+      src: "lesson.mp4",
+      color: "#2563eb",
+      linkedClipId: "video-speech-duplicate",
+    },
+    transcriptCaption,
+  ];
+
+  const result = removeTranscriptWordsFromLinkedVideo(
+    clips,
+    [{ clipId: transcriptCaption.id, wordIndex: 1 }],
+    30,
+  );
+  const videoSegments = result
+    .filter((clip) => clip.track === "main")
+    .sort((left, right) => left.start - right.start);
+  const audioSegments = result
+    .filter((clip) => clip.track === "audio")
+    .sort((left, right) => left.start - right.start);
+
+  assert.equal(videoSegments.length, 2);
+  assert.equal(audioSegments.length, 2);
+  assert.equal(
+    videoSegments[0].start + videoSegments[0].duration,
+    videoSegments[1].start,
+  );
+  assert.deepEqual(
+    audioSegments.map((clip) => [clip.start, clip.duration]),
+    videoSegments.map((clip) => [clip.start, clip.duration]),
   );
 });

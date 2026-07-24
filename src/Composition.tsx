@@ -2339,6 +2339,7 @@ const readAudioDurationInFrames = (src: string) =>
 
 type ActiveTool =
   | "media"
+  | "rough"
   | "audio"
   | "text"
   | "cutout"
@@ -2349,6 +2350,39 @@ type ActiveTool =
   | "effects"
   | "filters"
   | "adjustment";
+
+type RoughEditTemplate =
+  | "full-b-roll"
+  | "picture-in-picture"
+  | "split-screen"
+  | "top-bottom";
+
+const roughEditTemplateOptions: Array<{
+  id: RoughEditTemplate;
+  label: string;
+}> = [
+  { id: "full-b-roll", label: "Full B-roll" },
+  { id: "picture-in-picture", label: "Template 2: moving head" },
+  { id: "split-screen", label: "Split screen" },
+  { id: "top-bottom", label: "Top / bottom" },
+];
+
+const roughEditHeadPlacements: ClipAdjustment[] = [
+  { ...defaultClipAdjustment, scale: 0.36, positionX: -44, positionY: 34 },
+  { ...defaultClipAdjustment, scale: 0.36, positionX: 44, positionY: 34 },
+  { ...defaultClipAdjustment, scale: 0.32, positionX: -44, positionY: -34 },
+  { ...defaultClipAdjustment, scale: 0.32, positionX: 44, positionY: -34 },
+  { ...defaultClipAdjustment, scale: 0.34, positionX: 0, positionY: 36 },
+];
+const roughEditHeadPlacementLabels = [
+  "bottom left",
+  "bottom right",
+  "top left",
+  "top right",
+  "bottom center",
+];
+const roughEditSectionDurationOptions = [1, 2, 3, 4, 5, 6];
+const roughEditLaneOptions = [1, 2, 3];
 
 const animationOptions: Array<{ id: ClipAnimationPreset; label: string }> = [
   { id: "none", label: "None" },
@@ -4264,6 +4298,20 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
   const [recordingError, setRecordingError] = useState("");
   const [activeTool, setActiveTool] = useState<ActiveTool>("media");
   const activeToolRef = useRef(activeTool);
+  const [roughEditARollMediaId, setRoughEditARollMediaId] = useState<
+    string | null
+  >(null);
+  const [roughEditBRollMediaIds, setRoughEditBRollMediaIds] = useState<
+    string[]
+  >([]);
+  const [roughEditTemplateRotation, setRoughEditTemplateRotation] = useState<
+    RoughEditTemplate[]
+  >(["full-b-roll", "picture-in-picture", "split-screen"]);
+  const [roughEditSectionTemplateOverrides, setRoughEditSectionTemplateOverrides] =
+    useState<Record<number, RoughEditTemplate>>({});
+  const [roughEditSectionSeconds, setRoughEditSectionSeconds] = useState(4);
+  const [roughEditBRollLaneCount, setRoughEditBRollLaneCount] = useState(3);
+  const [roughEditUseMovingHead, setRoughEditUseMovingHead] = useState(true);
   const [audioLibraryTab, setAudioLibraryTab] =
     useState<AudioLibraryTab>("music");
   const [audioLibraryQuery, setAudioLibraryQuery] = useState("");
@@ -5321,6 +5369,238 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             ? "Filter controls"
             : "Clip controls";
   const selectedMedia = mediaItems.find((item) => item.id === selectedMediaId);
+  const roughEditVideoMediaItems = useMemo(
+    () =>
+      mediaItems.filter((mediaItem) => getMediaItemType(mediaItem) === "video"),
+    [mediaItems],
+  );
+  const roughEditBRollMediaItems = useMemo(
+    () =>
+      mediaItems.filter(
+        (mediaItem) => mediaItem.id !== roughEditARollMediaId,
+      ),
+    [mediaItems, roughEditARollMediaId],
+  );
+  const roughEditSelectedBRollItems = roughEditBRollMediaItems.filter(
+    (mediaItem) => roughEditBRollMediaIds.includes(mediaItem.id),
+  );
+  const roughEditARollMedia = roughEditVideoMediaItems.find(
+    (mediaItem) => mediaItem.id === roughEditARollMediaId,
+  );
+  const roughEditSectionFrames = Math.max(1, roughEditSectionSeconds * fps);
+  const roughEditSections = useMemo(() => {
+    if (!roughEditARollMedia) return [];
+    const duration = Math.max(1, roughEditARollMedia.durationInFrames);
+    const sections: Array<{
+      index: number;
+      startFrame: number;
+      duration: number;
+      template: RoughEditTemplate;
+    }> = [];
+
+    for (
+      let startFrame = 0, index = 0;
+      startFrame < duration;
+      startFrame += roughEditSectionFrames, index += 1
+    ) {
+      sections.push({
+        index,
+        startFrame,
+        duration: Math.min(roughEditSectionFrames, duration - startFrame),
+        template:
+          roughEditSectionTemplateOverrides[index] ??
+          roughEditTemplateRotation[index % roughEditTemplateRotation.length],
+      });
+    }
+
+    return sections;
+  }, [
+    roughEditARollMedia,
+    roughEditSectionFrames,
+    roughEditSectionTemplateOverrides,
+    roughEditTemplateRotation,
+  ]);
+  const toggleRoughEditBRollMedia = (mediaId: string) => {
+    setRoughEditBRollMediaIds((currentIds) =>
+      currentIds.includes(mediaId)
+        ? currentIds.filter((id) => id !== mediaId)
+        : [...currentIds, mediaId],
+    );
+  };
+  const selectAllRoughEditBRollMedia = () => {
+    setRoughEditBRollMediaIds(roughEditBRollMediaItems.map((item) => item.id));
+  };
+  const getRoughEditAdjustment = (
+    role: "a-roll" | "b-roll",
+    template: RoughEditTemplate,
+    sectionIndex = 0,
+  ): ClipAdjustment => {
+    if (template === "picture-in-picture") {
+      if (!roughEditUseMovingHead) {
+        return role === "b-roll"
+          ? {
+              ...defaultClipAdjustment,
+              scale: 0.38,
+              positionX: 46,
+              positionY: 28,
+            }
+          : { ...defaultClipAdjustment };
+      }
+
+      return role === "a-roll"
+        ? {
+            ...roughEditHeadPlacements[
+              sectionIndex % roughEditHeadPlacements.length
+            ],
+          }
+        : { ...defaultClipAdjustment };
+    }
+    if (template === "split-screen") {
+      return {
+        ...defaultClipAdjustment,
+        scale: 0.54,
+        positionX: role === "a-roll" ? -48 : 48,
+      };
+    }
+    if (template === "top-bottom") {
+      return {
+        ...defaultClipAdjustment,
+        scale: 0.56,
+        positionY: role === "a-roll" ? 42 : -42,
+      };
+    }
+    return { ...defaultClipAdjustment };
+  };
+  const generateRoughEdit = () => {
+    const aRollMedia = roughEditARollMedia;
+    const selectedBRollItems = roughEditBRollMediaItems.filter((mediaItem) =>
+      roughEditBRollMediaIds.includes(mediaItem.id),
+    );
+
+    if (!aRollMedia || roughEditSections.length === 0) {
+      setProjectStatus("Choose one A-roll first");
+      return;
+    }
+
+    const timelineStart = Math.max(playheadFrame, getVideoLayerEnd(clips, 0));
+    const aRollDuration = Math.max(1, aRollMedia.durationInFrames);
+    const bRollBaseLayer = Math.max(1, getNextVideoLayer(clips, "above"));
+    const bRollLaneCount = Math.min(
+      roughEditBRollLaneCount,
+      Math.max(1, selectedBRollItems.length),
+    );
+    const headOverlayLayer = bRollBaseLayer + bRollLaneCount + 1;
+    const timestamp = Date.now();
+    const aRollLabel = aRollMedia.label.replace(/\.[^.]+$/, "");
+    const aRollVideoId = `ai-a-roll-${timestamp}`;
+    const aRollAudioId = `ai-a-roll-audio-${timestamp}`;
+    const [aRollVideo, aRollAudio] = createVideoMediaPair({
+      videoId: aRollVideoId,
+      audioId: aRollAudioId,
+      track: "main",
+      label: `A-roll · ${aRollLabel}`,
+      src: aRollMedia.src,
+      start: timelineStart,
+      duration: aRollDuration,
+      sourceStart: aRollMedia.sourceStart ?? 0,
+      sourceDuration:
+        aRollMedia.sourceDurationInFrames ?? aRollMedia.durationInFrames,
+      adjustment: { ...defaultClipAdjustment },
+    });
+    const nextClips: TimelineClip[] = [aRollVideo, aRollAudio];
+
+    roughEditSections.forEach((section) => {
+      if (selectedBRollItems.length === 0) return;
+
+      const index = section.index;
+      const sectionDuration = section.duration;
+      const sectionTimelineStart = timelineStart + section.startFrame;
+      const bRollMedia = selectedBRollItems[index % selectedBRollItems.length];
+      const bRollLabel = bRollMedia.label.replace(/\.[^.]+$/, "");
+      const bRollId = `ai-b-roll-${timestamp}-${index}-${bRollMedia.id}`;
+      const bRollDuration = Math.max(1, bRollMedia.durationInFrames);
+      const bRollAdjustment = getRoughEditAdjustment(
+        "b-roll",
+        section.template,
+        index,
+      );
+      const bRollLayer = bRollBaseLayer + (index % bRollLaneCount);
+      const bRollTimelineRowOrder = 100 + bRollLayer;
+
+      if (getMediaItemType(bRollMedia) === "image") {
+        nextClips.push({
+          ...createImageMediaClip({
+            id: bRollId,
+            track: "upper",
+            label: `B-roll ${index + 1} · ${bRollLabel}`,
+            src: bRollMedia.src,
+            start: sectionTimelineStart,
+            duration: sectionDuration,
+            overlayLane: bRollLayer,
+            adjustment: bRollAdjustment,
+          }),
+          videoLayer: bRollLayer,
+          timelineRowOrder: bRollTimelineRowOrder,
+        });
+      } else {
+        nextClips.push({
+          id: bRollId,
+          label: `B-roll ${index + 1} · ${bRollLabel}`,
+          track: "upper",
+          start: sectionTimelineStart,
+          duration: sectionDuration,
+          sourceStart: bRollMedia.sourceStart ?? 0,
+          sourceDuration:
+            bRollMedia.sourceDurationInFrames ?? bRollMedia.durationInFrames,
+          color: "#7c3aed",
+          src: bRollMedia.src,
+          speed: bRollDuration / sectionDuration,
+          volume: 0,
+          videoLayer: bRollLayer,
+          timelineRowOrder: bRollTimelineRowOrder,
+          adjustment: bRollAdjustment,
+        });
+      }
+
+      if (section.template === "picture-in-picture" && roughEditUseMovingHead) {
+        nextClips.push({
+          id: `ai-a-roll-head-${timestamp}-${index}`,
+          label: `A-roll head ${index + 1}`,
+          track: "upper",
+          start: sectionTimelineStart,
+          duration: sectionDuration,
+          sourceStart: (aRollMedia.sourceStart ?? 0) + section.startFrame,
+          sourceDuration: sectionDuration,
+          color: "#0891b2",
+          src: aRollMedia.src,
+          speed: 1,
+          volume: 0,
+          videoLayer: headOverlayLayer,
+          timelineRowOrder: 100 + headOverlayLayer,
+          adjustment: getRoughEditAdjustment(
+            "a-roll",
+            section.template,
+            index,
+          ),
+        });
+      }
+    });
+
+    commitClipChange((currentClips) => [...currentClips, ...nextClips]);
+    setSelectedClipId(nextClips[0]?.id ?? null);
+    setSelectedClipIds(nextClips[0] ? [nextClips[0].id] : []);
+    setSelectedTrack("main");
+    setSelectedVideoLayer(null);
+    setPreviewMode("timeline");
+    setPlayheadFrame(timelineStart);
+    setProjectStatus(
+      selectedBRollItems.length > 0
+        ? `AI edit generated: 1 A-roll with ${roughEditSections.length} B-roll section${
+            roughEditSections.length === 1 ? "" : "s"
+          }`
+        : "A-roll generated. Choose B-roll clips if you want automatic cutaways.",
+    );
+  };
   const selectedMediaType = selectedMedia
     ? getMediaItemType(selectedMedia)
     : null;
@@ -14320,6 +14600,18 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
             Media
           </button>
           <button
+            className={activeTool === "rough" ? "active-tool" : ""}
+            type="button"
+            onClick={() => {
+              setActiveTool("rough");
+              mediaSelectionBoxRef.current = null;
+              setMediaSelectionBox(null);
+            }}
+          >
+            <Sparkles aria-hidden="true" />
+            AI
+          </button>
+          <button
             className={activeTool === "audio" ? "active-tool" : ""}
             type="button"
             onClick={openAudioControls}
@@ -14707,6 +14999,297 @@ export const MyComponent: React.FC<Props> = ({ project }) => {
                   ))}
                 </div>
               </>
+            ) : activeTool === "rough" ? (
+              <div
+                className="rough-edit-tool-panel"
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <section className="rough-edit-section">
+                  <div className="rough-edit-section-heading">
+                    <strong>1. Choose A-roll</strong>
+                    <span>Main talking clip</span>
+                  </div>
+                  {roughEditVideoMediaItems.length > 0 ? (
+                    <div className="rough-edit-choice-list">
+                      {roughEditVideoMediaItems.map((mediaItem) => (
+                        <button
+                          className={
+                            roughEditARollMediaId === mediaItem.id
+                              ? "rough-edit-choice selected-rough-edit-choice"
+                              : "rough-edit-choice"
+                          }
+                          key={mediaItem.id}
+                          type="button"
+                          aria-pressed={roughEditARollMediaId === mediaItem.id}
+                          onClick={() => {
+                            setRoughEditARollMediaId(mediaItem.id);
+                            setRoughEditSectionTemplateOverrides({});
+                            setRoughEditBRollMediaIds((currentIds) =>
+                              currentIds.filter((id) => id !== mediaItem.id),
+                            );
+                          }}
+                        >
+                          <span className="rough-edit-choice-preview">
+                            <span aria-hidden="true">▶</span>
+                          </span>
+                          <span className="rough-edit-choice-copy">
+                            <strong>{mediaItem.label}</strong>
+                            <span>{mediaItem.duration}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rough-edit-empty">
+                      Import at least one video to choose an A-roll.
+                    </p>
+                  )}
+                </section>
+
+                <section className="rough-edit-section">
+                  <div className="rough-edit-section-heading">
+                    <strong>2. Choose B-roll</strong>
+                    <div className="rough-edit-heading-actions">
+                      <span>{roughEditSelectedBRollItems.length} selected</span>
+                      {roughEditBRollMediaItems.length > 0 ? (
+                        <button
+                          className="rough-reset-button"
+                          type="button"
+                          onClick={
+                            roughEditSelectedBRollItems.length ===
+                            roughEditBRollMediaItems.length
+                              ? () => setRoughEditBRollMediaIds([])
+                              : selectAllRoughEditBRollMedia
+                          }
+                        >
+                          {roughEditSelectedBRollItems.length ===
+                          roughEditBRollMediaItems.length
+                            ? "Clear"
+                            : "Select all"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  {roughEditBRollMediaItems.length > 0 ? (
+                    <div className="rough-edit-choice-list">
+                      {roughEditBRollMediaItems.map((mediaItem) => (
+                        <button
+                          className={
+                            roughEditBRollMediaIds.includes(mediaItem.id)
+                              ? "rough-edit-choice selected-rough-edit-choice"
+                              : "rough-edit-choice"
+                          }
+                          key={mediaItem.id}
+                          type="button"
+                          aria-pressed={roughEditBRollMediaIds.includes(
+                            mediaItem.id,
+                          )}
+                          onClick={() => toggleRoughEditBRollMedia(mediaItem.id)}
+                        >
+                          <span className="rough-edit-choice-preview">
+                            <span aria-hidden="true">
+                              {getMediaItemType(mediaItem) === "image" ? "IMG" : "▶"}
+                            </span>
+                          </span>
+                          <strong>{mediaItem.label}</strong>
+                          <span>
+                            {getMediaItemType(mediaItem)} · {mediaItem.duration}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rough-edit-empty">
+                      Import extra clips or images to use as B-roll.
+                    </p>
+                  )}
+                </section>
+
+                <section className="rough-edit-section">
+                  <div className="rough-edit-section-heading">
+                    <strong>3. Template rotation</strong>
+                    <span>Repeats every 3 sections</span>
+                  </div>
+                  <div className="rough-template-rotation">
+                    {roughEditTemplateRotation.map((templateId, slotIndex) => (
+                      <label key={`rough-template-slot-${slotIndex}`}>
+                        <span>Template {slotIndex + 1}</span>
+                        <select
+                          aria-label={`Template ${slotIndex + 1}`}
+                          value={templateId}
+                          onChange={(event) => {
+                            const nextTemplate =
+                              event.currentTarget.value as RoughEditTemplate;
+                            setRoughEditTemplateRotation((currentRotation) =>
+                              currentRotation.map((currentTemplate, index) =>
+                                index === slotIndex
+                                  ? nextTemplate
+                                  : currentTemplate,
+                              ),
+                            );
+                          }}
+                        >
+                          {roughEditTemplateOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="rough-edit-section">
+                  <div className="rough-edit-section-heading">
+                    <strong>4. Setup</strong>
+                    <span>Control auto edit density</span>
+                  </div>
+                  <div className="rough-edit-settings-grid">
+                    <label>
+                      <span>Section length</span>
+                      <select
+                        value={roughEditSectionSeconds}
+                        onChange={(event) => {
+                          setRoughEditSectionSeconds(
+                            Number(event.currentTarget.value),
+                          );
+                          setRoughEditSectionTemplateOverrides({});
+                        }}
+                      >
+                        {roughEditSectionDurationOptions.map((seconds) => (
+                          <option key={seconds} value={seconds}>
+                            {seconds}s
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>B-roll rows</span>
+                      <select
+                        value={roughEditBRollLaneCount}
+                        onChange={(event) =>
+                          setRoughEditBRollLaneCount(
+                            Number(event.currentTarget.value),
+                          )
+                        }
+                      >
+                        {roughEditLaneOptions.map((count) => (
+                          <option key={count} value={count}>
+                            {count} row{count === 1 ? "" : "s"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="rough-toggle-setting">
+                      <input
+                        type="checkbox"
+                        checked={roughEditUseMovingHead}
+                        onChange={(event) =>
+                          setRoughEditUseMovingHead(event.currentTarget.checked)
+                        }
+                      />
+                      <span>Template 2 uses rotating head placement</span>
+                    </label>
+                  </div>
+                </section>
+
+                <section className="rough-edit-section">
+                  <div className="rough-edit-section-heading">
+                    <strong>5. Section plan</strong>
+                    <button
+                      className="rough-reset-button"
+                      type="button"
+                      disabled={
+                        Object.keys(roughEditSectionTemplateOverrides).length ===
+                        0
+                      }
+                      onClick={() => setRoughEditSectionTemplateOverrides({})}
+                    >
+                      Reset rotation
+                    </button>
+                  </div>
+                  {roughEditSections.length > 0 ? (
+                    <div className="rough-section-plan">
+                      {roughEditSections.map((section) => {
+                        const template = roughEditTemplateOptions.find(
+                          (option) => option.id === section.template,
+                        );
+                        return (
+                          <div
+                            className={`rough-section-chip rough-section-chip-${section.template}`}
+                            key={`rough-section-${section.index}`}
+                          >
+                            <strong>{section.index + 1}</strong>
+                            <span>
+                              {formatTimelineTimecode(section.startFrame, fps)} ·{" "}
+                              {(section.duration / fps).toFixed(1)}s
+                            </span>
+                            {section.template === "picture-in-picture" &&
+                            roughEditUseMovingHead ? (
+                              <small>
+                                Head:{" "}
+                                {
+                                  roughEditHeadPlacementLabels[
+                                    section.index %
+                                      roughEditHeadPlacementLabels.length
+                                  ]
+                                }
+                              </small>
+                            ) : null}
+                            <label>
+                              <em>{template?.label ?? "Template"}</em>
+                              <select
+                                aria-label={`Template for section ${
+                                  section.index + 1
+                                }`}
+                                value={section.template}
+                                onChange={(event) => {
+                                  const nextTemplate =
+                                    event.currentTarget
+                                      .value as RoughEditTemplate;
+                                  setRoughEditSectionTemplateOverrides(
+                                    (currentOverrides) => ({
+                                      ...currentOverrides,
+                                      [section.index]: nextTemplate,
+                                    }),
+                                  );
+                                }}
+                              >
+                                {roughEditTemplateOptions.map((option) => (
+                                  <option key={option.id} value={option.id}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="rough-edit-empty">
+                      Choose an A-roll to preview the automatic sections.
+                    </p>
+                  )}
+                </section>
+
+                <button
+                  className="rough-edit-generate-button"
+                  type="button"
+                  disabled={!roughEditARollMediaId}
+                  title={
+                    roughEditSelectedBRollItems.length > 0
+                      ? "Generate A-roll with stacked B-roll cutaways"
+                      : "Generate the A-roll base first"
+                  }
+                  onClick={generateRoughEdit}
+                >
+                  {roughEditSelectedBRollItems.length > 0
+                    ? "Generate AI edit"
+                    : "Generate A-roll"}
+                </button>
+              </div>
             ) : activeTool === "cutout" ? (
               <div className="cutout-tool-panel">
                 <div className="tool-control-panel-heading cutout-control-heading">
